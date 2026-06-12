@@ -1,13 +1,64 @@
 const defaultFallbackModels = [
-  "gemini-2.5-flash-lite",
   "gemini-2.5-flash",
-  "gemini-2.0-flash-lite",
+  "gemini-2.5-flash-lite",
   "gemini-2.0-flash",
-  "gemma-3-27b-it",
-  "gemma-3-12b-it",
-  "gemma-3-4b-it",
-  "gemma-3-1b-it",
+  "gemini-2.0-flash-lite",
+  "gemini-1.5-flash",
+  "gemini-1.5-flash-8b",
 ];
+
+type GeminiHttpError = Error & {
+  status?: number;
+  detail?: string;
+};
+
+const safeHelpResponse = {
+  reply:
+    "I can help only with Accountancy: read supplier invoices and proof-of-payment documents, prepare revenue or expense entries, and propose updates or deletions to existing accounting entries. I will always ask for confirmation before posting, editing, or deleting anything.",
+  extraction: {
+    action: "none",
+    targetEntryId: "",
+    targetReference: "",
+    type: "Unknown",
+    confidence: 1,
+    date: "",
+    category: "",
+    counterparty: "",
+    description: "",
+    amount: 0,
+    currency: "USD",
+    documentType: "Other",
+    paymentMethod: "",
+    reference: "",
+    taxAmount: 0,
+    questions: [],
+  },
+};
+
+const safeUnableToExtractResponse = {
+  reply:
+    "I could not extract a reliable accounting entry from that request. Please attach the invoice or proof of payment, or specify the date, counterparty, amount, currency, category, and whether it is revenue or expense.",
+  extraction: {
+    action: "none",
+    targetEntryId: "",
+    targetReference: "",
+    type: "Unknown",
+    confidence: 0,
+    date: "",
+    category: "",
+    counterparty: "",
+    description: "",
+    amount: 0,
+    currency: "USD",
+    documentType: "Other",
+    paymentMethod: "",
+    reference: "",
+    taxAmount: 0,
+    questions: [
+      "Please provide date, counterparty, amount, currency, category, and whether it is revenue or expense.",
+    ],
+  },
+};
 
 const modelCooldownUntil = new Map<string, number>();
 const permanentlySkippedModels = new Set<string>();
@@ -90,6 +141,12 @@ function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function getErrorStatus(error: unknown) {
+  return typeof (error as GeminiHttpError)?.status === "number"
+    ? (error as GeminiHttpError).status
+    : null;
+}
+
 function isUnsupportedModelError(error: unknown) {
   return /404|not found|unknown model|invalid model|unsupported|not available/i.test(getErrorMessage(error));
 }
@@ -125,7 +182,59 @@ function parseJson(raw: string) {
     .replace(/^```json\s*/i, "")
     .replace(/^```\s*/i, "")
     .replace(/\s*```$/i, "");
-  return JSON.parse(cleaned);
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const firstBrace = cleaned.indexOf("{");
+    const lastBrace = cleaned.lastIndexOf("}");
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      return JSON.parse(cleaned.slice(firstBrace, lastBrace + 1));
+    }
+    throw new Error("Gemini returned a non-JSON response.");
+  }
+}
+
+function normalizeAssistantPayload(payload: any, propertyCurrency = "USD") {
+  const extraction = payload?.extraction || {};
+  const action = ["create", "update", "delete", "none"].includes(extraction.action)
+    ? extraction.action
+    : "none";
+  const type = ["Revenue", "Expense", "Unknown"].includes(extraction.type)
+    ? extraction.type
+    : "Unknown";
+  const documentType = ["Supplier Invoice", "Proof of Payment", "Reservation Payment", "Other"].includes(extraction.documentType)
+    ? extraction.documentType
+    : "Other";
+
+  return {
+    reply: typeof payload?.reply === "string" && payload.reply.trim()
+      ? payload.reply.trim()
+      : safeUnableToExtractResponse.reply,
+    extraction: {
+      action,
+      targetEntryId: String(extraction.targetEntryId || ""),
+      targetReference: String(extraction.targetReference || ""),
+      type,
+      confidence: Number.isFinite(Number(extraction.confidence)) ? Number(extraction.confidence) : 0,
+      date: String(extraction.date || ""),
+      category: String(extraction.category || ""),
+      counterparty: String(extraction.counterparty || ""),
+      description: String(extraction.description || ""),
+      amount: Number.isFinite(Number(extraction.amount)) ? Number(extraction.amount) : 0,
+      currency: String(extraction.currency || propertyCurrency || "USD").toUpperCase(),
+      documentType,
+      paymentMethod: String(extraction.paymentMethod || ""),
+      reference: String(extraction.reference || ""),
+      taxAmount: Number.isFinite(Number(extraction.taxAmount)) ? Number(extraction.taxAmount) : 0,
+      questions: Array.isArray(extraction.questions) ? extraction.questions.map(String) : [],
+    },
+  };
+}
+
+function isBasicHelpRequest(message: string) {
+  const normalized = message.trim().toLowerCase();
+  if (!normalized) return false;
+  return /^(hola|hello|hi|hey|buenas|que puedes hacer|qué puedes hacer|what can you do|help|ayuda)[\s?!.¿¡]*$/i.test(normalized);
 }
 
 async function callGemini(model: string, body: any, apiKey: string) {
@@ -137,7 +246,10 @@ async function callGemini(model: string, body: any, apiKey: string) {
 
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(`${response.status} ${payload?.error?.message || response.statusText}`);
+    const error = new Error(`${response.status} ${payload?.error?.message || response.statusText}`) as GeminiHttpError;
+    error.status = response.status;
+    error.detail = payload?.error?.message || response.statusText;
+    throw error;
   }
   return payload;
 }
@@ -163,6 +275,11 @@ export default async function handler(req: any, res: any) {
   const { message = "", files = [], property = {}, accountancyEntries = [] } = requestPayload;
   if (!message.trim() && !files.length) {
     res.status(400).json({ error: "Message or files are required." });
+    return;
+  }
+
+  if (!files.length && isBasicHelpRequest(message)) {
+    res.status(200).json({ ...safeHelpResponse, model: "local-accountancy-guardrail" });
     return;
   }
 
@@ -211,22 +328,49 @@ ${JSON.stringify(accountancyEntries).slice(0, 12000)}
   const models = getReadyModels();
   let lastError: unknown = null;
 
+  if (!models.length) {
+    res.status(429).json({
+      error: "All configured Gemini fallback models are temporarily cooling down.",
+      detail: "Please retry in a few minutes or review GEMINI_FALLBACK_MODELS.",
+    });
+    return;
+  }
+
   for (const model of models) {
     try {
       const geminiResponse = await callGemini(model, requestBody, apiKey);
       const text = extractText(geminiResponse);
       const parsed = parseJson(text);
-      res.status(200).json({ ...parsed, model });
+      res.status(200).json({ ...normalizeAssistantPayload(parsed, property.currency || "USD"), model });
       return;
     } catch (error) {
       lastError = error;
       markModelUnavailable(model, error);
+      const status = getErrorStatus(error);
+      if (status === 400 || status === 401 || status === 403) {
+        res.status(status).json({
+          error: "Gemini rejected the request.",
+          detail: getErrorMessage(error),
+        });
+        return;
+      }
+      if (/non-json response|unexpected end of json input/i.test(getErrorMessage(error))) {
+        continue;
+      }
       if (!isRetryableError(error) && !isUnsupportedModelError(error)) break;
     }
   }
 
-  res.status(502).json({
-    error: "No Gemini fallback model is currently available.",
+  if (isQuotaError(lastError)) {
+    res.status(429).json({
+      error: "No Gemini fallback model is currently available.",
+      detail: getErrorMessage(lastError),
+    });
+    return;
+  }
+
+  res.status(200).json({
+    ...safeUnableToExtractResponse,
     detail: getErrorMessage(lastError),
   });
 }

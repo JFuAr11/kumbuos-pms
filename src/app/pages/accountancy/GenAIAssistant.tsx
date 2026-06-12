@@ -140,7 +140,12 @@ export function AccountancyGenAIAssistant() {
       });
 
       if (!response.ok) {
-        throw new Error(`The GenAI service returned ${response.status}. Check GEMINI_API_KEY in Vercel/local environment variables.`);
+        const errorPayload = await response.json().catch(() => null) as { error?: string; detail?: string } | null;
+        throw new Error(
+          errorPayload?.detail ||
+          errorPayload?.error ||
+          `The GenAI service returned ${response.status}. Check GEMINI_API_KEY in Vercel/local environment variables.`
+        );
       }
 
       const data = await response.json() as { reply?: string; extraction?: AssistantExtraction; model?: string };
@@ -165,7 +170,7 @@ export function AccountancyGenAIAssistant() {
         {
           id: `msg-${Date.now()}-error`,
           role: "assistant",
-          content: "I could not reach Gemini from this environment. On Vercel, make sure GEMINI_API_KEY is configured. No accounting data was changed.",
+          content: `I could not complete the GenAI process. No accounting data was changed.\n\nTechnical detail: ${message}`,
         },
       ]);
     } finally {
