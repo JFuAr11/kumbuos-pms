@@ -6,7 +6,10 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import {
   buildDualCurrencyAmounts,
+  formatDisplayMoney,
   formatMoney,
+  getDatedCategoryName,
+  getEntryDisplayAmount,
   getEntryThsAmount,
   getEntryUsdAmount,
   normalizeAccountancyEntry,
@@ -102,6 +105,7 @@ export function AccountancyLedgerManager({
     addAccountancyEntry,
     updateAccountancyEntry,
     deleteAccountancyEntry,
+    accountancyDisplayCurrency,
   } = useAppContext();
   const availableTypes = allowedTypes?.length
     ? allowedTypes
@@ -175,7 +179,7 @@ export function AccountancyLedgerManager({
   };
 
   const removeEntry = (entry: AccountancyEntry) => {
-    if (confirm(`Delete ${entry.type.toLowerCase()} entry "${entry.category}" for ${formatMoney(getEntryUsdAmount(entry), "USD")}?`)) {
+    if (confirm(`Delete ${entry.type.toLowerCase()} entry "${getDatedCategoryName(entry.category, entry.date)}" for ${formatDisplayMoney(getEntryDisplayAmount(entry, accountancyDisplayCurrency), accountancyDisplayCurrency)}?`)) {
       deleteAccountancyEntry(entry.id);
     }
   };
@@ -383,8 +387,7 @@ export function AccountancyLedgerManager({
               <th className="p-4 font-medium">Currency</th>
               <th className="p-4 font-medium">FX_USD_THS</th>
               <th className="p-4 font-medium">FX_THS_USD</th>
-              <th className="p-4 text-right font-medium">USD</th>
-              <th className="p-4 text-right font-medium">THS</th>
+              <th className="p-4 text-right font-medium">{accountancyDisplayCurrency}</th>
               <th className="p-4 text-right font-medium">Actions</th>
             </tr>
           </thead>
@@ -395,7 +398,7 @@ export function AccountancyLedgerManager({
                 <tr key={entry.id} className="border-b border-border">
                   <td className="p-4 text-muted-foreground">{entry.date}</td>
                   <td className="p-4 font-medium">{entry.type}</td>
-                  <td className="p-4">{entry.category}</td>
+                  <td className="p-4">{getDatedCategoryName(entry.category, entry.date)}</td>
                   <td className="p-4 text-xs text-muted-foreground">
                     {entry.subcategoryBreakdown?.length
                       ? entry.subcategoryBreakdown.map(item => `${item.name}: ${formatMoney(item.amount, entry.currency)}`).join(", ")
@@ -406,10 +409,7 @@ export function AccountancyLedgerManager({
                   <td className="p-4 text-muted-foreground">{Number(entry.fxUsdThs || 0).toFixed(6)}</td>
                   <td className="p-4 text-muted-foreground">{Number(entry.fxThsUsd || 0).toFixed(8)}</td>
                   <td className={`p-4 text-right font-semibold ${positive ? "text-green-600" : "text-destructive"}`}>
-                    {positive ? "" : "-"}{formatMoney(getEntryUsdAmount(entry), "USD")}
-                  </td>
-                  <td className={`p-4 text-right font-semibold ${positive ? "text-green-600" : "text-destructive"}`}>
-                    {positive ? "" : "-"}{formatMoney(getEntryThsAmount(entry), "THS")}
+                    {positive ? "" : "-"}{formatDisplayMoney(getEntryDisplayAmount(entry, accountancyDisplayCurrency), accountancyDisplayCurrency)}
                   </td>
                   <td className="p-4">
                     <div className="flex justify-end gap-1">
@@ -422,7 +422,7 @@ export function AccountancyLedgerManager({
             })}
             {!entries.length && (
               <tr>
-                <td colSpan={11} className="p-8 text-center text-muted-foreground">No manual or AI ledger entries for this scope yet.</td>
+                <td colSpan={10} className="p-8 text-center text-muted-foreground">No manual or AI ledger entries for this scope yet.</td>
               </tr>
             )}
           </tbody>
@@ -481,6 +481,7 @@ function normalizeBeforeSave(entry: AccountancyEntry, propertyId: string) {
 
   return {
     ...recalculated,
+    category: getDatedCategoryName(recalculated.category, recalculated.date),
     subcategoryBreakdown: recalculated.subcategoryBreakdown?.filter(item => item.name.trim()),
     subcategories: recalculated.subcategoryBreakdown?.map(item => item.name.trim()).filter(Boolean),
   };

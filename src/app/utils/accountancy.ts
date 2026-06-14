@@ -1,4 +1,4 @@
-import type { AccountancyEntry } from "../context/AppContext";
+import type { AccountancyDisplayCurrency, AccountancyEntry } from "../context/AppContext";
 
 export const DEFAULT_FX_USD_THS = 2600;
 export const DEFAULT_FX_THS_USD = 1 / DEFAULT_FX_USD_THS;
@@ -20,6 +20,8 @@ export type CategoryGroup = {
   entries: AccountancyEntry[];
   subcategories: Record<string, number>;
 };
+
+export type { AccountancyDisplayCurrency };
 
 export function formatMoney(value: number, currency = "USD") {
   const normalizedCurrency = normalizeCurrency(currency);
@@ -111,13 +113,15 @@ export function getConfirmedAccountancyEntries(params: {
 export function getAccountancySummary(params: {
   propertyId: string;
   accountancyEntries: AccountancyEntry[];
+  displayCurrency?: AccountancyDisplayCurrency;
 }): AccountancySummary {
   const confirmedEntries = getConfirmedAccountancyEntries(params);
+  const displayCurrency = params.displayCurrency || "USD";
 
-  const ledgerRevenue = sumByType(confirmedEntries, "Revenue");
-  const ledgerExpenses = sumByType(confirmedEntries, "Expense");
-  const totalAssets = sumByType(confirmedEntries, "Asset");
-  const totalLiabilities = sumByType(confirmedEntries, "Liability");
+  const ledgerRevenue = sumByType(confirmedEntries, "Revenue", displayCurrency);
+  const ledgerExpenses = sumByType(confirmedEntries, "Expense", displayCurrency);
+  const totalAssets = sumByType(confirmedEntries, "Asset", displayCurrency);
+  const totalLiabilities = sumByType(confirmedEntries, "Liability", displayCurrency);
 
   return {
     ledgerRevenue,
@@ -131,9 +135,9 @@ export function getAccountancySummary(params: {
   };
 }
 
-export function groupAccountancyEntriesByCategory(entries: AccountancyEntry[]) {
+export function groupAccountancyEntriesByCategory(entries: AccountancyEntry[], displayCurrency: AccountancyDisplayCurrency = "USD") {
   const groups = entries.map(normalizeAccountancyEntry).reduce((acc, entry) => {
-    const key = entry.category || "Uncategorized";
+    const key = getDatedCategoryName(entry.category || "Uncategorized", entry.date);
     if (!acc[key]) {
       acc[key] = {
         category: key,
@@ -143,7 +147,7 @@ export function groupAccountancyEntriesByCategory(entries: AccountancyEntry[]) {
       };
     }
 
-    acc[key].total += getEntryUsdAmount(entry);
+    acc[key].total += getEntryDisplayAmount(entry, displayCurrency);
     acc[key].entries.push(entry);
 
     const breakdown = entry.subcategoryBreakdown?.length
@@ -152,7 +156,8 @@ export function groupAccountancyEntriesByCategory(entries: AccountancyEntry[]) {
 
     breakdown.forEach(subcategory => {
       const name = subcategory.name || "Unassigned";
-      acc[key].subcategories[name] = (acc[key].subcategories[name] || 0) + Number(subcategory.amountUsd || 0);
+      const amount = displayCurrency === "THS" ? Number(subcategory.amountThs || 0) : Number(subcategory.amountUsd || 0);
+      acc[key].subcategories[name] = (acc[key].subcategories[name] || 0) + amount;
     });
 
     return acc;
@@ -181,15 +186,32 @@ export function getEntryThsAmount(entry: AccountancyEntry) {
   return Number(entry.amountThs ?? buildDualCurrencyAmounts(entry).amountThs ?? 0);
 }
 
+export function getEntryDisplayAmount(entry: AccountancyEntry, displayCurrency: AccountancyDisplayCurrency = "USD") {
+  return displayCurrency === "THS" ? getEntryThsAmount(entry) : getEntryUsdAmount(entry);
+}
+
+export function formatDisplayMoney(value: number, displayCurrency: AccountancyDisplayCurrency = "USD") {
+  return formatMoney(value, displayCurrency);
+}
+
+export function getDatedCategoryName(category: string, date?: string) {
+  const cleanCategory = (category || "Uncategorized").trim();
+  if (!date) return cleanCategory;
+  const isoDate = date.slice(0, 10);
+  if (!isoDate) return cleanCategory;
+  const withoutExistingDate = cleanCategory.replace(/\s+\d{4}-\d{2}-\d{2}$/u, "").trim();
+  return `${withoutExistingDate} ${isoDate}`;
+}
+
 export function roundMoney(value: number, digits = 2) {
   const factor = 10 ** digits;
   return Math.round((Number(value || 0) + Number.EPSILON) * factor) / factor;
 }
 
-function sumByType(entries: AccountancyEntry[], type: AccountancyEntry["type"]) {
+function sumByType(entries: AccountancyEntry[], type: AccountancyEntry["type"], displayCurrency: AccountancyDisplayCurrency) {
   return entries
     .filter(entry => entry.type === type)
-    .reduce((sum, entry) => sum + getEntryUsdAmount(entry), 0);
+    .reduce((sum, entry) => sum + getEntryDisplayAmount(entry, displayCurrency), 0);
 }
 
 function normalizeSubcategoryBreakdown(

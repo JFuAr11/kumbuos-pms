@@ -2,21 +2,22 @@ import { Download, TrendingDown } from "lucide-react";
 import { useAppContext } from "../../context/AppContext";
 import { Button } from "../../components/ui/button";
 import { AccountancyLedgerManager } from "../../components/accountancy/AccountancyLedgerManager";
+import { AccountancyCurrencyFilter } from "../../components/accountancy/AccountancyCurrencyFilter";
 import { exportToCSV, exportToExcel, exportToJSON } from "../../utils/export";
-import { formatMoney, getAccountancySummary, getEntryThsAmount, getEntryUsdAmount, groupAccountancyEntriesByCategory, normalizeAccountancyEntry } from "../../utils/accountancy";
+import { formatDisplayMoney, formatMoney, getAccountancySummary, getDatedCategoryName, getEntryDisplayAmount, getEntryThsAmount, getEntryUsdAmount, groupAccountancyEntriesByCategory, normalizeAccountancyEntry } from "../../utils/accountancy";
 
 export function AccountancyExpenses() {
-  const { accountancyEntries, selectedPropertyId } = useAppContext();
+  const { accountancyEntries, selectedPropertyId, accountancyDisplayCurrency } = useAppContext();
 
-  const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries });
+  const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries, displayCurrency: accountancyDisplayCurrency });
   const expenseEntries = accountancyEntries
     .filter(entry => entry.propertyId === selectedPropertyId && entry.type === "Expense" && entry.status === "Confirmed")
     .map(normalizeAccountancyEntry);
-  const ledgerExpensesByCategory = groupAccountancyEntriesByCategory(expenseEntries);
+  const ledgerExpensesByCategory = groupAccountancyEntriesByCategory(expenseEntries, accountancyDisplayCurrency);
 
   const rows = expenseEntries.map(entry => ({
     Date: entry.date,
-    Category: entry.category,
+    Category: getDatedCategoryName(entry.category, entry.date),
     Subcategories: entry.subcategoryBreakdown?.length
       ? entry.subcategoryBreakdown.map(item => `${item.name}: ${formatMoney(item.amount, entry.currency)}`).join(", ")
       : entry.subcategories?.join(", ") || "",
@@ -29,6 +30,7 @@ export function AccountancyExpenses() {
     FX_THS_USD: entry.fxThsUsd,
     AmountUSD: getEntryUsdAmount(entry),
     AmountTHS: getEntryThsAmount(entry),
+    DisplayAmount: getEntryDisplayAmount(entry, accountancyDisplayCurrency),
     Source: entry.source,
     Details: entry.description,
   }));
@@ -46,7 +48,8 @@ export function AccountancyExpenses() {
           <h1 className="text-3xl font-bold">Expenses</h1>
           <p className="text-muted-foreground">Confirmed supplier invoices and expense records posted manually or through GenAI Assistant.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <AccountancyCurrencyFilter compact />
           <Button variant="outline" size="sm" onClick={() => handleExport("csv")}><Download className="mr-2 h-4 w-4" />CSV</Button>
           <Button variant="outline" size="sm" onClick={() => handleExport("excel")}>Excel</Button>
           <Button variant="outline" size="sm" onClick={() => handleExport("json")}>JSON</Button>
@@ -54,10 +57,12 @@ export function AccountancyExpenses() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <SummaryCard label="Ledger Expenses" value={formatMoney(summary.ledgerExpenses)} />
+        <SummaryCard label="Ledger Expenses" value={formatDisplayMoney(summary.ledgerExpenses, accountancyDisplayCurrency)} />
         <SummaryCard label="Confirmed Entries" value={String(expenseEntries.length)} />
-        <SummaryCard label="Total Expenses" value={formatMoney(summary.totalExpenses)} strong />
+        <SummaryCard label="Total Expenses" value={formatDisplayMoney(summary.totalExpenses, accountancyDisplayCurrency)} strong />
       </div>
+
+      <AccountancyLedgerManager title="Manage Expense Ledger Entries" filter="Expense" />
 
       <CategoryPanel title="Expenses by Category" items={ledgerExpensesByCategory} />
 
@@ -76,8 +81,7 @@ export function AccountancyExpenses() {
                 <th className="p-4 font-medium">Currency</th>
                 <th className="p-4 font-medium">FX_USD_THS</th>
                 <th className="p-4 font-medium">FX_THS_USD</th>
-                <th className="p-4 text-right font-medium">USD</th>
-                <th className="p-4 text-right font-medium">THS</th>
+                <th className="p-4 text-right font-medium">{accountancyDisplayCurrency}</th>
               </tr>
             </thead>
             <tbody>
@@ -93,26 +97,22 @@ export function AccountancyExpenses() {
                   <td className="p-4 text-muted-foreground">{row.Currency}</td>
                   <td className="p-4 text-muted-foreground">{Number(row.FX_USD_THS || 0).toFixed(6)}</td>
                   <td className="p-4 text-muted-foreground">{Number(row.FX_THS_USD || 0).toFixed(8)}</td>
-                  <td className="p-4 text-right font-semibold text-destructive">-{formatMoney(row.AmountUSD, "USD")}</td>
-                  <td className="p-4 text-right font-semibold text-destructive">-{formatMoney(row.AmountTHS, "THS")}</td>
+                  <td className="p-4 text-right font-semibold text-destructive">-{formatDisplayMoney(row.DisplayAmount, accountancyDisplayCurrency)}</td>
                 </tr>
               ))}
               {!rows.length && (
                 <tr>
-                  <td colSpan={12} className="p-8 text-center text-muted-foreground">No expenses found.</td>
+                  <td colSpan={11} className="p-8 text-center text-muted-foreground">No expenses found.</td>
                 </tr>
               )}
               <tr className="border-t border-border bg-muted/30">
                 <td className="p-4 text-right font-bold" colSpan={10}>TOTAL EXPENSES</td>
-                <td className="p-4 text-right font-bold text-destructive">-{formatMoney(summary.totalExpenses)}</td>
-                <td className="p-4" />
+                <td className="p-4 text-right font-bold text-destructive">-{formatDisplayMoney(summary.totalExpenses, accountancyDisplayCurrency)}</td>
               </tr>
             </tbody>
           </table>
         </div>
       </div>
-
-      <AccountancyLedgerManager title="Manage Expense Ledger Entries" filter="Expense" />
     </div>
   );
 }
@@ -130,6 +130,7 @@ function SummaryCard({ label, value, strong }: { label: string; value: string; s
 }
 
 function CategoryPanel({ title, items }: { title: string; items: ReturnType<typeof groupAccountancyEntriesByCategory> }) {
+  const { accountancyDisplayCurrency } = useAppContext();
   return (
     <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
       <h2 className="font-semibold">{title}</h2>
@@ -138,7 +139,7 @@ function CategoryPanel({ title, items }: { title: string; items: ReturnType<type
           <div key={group.category} className="rounded-md bg-muted/40 px-3 py-2 text-sm">
             <div className="flex items-center justify-between gap-3">
               <span className="font-medium">{group.category}</span>
-              <span className="font-semibold text-destructive">-{formatMoney(group.total)}</span>
+              <span className="font-semibold text-destructive">-{formatDisplayMoney(group.total, accountancyDisplayCurrency)}</span>
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
               {Object.keys(group.subcategories).map(subcategory => (

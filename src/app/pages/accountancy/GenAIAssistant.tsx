@@ -4,9 +4,13 @@ import type { AccountancyEntry } from "../../context/AppContext";
 import { useAppContext } from "../../context/AppContext";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
+import { AccountancyCurrencyFilter } from "../../components/accountancy/AccountancyCurrencyFilter";
 import {
   buildDualCurrencyAmounts,
+  formatDisplayMoney,
   formatMoney,
+  getDatedCategoryName,
+  getEntryDisplayAmount,
   getEntryThsAmount,
   getEntryUsdAmount,
   normalizeAccountancyEntry,
@@ -101,6 +105,7 @@ export function AccountancyGenAIAssistant() {
     addAccountancyEntry,
     updateAccountancyEntry,
     deleteAccountancyEntry,
+    accountancyDisplayCurrency,
   } = useAppContext();
   const activeProperty = properties.find(property => property.id === selectedPropertyId);
   const propertyEntries = useMemo(
@@ -294,7 +299,7 @@ export function AccountancyGenAIAssistant() {
         return;
       }
       deleteAccountancyEntry(pendingAction.targetEntryId);
-      appendPostedMessage(`Deleted ${pendingAction.original.type.toLowerCase()} entry "${pendingAction.original.category}" from Accountancy. ${statementImpact(pendingAction.original.type)} and Overview are now updated.`);
+      appendPostedMessage(`Deleted ${pendingAction.original.type.toLowerCase()} entry "${getDatedCategoryName(pendingAction.original.category, pendingAction.original.date)}" from Accountancy. ${statementImpact(pendingAction.original.type)} and Overview are now updated.`);
       setPendingAction(null);
       setError("");
       return;
@@ -349,10 +354,10 @@ export function AccountancyGenAIAssistant() {
         return;
       }
       updateAccountancyEntry(original.id, payload);
-      appendPostedMessage(`Updated ${payload.type.toLowerCase()} entry "${payload.category}" for ${formatMoney(payload.amount, payload.currency)}. ${statementImpact(payload.type)} and Overview are now recalculated.`);
+      appendPostedMessage(`Updated ${payload.type.toLowerCase()} entry "${payload.category}" for ${formatDisplayMoney(getEntryDisplayAmount(payload, accountancyDisplayCurrency), accountancyDisplayCurrency)}. ${statementImpact(payload.type)} and Overview are now recalculated.`);
     } else {
       addAccountancyEntry(payload);
-      appendPostedMessage(`${payload.type} posted to Accountancy for ${formatMoney(payload.amount, payload.currency)}. ${statementImpact(payload.type)} and Overview are now updated.`);
+      appendPostedMessage(`${payload.type} posted to Accountancy for ${formatDisplayMoney(getEntryDisplayAmount(payload, accountancyDisplayCurrency), accountancyDisplayCurrency)}. ${statementImpact(payload.type)} and Overview are now updated.`);
     }
 
     setPendingAction(null);
@@ -372,10 +377,13 @@ export function AccountancyGenAIAssistant() {
 
   return (
     <div className="space-y-6 p-4 sm:p-6 lg:p-8">
-      <div>
-        <p className="text-sm font-semibold uppercase tracking-wider text-primary">Accountancy Intelligence</p>
-        <h1 className="text-3xl font-bold">GenAI Assistant</h1>
-        <p className="text-muted-foreground">Create, review, modify, or delete revenues, expenses, assets, and liabilities only after explicit confirmation.</p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold uppercase tracking-wider text-primary">Accountancy Intelligence</p>
+          <h1 className="text-3xl font-bold">GenAI Assistant</h1>
+          <p className="text-muted-foreground">Create, review, modify, or delete revenues, expenses, assets, and liabilities only after explicit confirmation.</p>
+        </div>
+        <AccountancyCurrencyFilter compact />
       </div>
 
       <div className="rounded-xl border border-primary/30 bg-primary/10 p-4 text-sm">
@@ -414,7 +422,7 @@ export function AccountancyGenAIAssistant() {
                   {message.extraction && message.extraction.type !== "Unknown" && (
                     <div className="mt-3 rounded-md border border-border bg-card p-3 text-foreground">
                       <p className="font-semibold">{(message.extraction.action || "create").toUpperCase()} proposal</p>
-                      <p className="text-muted-foreground">{message.extraction.category} - {formatMoney(Number(message.extraction.amount || 0), message.extraction.currency || "USD")}</p>
+                      <p className="text-muted-foreground">{getDatedCategoryName(message.extraction.category || "Uncategorized", message.extraction.date)} - {formatMoney(Number(message.extraction.amount || 0), message.extraction.currency || "USD")}</p>
                     </div>
                   )}
                 </div>
@@ -476,7 +484,7 @@ export function AccountancyGenAIAssistant() {
                   <div className="flex items-center justify-between gap-3">
                     <span className="font-medium">{entry.category}</span>
                     <span className={entry.type === "Revenue" || entry.type === "Asset" ? "text-green-600" : "text-destructive"}>
-                      {entry.type === "Expense" || entry.type === "Liability" ? "-" : ""}{formatMoney(getEntryUsdAmount(entry), "USD")}
+                      {entry.type === "Expense" || entry.type === "Liability" ? "-" : ""}{formatDisplayMoney(getEntryDisplayAmount(entry, accountancyDisplayCurrency), accountancyDisplayCurrency)}
                     </span>
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
@@ -533,12 +541,16 @@ function ActiveReviewPanel({
   setPendingAction: (action: PendingAction | null) => void;
   onConfirm: () => void;
 }) {
+  const { accountancyDisplayCurrency } = useAppContext();
   const draft = recalculateDraft(pendingAction.draft);
   const updateDraft = (updates: Partial<AccountancyEntry>) => setPendingAction({ ...pendingAction, draft: recalculateDraft({ ...draft, ...updates }) });
   const [fxStatus, setFxStatus] = useState("");
   const isDelete = pendingAction.action === "delete";
   const subcategoryBreakdown = draft.subcategoryBreakdown?.length ? draft.subcategoryBreakdown : [{ name: "", amount: 0, amountUsd: 0, amountThs: 0 }];
   const subcategoryTotal = subcategoryBreakdown.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const displayTotal = draft.type === "Expense" || draft.type === "Liability"
+    ? -getEntryDisplayAmount(draft as AccountancyEntry, accountancyDisplayCurrency)
+    : getEntryDisplayAmount(draft as AccountancyEntry, accountancyDisplayCurrency);
   const updateSubcategory = (index: number, updates: Partial<NonNullable<AccountancyEntry["subcategoryBreakdown"]>[number]>) => {
     const next = [...subcategoryBreakdown];
     next[index] = { ...next[index], ...updates };
@@ -592,6 +604,34 @@ function ActiveReviewPanel({
         <div className="mt-4 rounded-md border border-border bg-muted/30 p-3 text-sm">
           <p className="font-medium">Target entry</p>
           <p className="text-muted-foreground">{pendingAction.original.id} - {pendingAction.original.category} - {formatMoney(getEntryUsdAmount(pendingAction.original), "USD")}</p>
+        </div>
+      )}
+
+      {!isDelete && (
+        <div className="mt-4 rounded-lg border border-primary/30 bg-primary/10 p-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-primary">Category total</p>
+              <h3 className="text-lg font-bold">{getDatedCategoryName(draft.category || "Uncategorized", draft.date)}</h3>
+            </div>
+            <span className={`text-xl font-bold ${displayTotal < 0 ? "text-destructive" : "text-green-700"}`}>
+              {displayTotal < 0 ? "-" : ""}{formatDisplayMoney(Math.abs(displayTotal), accountancyDisplayCurrency)}
+            </span>
+          </div>
+          <div className="mt-3 space-y-2">
+            {subcategoryBreakdown.filter(item => item.name.trim()).map(item => {
+              const amount = accountancyDisplayCurrency === "THS" ? Number(item.amountThs || 0) : Number(item.amountUsd || 0);
+              return (
+                <div key={item.name} className="flex items-center justify-between gap-3 rounded-md bg-background/80 px-3 py-2 text-sm">
+                  <span className="min-w-0 truncate text-muted-foreground">{item.name}</span>
+                  <span className="font-semibold">{formatDisplayMoney(amount, accountancyDisplayCurrency)}</span>
+                </div>
+              );
+            })}
+            {!subcategoryBreakdown.some(item => item.name.trim()) && (
+              <p className="text-sm text-muted-foreground">No subcategory amounts detected yet. Add them before confirming if the invoice has line-item categories.</p>
+            )}
+          </div>
         </div>
       )}
 
@@ -756,7 +796,7 @@ function normalizeForPosting(draft: Partial<AccountancyEntry>): AccountancyEntry
     propertyId: recalculated.propertyId || "",
     type: recalculated.type || "Revenue",
     date: recalculated.date || new Date().toISOString().split("T")[0],
-    category: recalculated.category || "",
+    category: getDatedCategoryName(recalculated.category || "", recalculated.date),
     subcategories: subcategoryBreakdown.map(item => item.name.trim()),
     subcategoryBreakdown,
     counterparty: recalculated.counterparty || "",

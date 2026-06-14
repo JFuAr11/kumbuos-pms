@@ -2,22 +2,24 @@ import { useState } from "react";
 import { ChevronDown, ChevronRight, Download, Scale } from "lucide-react";
 import { useAppContext } from "../../context/AppContext";
 import { Button } from "../../components/ui/button";
+import { AccountancyCurrencyFilter } from "../../components/accountancy/AccountancyCurrencyFilter";
 import { AccountancyLedgerManager } from "../../components/accountancy/AccountancyLedgerManager";
 import { exportToCSV, exportToExcel, exportToJSON } from "../../utils/export";
 import {
   CategoryGroup,
   flattenCategoryGroups,
+  formatDisplayMoney,
   formatMoney,
   getAccountancySummary,
   groupAccountancyEntriesByCategory,
 } from "../../utils/accountancy";
 
 export function AccountancyProfitLoss() {
-  const { accountancyEntries, selectedPropertyId } = useAppContext();
-  const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries });
+  const { accountancyEntries, selectedPropertyId, accountancyDisplayCurrency } = useAppContext();
+  const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries, displayCurrency: accountancyDisplayCurrency });
   const confirmedEntries = accountancyEntries.filter(entry => entry.propertyId === selectedPropertyId && entry.status === "Confirmed");
-  const revenueGroups = groupAccountancyEntriesByCategory(confirmedEntries.filter(entry => entry.type === "Revenue"));
-  const expenseGroups = groupAccountancyEntriesByCategory(confirmedEntries.filter(entry => entry.type === "Expense"));
+  const revenueGroups = groupAccountancyEntriesByCategory(confirmedEntries.filter(entry => entry.type === "Revenue"), accountancyDisplayCurrency);
+  const expenseGroups = groupAccountancyEntriesByCategory(confirmedEntries.filter(entry => entry.type === "Expense"), accountancyDisplayCurrency);
 
   const rows = [
     ...flattenCategoryGroups(revenueGroups, "Revenue", 1),
@@ -38,7 +40,8 @@ export function AccountancyProfitLoss() {
           <h1 className="text-3xl font-bold">Profit & Loss (P&L)</h1>
           <p className="text-muted-foreground">Automatically updated from confirmed Accountancy revenue and expense entries.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <AccountancyCurrencyFilter compact />
           <Button variant="outline" size="sm" onClick={() => handleExport("csv")}><Download className="mr-2 h-4 w-4" />CSV</Button>
           <Button variant="outline" size="sm" onClick={() => handleExport("excel")}>Excel</Button>
           <Button variant="outline" size="sm" onClick={() => handleExport("json")}>JSON</Button>
@@ -46,8 +49,8 @@ export function AccountancyProfitLoss() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
-        <StatementPanel title="Revenue" groups={revenueGroups} total={summary.totalRevenue} tone="positive" />
-        <StatementPanel title="Expenses" groups={expenseGroups} total={summary.totalExpenses} tone="negative" />
+        <StatementPanel title="Revenue" groups={revenueGroups} total={summary.totalRevenue} tone="positive" displayCurrency={accountancyDisplayCurrency} />
+        <StatementPanel title="Expenses" groups={expenseGroups} total={summary.totalExpenses} tone="negative" displayCurrency={accountancyDisplayCurrency} />
       </div>
 
       <div className={`rounded-xl border-2 p-6 shadow-sm ${summary.netProfit >= 0 ? "border-green-500/30 bg-green-500/10 text-green-800" : "border-red-500/30 bg-red-500/10 text-red-800"}`}>
@@ -58,7 +61,7 @@ export function AccountancyProfitLoss() {
           </div>
           <div className="flex items-center gap-3">
             <Scale className="h-6 w-6" />
-            <span className="text-3xl font-bold">{summary.netProfit < 0 ? `-${formatMoney(Math.abs(summary.netProfit))}` : formatMoney(summary.netProfit)}</span>
+            <span className="text-3xl font-bold">{summary.netProfit < 0 ? `-${formatDisplayMoney(Math.abs(summary.netProfit), accountancyDisplayCurrency)}` : formatDisplayMoney(summary.netProfit, accountancyDisplayCurrency)}</span>
           </div>
         </div>
       </div>
@@ -73,11 +76,13 @@ function StatementPanel({
   groups,
   total,
   tone,
+  displayCurrency,
 }: {
   title: string;
   groups: CategoryGroup[];
   total: number;
   tone: "positive" | "negative";
+  displayCurrency: "USD" | "THS";
 }) {
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const toneClass = tone === "positive" ? "text-green-600" : "text-destructive";
@@ -102,14 +107,14 @@ function StatementPanel({
                   {isOpen ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
                   <span className="truncate">{group.category}</span>
                 </span>
-                <span className={`shrink-0 font-semibold ${toneClass}`}>{sign}{formatMoney(group.total)}</span>
+                <span className={`shrink-0 font-semibold ${toneClass}`}>{sign}{formatDisplayMoney(group.total, displayCurrency)}</span>
               </button>
               {isOpen && (
                 <div className="space-y-2 px-8 pb-4">
                   {Object.entries(group.subcategories).map(([subcategory, amount]) => (
                     <div key={subcategory} className="flex items-center justify-between gap-3 rounded-md bg-muted/40 px-3 py-2 text-sm">
                       <span className="min-w-0 truncate text-xs text-muted-foreground">{subcategory}</span>
-                      <span className={`text-xs font-semibold ${toneClass}`}>{sign}{formatMoney(amount)}</span>
+                      <span className={`text-xs font-semibold ${toneClass}`}>{sign}{formatDisplayMoney(amount, displayCurrency)}</span>
                     </div>
                   ))}
                 </div>
@@ -121,7 +126,7 @@ function StatementPanel({
       </div>
       <div className="flex items-center justify-between border-t border-border bg-muted/30 p-4">
         <span className="font-bold">Total {title}</span>
-        <span className={`font-bold ${toneClass}`}>{sign}{formatMoney(total)}</span>
+        <span className={`font-bold ${toneClass}`}>{sign}{formatDisplayMoney(total, displayCurrency)}</span>
       </div>
     </div>
   );

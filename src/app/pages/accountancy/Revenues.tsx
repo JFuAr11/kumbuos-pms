@@ -2,20 +2,21 @@ import { Download, TrendingUp } from "lucide-react";
 import { useAppContext } from "../../context/AppContext";
 import { Button } from "../../components/ui/button";
 import { AccountancyLedgerManager } from "../../components/accountancy/AccountancyLedgerManager";
+import { AccountancyCurrencyFilter } from "../../components/accountancy/AccountancyCurrencyFilter";
 import { exportToCSV, exportToExcel, exportToJSON } from "../../utils/export";
-import { formatMoney, getAccountancySummary, getEntryThsAmount, getEntryUsdAmount, normalizeAccountancyEntry } from "../../utils/accountancy";
+import { formatDisplayMoney, formatMoney, getAccountancySummary, getDatedCategoryName, getEntryDisplayAmount, getEntryThsAmount, getEntryUsdAmount, normalizeAccountancyEntry } from "../../utils/accountancy";
 
 export function AccountancyRevenues() {
-  const { accountancyEntries, selectedPropertyId } = useAppContext();
+  const { accountancyEntries, selectedPropertyId, accountancyDisplayCurrency } = useAppContext();
 
-  const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries });
+  const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries, displayCurrency: accountancyDisplayCurrency });
   const revenueEntries = accountancyEntries
     .filter(entry => entry.propertyId === selectedPropertyId && entry.type === "Revenue" && entry.status === "Confirmed")
     .map(normalizeAccountancyEntry);
 
   const rows = revenueEntries.map(entry => ({
     Date: entry.date,
-    Category: entry.category,
+    Category: getDatedCategoryName(entry.category, entry.date),
     Subcategories: entry.subcategoryBreakdown?.length
       ? entry.subcategoryBreakdown.map(item => `${item.name}: ${formatMoney(item.amount, entry.currency)}`).join(", ")
       : entry.subcategories?.join(", ") || "",
@@ -29,6 +30,7 @@ export function AccountancyRevenues() {
     FX_THS_USD: entry.fxThsUsd,
     AmountUSD: getEntryUsdAmount(entry),
     AmountTHS: getEntryThsAmount(entry),
+    DisplayAmount: getEntryDisplayAmount(entry, accountancyDisplayCurrency),
     Source: entry.source,
     Details: entry.description,
   }));
@@ -46,7 +48,8 @@ export function AccountancyRevenues() {
           <h1 className="text-3xl font-bold">Revenues</h1>
           <p className="text-muted-foreground">Confirmed revenue lines posted manually or through GenAI Assistant.</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <AccountancyCurrencyFilter compact />
           <Button variant="outline" size="sm" onClick={() => handleExport("csv")}><Download className="mr-2 h-4 w-4" />CSV</Button>
           <Button variant="outline" size="sm" onClick={() => handleExport("excel")}>Excel</Button>
           <Button variant="outline" size="sm" onClick={() => handleExport("json")}>JSON</Button>
@@ -54,10 +57,12 @@ export function AccountancyRevenues() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <SummaryCard label="Ledger Revenue" value={formatMoney(summary.ledgerRevenue)} />
+        <SummaryCard label="Ledger Revenue" value={formatDisplayMoney(summary.ledgerRevenue, accountancyDisplayCurrency)} />
         <SummaryCard label="Confirmed Entries" value={String(revenueEntries.length)} />
-        <SummaryCard label="Total Revenue" value={formatMoney(summary.totalRevenue)} strong />
+        <SummaryCard label="Total Revenue" value={formatDisplayMoney(summary.totalRevenue, accountancyDisplayCurrency)} strong />
       </div>
+
+      <AccountancyLedgerManager title="Manage Revenue Ledger Entries" filter="Revenue" />
 
       <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
         <div className="overflow-auto">
@@ -75,8 +80,7 @@ export function AccountancyRevenues() {
                 <th className="p-4 font-medium">Currency</th>
                 <th className="p-4 font-medium">FX_USD_THS</th>
                 <th className="p-4 font-medium">FX_THS_USD</th>
-                <th className="p-4 text-right font-medium">USD</th>
-                <th className="p-4 text-right font-medium">THS</th>
+                <th className="p-4 text-right font-medium">{accountancyDisplayCurrency}</th>
               </tr>
             </thead>
             <tbody>
@@ -93,26 +97,22 @@ export function AccountancyRevenues() {
                   <td className="p-4 text-muted-foreground">{row.Currency}</td>
                   <td className="p-4 text-muted-foreground">{Number(row.FX_USD_THS || 0).toFixed(6)}</td>
                   <td className="p-4 text-muted-foreground">{Number(row.FX_THS_USD || 0).toFixed(8)}</td>
-                  <td className="p-4 text-right font-semibold text-green-600">{formatMoney(row.AmountUSD, "USD")}</td>
-                  <td className="p-4 text-right font-semibold text-green-600">{formatMoney(row.AmountTHS, "THS")}</td>
+                  <td className="p-4 text-right font-semibold text-green-600">{formatDisplayMoney(row.DisplayAmount, accountancyDisplayCurrency)}</td>
                 </tr>
               ))}
               {!rows.length && (
                 <tr>
-                  <td colSpan={13} className="p-8 text-center text-muted-foreground">No revenue lines found.</td>
+                  <td colSpan={12} className="p-8 text-center text-muted-foreground">No revenue lines found.</td>
                 </tr>
               )}
               <tr className="border-t border-border bg-muted/30">
                 <td className="p-4 text-right font-bold" colSpan={11}>TOTAL REVENUE</td>
-                <td className="p-4 text-right font-bold text-green-600">{formatMoney(summary.totalRevenue)}</td>
-                <td className="p-4" />
+                <td className="p-4 text-right font-bold text-green-600">{formatDisplayMoney(summary.totalRevenue, accountancyDisplayCurrency)}</td>
               </tr>
             </tbody>
           </table>
         </div>
       </div>
-
-      <AccountancyLedgerManager title="Manage Revenue Ledger Entries" filter="Revenue" />
     </div>
   );
 }

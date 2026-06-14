@@ -278,6 +278,8 @@ export type AccountancyEntry = {
   createdAt: string;
 };
 
+export type AccountancyDisplayCurrency = 'USD' | 'THS';
+
 type AppContextType = {
   currentUser: SystemUser | null;
   login: (email: string, password: string) => SystemUser | null;
@@ -368,6 +370,8 @@ type AppContextType = {
   deleteSupplyRequest: (id: string) => void;
 
   accountancyEntries: AccountancyEntry[];
+  accountancyDisplayCurrency: AccountancyDisplayCurrency;
+  setAccountancyDisplayCurrency: (currency: AccountancyDisplayCurrency) => void;
   addAccountancyEntry: (entry: AccountancyEntry) => void;
   updateAccountancyEntry: (id: string, entry: Partial<AccountancyEntry>) => void;
   deleteAccountancyEntry: (id: string) => void;
@@ -837,6 +841,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   ]);
 
   const [accountancyEntries, setAccountancyEntries] = usePersistentState<AccountancyEntry[]>('pms-accountancy-entries-v2', []);
+  const [accountancyDisplayCurrency, setAccountancyDisplayCurrency] = usePersistentState<AccountancyDisplayCurrency>('pms-accountancy-display-currency', 'USD');
 
   const currentUser = systemUsers.find(user => user.id === currentUserId) || (currentUserId === ROOT_OWNER_ID ? getRootOwnerUser() : null);
 
@@ -1290,7 +1295,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       otaConnections, addOtaConnection, updateOtaConnection, deleteOtaConnection,
       reservationPolicies, addReservationPolicy, updateReservationPolicy, deleteReservationPolicy,
       supplyRequests, addSupplyRequest, updateSupplyRequest, deleteSupplyRequest,
-      accountancyEntries, addAccountancyEntry, updateAccountancyEntry, deleteAccountancyEntry,
+      accountancyEntries, accountancyDisplayCurrency, setAccountancyDisplayCurrency, addAccountancyEntry, updateAccountancyEntry, deleteAccountancyEntry,
     }}>
       {children}
     </AppContext.Provider>

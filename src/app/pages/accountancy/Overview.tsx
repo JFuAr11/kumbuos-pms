@@ -14,20 +14,23 @@ import {
 } from "recharts";
 import type { AccountancyEntry } from "../../context/AppContext";
 import { useAppContext } from "../../context/AppContext";
+import { AccountancyCurrencyFilter } from "../../components/accountancy/AccountancyCurrencyFilter";
 import {
+  formatDisplayMoney,
   formatMoney,
   getAccountancySummary,
   getConfirmedAccountancyEntries,
+  getEntryDisplayAmount,
   groupAccountancyEntriesByCategory,
 } from "../../utils/accountancy";
 
 type ChartRow = Record<string, string | number>;
 
 export function AccountancyOverview() {
-  const { accountancyEntries, selectedPropertyId } = useAppContext();
+  const { accountancyEntries, selectedPropertyId, accountancyDisplayCurrency } = useAppContext();
   const confirmedEntries = getConfirmedAccountancyEntries({ propertyId: selectedPropertyId, accountancyEntries });
   const propertyEntries = accountancyEntries.filter(entry => entry.propertyId === selectedPropertyId);
-  const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries });
+  const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries, displayCurrency: accountancyDisplayCurrency });
   const aiEntries = propertyEntries.filter(entry => entry.source === "GenAI Assistant");
 
   const revenueEntries = confirmedEntries.filter(entry => entry.type === "Revenue");
@@ -38,27 +41,30 @@ export function AccountancyOverview() {
   const pnlCategoryRows = mergeCategoryGroups([
     { label: "Revenue", entries: revenueEntries },
     { label: "Expenses", entries: expenseEntries },
-  ]);
+  ], accountancyDisplayCurrency);
   const balanceCategoryRows = mergeCategoryGroups([
     { label: "Assets", entries: assetEntries },
     { label: "Liabilities", entries: liabilityEntries },
-  ]);
-  const monthlyRows = buildMonthlyRows(confirmedEntries);
+  ], accountancyDisplayCurrency);
+  const monthlyRows = buildMonthlyRows(confirmedEntries, accountancyDisplayCurrency);
 
   return (
     <div className="space-y-6 p-4 sm:p-6 lg:p-8">
-      <div>
-        <h1 className="text-3xl font-bold">Accountancy Overview</h1>
-        <p className="text-muted-foreground">
-          Overview is calculated from Profit & Loss and Balance data for the active property.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold">Accountancy Overview</h1>
+          <p className="text-muted-foreground">
+            Overview is calculated from Profit & Loss and Balance data for the active property.
+          </p>
+        </div>
+        <AccountancyCurrencyFilter compact />
       </div>
 
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-5">
-        <Metric title="P&L Revenues" value={formatMoney(summary.totalRevenue)} tone="positive" icon={TrendingUp} />
-        <Metric title="P&L Expenses" value={formatMoney(summary.totalExpenses)} tone="negative" icon={TrendingDown} />
-        <Metric title="P&L Net Profit" value={formatMoney(summary.netProfit)} tone={summary.netProfit >= 0 ? "positive" : "negative"} icon={Scale} />
-        <Metric title="Balance Net Position" value={formatMoney(summary.netBalance)} tone={summary.netBalance >= 0 ? "positive" : "negative"} icon={Wallet} />
+        <Metric title="P&L Revenues" value={formatDisplayMoney(summary.totalRevenue, accountancyDisplayCurrency)} tone="positive" icon={TrendingUp} />
+        <Metric title="P&L Expenses" value={formatDisplayMoney(summary.totalExpenses, accountancyDisplayCurrency)} tone="negative" icon={TrendingDown} />
+        <Metric title="P&L Net Profit" value={formatDisplayMoney(summary.netProfit, accountancyDisplayCurrency)} tone={summary.netProfit >= 0 ? "positive" : "negative"} icon={Scale} />
+        <Metric title="Balance Net Position" value={formatDisplayMoney(summary.netBalance, accountancyDisplayCurrency)} tone={summary.netBalance >= 0 ? "positive" : "negative"} icon={Wallet} />
         <Metric title="AI Posted Entries" value={String(aiEntries.length)} tone="neutral" icon={Bot} />
       </div>
 
@@ -67,18 +73,18 @@ export function AccountancyOverview() {
           <h2 className="text-lg font-semibold">Profit & Loss Source</h2>
           <p className="mt-1 text-sm text-muted-foreground">Fed only by Revenues and Expenses.</p>
           <div className="mt-4 space-y-3">
-            <Line label="Confirmed revenue entries" value={formatMoney(summary.ledgerRevenue)} />
-            <Line label="Confirmed expense entries" value={`-${formatMoney(summary.ledgerExpenses)}`} />
-            <Line label="Net profit / loss" value={formatMoney(summary.netProfit)} strong />
+            <Line label="Confirmed revenue entries" value={formatDisplayMoney(summary.ledgerRevenue, accountancyDisplayCurrency)} />
+            <Line label="Confirmed expense entries" value={`-${formatDisplayMoney(summary.ledgerExpenses, accountancyDisplayCurrency)}`} />
+            <Line label="Net profit / loss" value={formatDisplayMoney(summary.netProfit, accountancyDisplayCurrency)} strong />
           </div>
         </div>
         <div className="rounded-xl border border-border bg-card p-6 shadow-sm">
           <h2 className="text-lg font-semibold">Balance Source</h2>
           <p className="mt-1 text-sm text-muted-foreground">Fed only by Assets and Liabilities.</p>
           <div className="mt-4 space-y-3">
-            <Line label="Confirmed asset entries" value={formatMoney(summary.totalAssets)} />
-            <Line label="Confirmed liability entries" value={`-${formatMoney(summary.totalLiabilities)}`} />
-            <Line label="Net balance" value={formatMoney(summary.netBalance)} strong />
+            <Line label="Confirmed asset entries" value={formatDisplayMoney(summary.totalAssets, accountancyDisplayCurrency)} />
+            <Line label="Confirmed liability entries" value={`-${formatDisplayMoney(summary.totalLiabilities, accountancyDisplayCurrency)}`} />
+            <Line label="Net balance" value={formatDisplayMoney(summary.netBalance, accountancyDisplayCurrency)} strong />
           </div>
         </div>
       </div>
@@ -90,7 +96,7 @@ export function AccountancyOverview() {
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="category" angle={-20} textAnchor="end" height={70} interval={0} tick={{ fontSize: 11 }} />
               <YAxis tickFormatter={compactMoney} width={70} />
-              <Tooltip formatter={(value) => formatMoney(Number(value))} />
+              <Tooltip formatter={(value) => formatDisplayMoney(Number(value), accountancyDisplayCurrency)} />
               <Legend />
               <Bar dataKey="Revenue" fill="#2f8f5b" radius={[4, 4, 0, 0]} />
               <Bar dataKey="Expenses" fill="#b94a48" radius={[4, 4, 0, 0]} />
@@ -104,7 +110,7 @@ export function AccountancyOverview() {
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="category" angle={-20} textAnchor="end" height={70} interval={0} tick={{ fontSize: 11 }} />
               <YAxis tickFormatter={compactMoney} width={70} />
-              <Tooltip formatter={(value) => formatMoney(Number(value))} />
+              <Tooltip formatter={(value) => formatDisplayMoney(Number(value), accountancyDisplayCurrency)} />
               <Legend />
               <Bar dataKey="Assets" fill="#4f7f9f" radius={[4, 4, 0, 0]} />
               <Bar dataKey="Liabilities" fill="#9b6b43" radius={[4, 4, 0, 0]} />
@@ -119,7 +125,7 @@ export function AccountancyOverview() {
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="month" tick={{ fontSize: 12 }} />
             <YAxis tickFormatter={compactMoney} width={70} />
-            <Tooltip formatter={(value) => formatMoney(Number(value))} />
+            <Tooltip formatter={(value) => formatDisplayMoney(Number(value), accountancyDisplayCurrency)} />
             <Legend />
             <Area type="monotone" dataKey="Revenue" stroke="#2f8f5b" fill="#2f8f5b" fillOpacity={0.18} />
             <Area type="monotone" dataKey="Expenses" stroke="#b94a48" fill="#b94a48" fillOpacity={0.15} />
@@ -166,11 +172,11 @@ function ChartCard({ title, description, children }: { title: string; descriptio
   );
 }
 
-function mergeCategoryGroups(series: Array<{ label: string; entries: AccountancyEntry[] }>) {
+function mergeCategoryGroups(series: Array<{ label: string; entries: AccountancyEntry[] }>, displayCurrency: "USD" | "THS") {
   const rows = new Map<string, ChartRow>();
 
   series.forEach(({ label, entries }) => {
-    groupAccountancyEntriesByCategory(entries).forEach(group => {
+    groupAccountancyEntriesByCategory(entries, displayCurrency).forEach(group => {
       const existing = rows.get(group.category) || { category: group.category };
       existing[label] = group.total;
       rows.set(group.category, existing);
@@ -189,7 +195,7 @@ function mergeCategoryGroups(series: Array<{ label: string; entries: Accountancy
     });
 }
 
-function buildMonthlyRows(entries: AccountancyEntry[]) {
+function buildMonthlyRows(entries: AccountancyEntry[], displayCurrency: "USD" | "THS") {
   const rows = entries.reduce((acc, entry) => {
     const month = entry.date?.slice(0, 7) || "Unknown";
     const existing = acc.get(month) || {
@@ -200,10 +206,11 @@ function buildMonthlyRows(entries: AccountancyEntry[]) {
       Liabilities: 0,
     };
 
-    if (entry.type === "Revenue") existing.Revenue += entry.amount;
-    if (entry.type === "Expense") existing.Expenses += entry.amount;
-    if (entry.type === "Asset") existing.Assets += entry.amount;
-    if (entry.type === "Liability") existing.Liabilities += entry.amount;
+    const amount = getEntryDisplayAmount(entry, displayCurrency);
+    if (entry.type === "Revenue") existing.Revenue += amount;
+    if (entry.type === "Expense") existing.Expenses += amount;
+    if (entry.type === "Asset") existing.Assets += amount;
+    if (entry.type === "Liability") existing.Liabilities += amount;
 
     acc.set(month, existing);
     return acc;
