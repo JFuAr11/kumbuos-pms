@@ -45,6 +45,7 @@ type NavItem = {
   path: string;
   label: string;
   icon: typeof CalendarDays;
+  level?: number;
 };
 
 const RESERVATION_ITEMS = [
@@ -59,12 +60,12 @@ const RESERVATION_ITEMS = [
 
 const ACCOUNTANCY_ITEMS = [
   { path: "/app/accountancy/overview", label: "Overview", icon: BarChart },
-  { path: "/app/accountancy/revenues", label: "Revenues", icon: TrendingUp },
-  { path: "/app/accountancy/expenses", label: "Expenses", icon: TrendingDown },
   { path: "/app/accountancy/profit-loss", label: "Profit & Loss (P&L)", icon: BarChart },
-  { path: "/app/accountancy/assets", label: "Assets", icon: Wallet },
-  { path: "/app/accountancy/liabilities", label: "Liabilities", icon: DollarSign },
+  { path: "/app/accountancy/revenues", label: "Revenues", icon: TrendingUp, level: 1 },
+  { path: "/app/accountancy/expenses", label: "Expenses", icon: TrendingDown, level: 1 },
   { path: "/app/accountancy/balance", label: "Balance", icon: Scale },
+  { path: "/app/accountancy/assets", label: "Assets", icon: Wallet, level: 1 },
+  { path: "/app/accountancy/liabilities", label: "Liabilities", icon: DollarSign, level: 1 },
   { path: "/app/accountancy/genai-assistant", label: "GenAI Assistant", icon: Bot },
   { path: "/app/accountancy/notifications", label: "Notifications", icon: Bell },
 ];
@@ -357,6 +358,8 @@ function NavigationList({
             onClick={onNavigate}
             className={({ isActive }) => `flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
               collapsed ? "justify-center" : ""
+            } ${
+              !collapsed && item.level ? "ml-5 border-l border-border pl-4 text-xs font-semibold text-muted-foreground" : ""
             } ${
               isActive
                 ? "bg-primary text-primary-foreground"

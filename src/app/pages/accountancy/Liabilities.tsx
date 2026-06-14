@@ -3,21 +3,30 @@ import { AccountancyLedgerManager } from "../../components/accountancy/Accountan
 import { Button } from "../../components/ui/button";
 import { useAppContext } from "../../context/AppContext";
 import { exportToCSV, exportToExcel, exportToJSON } from "../../utils/export";
-import { formatMoney, getAccountancySummary, groupAccountancyEntriesByCategory } from "../../utils/accountancy";
+import { formatMoney, getAccountancySummary, getEntryThsAmount, getEntryUsdAmount, groupAccountancyEntriesByCategory, normalizeAccountancyEntry } from "../../utils/accountancy";
 
 export function AccountancyLiabilities() {
   const { accountancyEntries, selectedPropertyId } = useAppContext();
   const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries });
-  const liabilityEntries = accountancyEntries.filter(entry => entry.propertyId === selectedPropertyId && entry.type === "Liability" && entry.status === "Confirmed");
+  const liabilityEntries = accountancyEntries
+    .filter(entry => entry.propertyId === selectedPropertyId && entry.type === "Liability" && entry.status === "Confirmed")
+    .map(normalizeAccountancyEntry);
   const liabilityGroups = groupAccountancyEntriesByCategory(liabilityEntries);
 
   const rows = liabilityEntries.map(entry => ({
     Date: entry.date,
     Category: entry.category,
-    Subcategories: entry.subcategories?.join(", ") || "",
+    Subcategories: entry.subcategoryBreakdown?.length
+      ? entry.subcategoryBreakdown.map(item => `${item.name}: ${formatMoney(item.amount, entry.currency)}`).join(", ")
+      : entry.subcategories?.join(", ") || "",
     Counterparty: entry.counterparty,
     Reference: entry.reference || "",
-    Amount: entry.amount,
+    OriginalAmount: entry.amount,
+    Currency: entry.currency,
+    FX_USD_THS: entry.fxUsdThs,
+    FX_THS_USD: entry.fxThsUsd,
+    AmountUSD: getEntryUsdAmount(entry),
+    AmountTHS: getEntryThsAmount(entry),
     Source: entry.source,
     Details: entry.description,
   }));

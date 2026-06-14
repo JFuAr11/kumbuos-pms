@@ -24,10 +24,15 @@ const safeHelpResponse = {
     date: "",
     category: "",
     subcategories: [],
+    subcategoryBreakdown: [],
     counterparty: "",
     description: "",
     amount: 0,
     currency: "USD",
+    amountUsd: 0,
+    amountThs: 0,
+    fxUsdThs: 2600,
+    fxThsUsd: 1 / 2600,
     reservationId: "",
     customerInvoiceId: "",
     supplierInvoiceId: "",
@@ -51,10 +56,15 @@ const safeUnableToExtractResponse = {
     date: "",
     category: "",
     subcategories: [],
+    subcategoryBreakdown: [],
     counterparty: "",
     description: "",
     amount: 0,
     currency: "USD",
+    amountUsd: 0,
+    amountThs: 0,
+    fxUsdThs: 2600,
+    fxThsUsd: 1 / 2600,
     reservationId: "",
     customerInvoiceId: "",
     supplierInvoiceId: "",
@@ -103,8 +113,17 @@ Category and subcategory guidance:
 - Liability categories include Accounts Payable, Customer Deposits, Taxes Payable, Loans, Accruals.
 - Always identify subcategories when visible. For food invoices, use ingredients or line items as subcategories, for example Carrot, Chicken, Leek.
 - A category can have one or many subcategories. If subcategories are not visible or cannot be inferred safely, return an empty subcategories array and ask the user to add them.
+- When line items or ingredients have values, return subcategoryBreakdown with one row per subcategory and its amount in the source invoice currency.
+- The sum of subcategoryBreakdown[].amount must equal the invoice/category total amount. If the document has multiple subcategory lines, allocate the full invoice total across them exactly.
 - For Revenue linked to a booking, extract the reservation ID when visible, for example RR_000001, and extract the customer invoice ID when visible.
 - For Expense linked to a supplier bill, extract the supplier invoice ID when visible.
+
+Currency and FX rules:
+- Source invoices and proof-of-payment documents can be in USD or Tanzanian shillings. In KumbuOS use "THS" for Tanzanian shillings; if the document says TZS, normalize it to THS.
+- Always identify the source document currency when visible and return it in currency.
+- Always return amountUsd and amountThs regardless of the source currency.
+- Always return FX_USD_THS as fxUsdThs and FX_THS_USD as fxThsUsd.
+- Use the invoice issue date for the exchange rate when the document provides enough information. If you cannot verify the exact historical exchange rate from the document, use 2600 for fxUsdThs and 0.0003846154 for fxThsUsd, and ask the user to confirm or adjust the FX fields before posting.
 
 Return strict JSON only:
 {
@@ -118,10 +137,17 @@ Return strict JSON only:
     "date": "YYYY-MM-DD or empty",
     "category": "short ledger category",
     "subcategories": ["one or more concrete subcategories when visible"],
+    "subcategoryBreakdown": [
+      { "name": "subcategory name", "amount": 0, "amountUsd": 0, "amountThs": 0 }
+    ],
     "counterparty": "customer, agency, OTA, supplier, or vendor name",
     "description": "one-line accounting description",
     "amount": 0,
-    "currency": "USD",
+    "currency": "USD|THS",
+    "amountUsd": 0,
+    "amountThs": 0,
+    "fxUsdThs": 2600,
+    "fxThsUsd": 0.0003846154,
     "reservationId": "reservation or booking ID for revenue when visible, otherwise empty",
     "customerInvoiceId": "customer/reservation invoice ID for revenue when visible, otherwise empty",
     "supplierInvoiceId": "supplier invoice ID for expenses when visible, otherwise empty",
@@ -135,6 +161,8 @@ Return strict JSON only:
 
 Rules:
 - Use numbers only for amount and taxAmount.
+- Use numbers only for amountUsd, amountThs, fxUsdThs, fxThsUsd, and subcategoryBreakdown amounts.
+- Validate internally that the subcategoryBreakdown source-currency amount sum equals amount. If it does not, correct the allocation before returning JSON.
 - For normal invoice or proof-of-payment extraction, action is "create".
 - For a user request to modify/correct/change an existing entry, action is "update".
 - For a user request to remove/delete/cancel an existing ledger entry, action is "delete".
@@ -218,6 +246,80 @@ function parseJson(raw: string) {
   }
 }
 
+const defaultFxUsdThs = 2600;
+const defaultFxThsUsd = 1 / defaultFxUsdThs;
+
+function normalizeCurrency(currency: string) {
+  const value = String(currency || "USD").trim().toUpperCase();
+  if (value === "TZS") return "THS";
+  return value === "THS" ? "THS" : "USD";
+}
+
+function roundMoney(value: number, digits = 2) {
+  const factor = 10 ** digits;
+  return Math.round((Number(value || 0) + Number.EPSILON) * factor) / factor;
+}
+
+function buildDualCurrencyAmounts(amount: number, currency: string, fxUsdThs?: number, fxThsUsd?: number) {
+  const normalizedCurrency = normalizeCurrency(currency);
+  const safeFxUsdThs = Number(fxUsdThs || defaultFxUsdThs);
+  const safeFxThsUsd = Number(fxThsUsd || (safeFxUsdThs ? 1 / safeFxUsdThs : defaultFxThsUsd));
+
+  if (normalizedCurrency === "THS") {
+    return {
+      amountUsd: roundMoney(Number(amount || 0) * safeFxThsUsd),
+      amountThs: roundMoney(Number(amount || 0), 0),
+      fxUsdThs: safeFxUsdThs,
+      fxThsUsd: safeFxThsUsd,
+    };
+  }
+
+  return {
+    amountUsd: roundMoney(Number(amount || 0)),
+    amountThs: roundMoney(Number(amount || 0) * safeFxUsdThs, 0),
+    fxUsdThs: safeFxUsdThs,
+    fxThsUsd: safeFxThsUsd,
+  };
+}
+
+function normalizeSubcategoryBreakdown(extraction: any, currency: string, fxUsdThs: number, fxThsUsd: number) {
+  const rows = Array.isArray(extraction.subcategoryBreakdown)
+    ? extraction.subcategoryBreakdown
+    : [];
+
+  if (rows.length) {
+    return rows
+      .map((item: any) => {
+        const amount = Number.isFinite(Number(item.amount)) ? Number(item.amount) : 0;
+        const fx = buildDualCurrencyAmounts(amount, currency, fxUsdThs, fxThsUsd);
+        return {
+          name: String(item.name || "").trim(),
+          amount,
+          amountUsd: Number.isFinite(Number(item.amountUsd)) ? Number(item.amountUsd) : fx.amountUsd,
+          amountThs: Number.isFinite(Number(item.amountThs)) ? Number(item.amountThs) : fx.amountThs,
+        };
+      })
+      .filter((item: any) => item.name);
+  }
+
+  const names = Array.isArray(extraction.subcategories)
+    ? extraction.subcategories.map(String).map((item: string) => item.trim()).filter(Boolean)
+    : [];
+
+  if (!names.length) return [];
+
+  const splitAmount = Number(extraction.amount || 0) / names.length;
+  return names.map((name: string) => {
+    const fx = buildDualCurrencyAmounts(splitAmount, currency, fxUsdThs, fxThsUsd);
+    return {
+      name,
+      amount: splitAmount,
+      amountUsd: fx.amountUsd,
+      amountThs: fx.amountThs,
+    };
+  });
+}
+
 function normalizeAssistantPayload(payload: any, propertyCurrency = "USD") {
   const extraction = payload?.extraction || {};
   const action = ["create", "update", "delete", "none"].includes(extraction.action)
@@ -229,6 +331,10 @@ function normalizeAssistantPayload(payload: any, propertyCurrency = "USD") {
   const documentType = ["Supplier Invoice", "Proof of Payment", "Reservation Payment", "Other"].includes(extraction.documentType)
     ? extraction.documentType
     : "Other";
+  const currency = normalizeCurrency(extraction.currency || propertyCurrency || "USD");
+  const amount = Number.isFinite(Number(extraction.amount)) ? Number(extraction.amount) : 0;
+  const fxSeed = buildDualCurrencyAmounts(amount, currency, extraction.fxUsdThs, extraction.fxThsUsd);
+  const subcategoryBreakdown = normalizeSubcategoryBreakdown(extraction, currency, fxSeed.fxUsdThs, fxSeed.fxThsUsd);
 
   return {
     reply: typeof payload?.reply === "string" && payload.reply.trim()
@@ -242,13 +348,20 @@ function normalizeAssistantPayload(payload: any, propertyCurrency = "USD") {
       confidence: Number.isFinite(Number(extraction.confidence)) ? Number(extraction.confidence) : 0,
       date: String(extraction.date || ""),
       category: String(extraction.category || ""),
-      subcategories: Array.isArray(extraction.subcategories)
-        ? extraction.subcategories.map(String).map((item: string) => item.trim()).filter(Boolean)
-        : [],
+      subcategories: subcategoryBreakdown.length
+        ? subcategoryBreakdown.map((item: any) => item.name)
+        : Array.isArray(extraction.subcategories)
+          ? extraction.subcategories.map(String).map((item: string) => item.trim()).filter(Boolean)
+          : [],
+      subcategoryBreakdown,
       counterparty: String(extraction.counterparty || ""),
       description: String(extraction.description || ""),
-      amount: Number.isFinite(Number(extraction.amount)) ? Number(extraction.amount) : 0,
-      currency: String(extraction.currency || propertyCurrency || "USD").toUpperCase(),
+      amount,
+      currency,
+      amountUsd: Number.isFinite(Number(extraction.amountUsd)) ? Number(extraction.amountUsd) : fxSeed.amountUsd,
+      amountThs: Number.isFinite(Number(extraction.amountThs)) ? Number(extraction.amountThs) : fxSeed.amountThs,
+      fxUsdThs: fxSeed.fxUsdThs,
+      fxThsUsd: fxSeed.fxThsUsd,
       reservationId: String(extraction.reservationId || ""),
       customerInvoiceId: String(extraction.customerInvoiceId || ""),
       supplierInvoiceId: String(extraction.supplierInvoiceId || ""),

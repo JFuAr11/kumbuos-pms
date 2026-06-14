@@ -3,23 +3,32 @@ import { useAppContext } from "../../context/AppContext";
 import { Button } from "../../components/ui/button";
 import { AccountancyLedgerManager } from "../../components/accountancy/AccountancyLedgerManager";
 import { exportToCSV, exportToExcel, exportToJSON } from "../../utils/export";
-import { formatMoney, getAccountancySummary, groupAccountancyEntriesByCategory } from "../../utils/accountancy";
+import { formatMoney, getAccountancySummary, getEntryThsAmount, getEntryUsdAmount, groupAccountancyEntriesByCategory, normalizeAccountancyEntry } from "../../utils/accountancy";
 
 export function AccountancyExpenses() {
   const { accountancyEntries, selectedPropertyId } = useAppContext();
 
   const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries });
-  const expenseEntries = accountancyEntries.filter(entry => entry.propertyId === selectedPropertyId && entry.type === "Expense" && entry.status === "Confirmed");
+  const expenseEntries = accountancyEntries
+    .filter(entry => entry.propertyId === selectedPropertyId && entry.type === "Expense" && entry.status === "Confirmed")
+    .map(normalizeAccountancyEntry);
   const ledgerExpensesByCategory = groupAccountancyEntriesByCategory(expenseEntries);
 
   const rows = expenseEntries.map(entry => ({
     Date: entry.date,
     Category: entry.category,
-    Subcategories: entry.subcategories?.join(", ") || "",
+    Subcategories: entry.subcategoryBreakdown?.length
+      ? entry.subcategoryBreakdown.map(item => `${item.name}: ${formatMoney(item.amount, entry.currency)}`).join(", ")
+      : entry.subcategories?.join(", ") || "",
     SupplierInvoiceID: entry.supplierInvoiceId || "",
     Counterparty: entry.counterparty,
     Reference: entry.reference || "",
-    Amount: entry.amount,
+    OriginalAmount: entry.amount,
+    Currency: entry.currency,
+    FX_USD_THS: entry.fxUsdThs,
+    FX_THS_USD: entry.fxThsUsd,
+    AmountUSD: getEntryUsdAmount(entry),
+    AmountTHS: getEntryThsAmount(entry),
     Source: entry.source,
     Details: entry.description,
   }));
@@ -54,7 +63,7 @@ export function AccountancyExpenses() {
 
       <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
         <div className="overflow-auto">
-          <table className="w-full min-w-[940px] border-collapse text-left">
+          <table className="w-full min-w-[1240px] border-collapse text-left">
             <thead>
               <tr className="border-b border-border bg-muted/50 text-sm uppercase tracking-wider text-muted-foreground">
                 <th className="p-4 font-medium">Date</th>
@@ -64,7 +73,11 @@ export function AccountancyExpenses() {
                 <th className="p-4 font-medium">Counterparty</th>
                 <th className="p-4 font-medium">Reference</th>
                 <th className="p-4 font-medium">Source</th>
-                <th className="p-4 text-right font-medium">Amount</th>
+                <th className="p-4 font-medium">Currency</th>
+                <th className="p-4 font-medium">FX_USD_THS</th>
+                <th className="p-4 font-medium">FX_THS_USD</th>
+                <th className="p-4 text-right font-medium">USD</th>
+                <th className="p-4 text-right font-medium">THS</th>
               </tr>
             </thead>
             <tbody>
@@ -77,17 +90,22 @@ export function AccountancyExpenses() {
                   <td className="p-4">{row.Counterparty}</td>
                   <td className="p-4 text-muted-foreground">{row.Reference || "-"}</td>
                   <td className="p-4 text-muted-foreground">{row.Source}</td>
-                  <td className="p-4 text-right font-semibold text-destructive">-{formatMoney(row.Amount)}</td>
+                  <td className="p-4 text-muted-foreground">{row.Currency}</td>
+                  <td className="p-4 text-muted-foreground">{Number(row.FX_USD_THS || 0).toFixed(6)}</td>
+                  <td className="p-4 text-muted-foreground">{Number(row.FX_THS_USD || 0).toFixed(8)}</td>
+                  <td className="p-4 text-right font-semibold text-destructive">-{formatMoney(row.AmountUSD, "USD")}</td>
+                  <td className="p-4 text-right font-semibold text-destructive">-{formatMoney(row.AmountTHS, "THS")}</td>
                 </tr>
               ))}
               {!rows.length && (
                 <tr>
-                  <td colSpan={8} className="p-8 text-center text-muted-foreground">No expenses found.</td>
+                  <td colSpan={12} className="p-8 text-center text-muted-foreground">No expenses found.</td>
                 </tr>
               )}
               <tr className="border-t border-border bg-muted/30">
-                <td className="p-4 text-right font-bold" colSpan={7}>TOTAL EXPENSES</td>
+                <td className="p-4 text-right font-bold" colSpan={10}>TOTAL EXPENSES</td>
                 <td className="p-4 text-right font-bold text-destructive">-{formatMoney(summary.totalExpenses)}</td>
+                <td className="p-4" />
               </tr>
             </tbody>
           </table>

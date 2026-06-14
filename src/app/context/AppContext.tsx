@@ -250,10 +250,20 @@ export type AccountancyEntry = {
   date: string;
   category: string;
   subcategories?: string[];
+  subcategoryBreakdown?: {
+    name: string;
+    amount: number;
+    amountUsd: number;
+    amountThs: number;
+  }[];
   counterparty: string;
   description: string;
   amount: number;
   currency: string;
+  amountUsd?: number;
+  amountThs?: number;
+  fxUsdThs?: number;
+  fxThsUsd?: number;
   reservationId?: string;
   customerInvoiceId?: string;
   supplierInvoiceId?: string;

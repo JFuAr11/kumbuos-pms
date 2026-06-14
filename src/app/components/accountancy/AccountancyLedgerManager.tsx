@@ -4,9 +4,18 @@ import type { AccountancyEntry } from "../../context/AppContext";
 import { useAppContext } from "../../context/AppContext";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
-import { formatMoney } from "../../utils/accountancy";
+import {
+  buildDualCurrencyAmounts,
+  formatMoney,
+  getEntryThsAmount,
+  getEntryUsdAmount,
+  normalizeAccountancyEntry,
+  normalizeCurrency,
+  roundMoney,
+} from "../../utils/accountancy";
 
 type LedgerFilter = AccountancyEntry["type"] | "All";
+type SubcategoryLine = NonNullable<AccountancyEntry["subcategoryBreakdown"]>[number];
 
 const categoryOptions: Record<AccountancyEntry["type"], string[]> = {
   Revenue: [
@@ -46,28 +55,36 @@ const categoryOptions: Record<AccountancyEntry["type"], string[]> = {
   ],
 };
 
-const blankEntry = (propertyId: string, type: AccountancyEntry["type"]): AccountancyEntry => ({
-  id: "",
-  propertyId,
-  type,
-  date: new Date().toISOString().split("T")[0],
-  category: "",
-  subcategories: [""],
-  counterparty: "",
-  description: "",
-  amount: 0,
-  currency: "USD",
-  reservationId: "",
-  customerInvoiceId: "",
-  supplierInvoiceId: "",
-  documentType: "Other",
-  paymentMethod: "",
-  reference: "",
-  taxAmount: 0,
-  source: "Manual",
-  status: "Confirmed",
-  createdAt: new Date().toISOString(),
-});
+const blankEntry = (propertyId: string, type: AccountancyEntry["type"]): AccountancyEntry => {
+  const fx = buildDualCurrencyAmounts({ amount: 0, currency: "USD" });
+  return {
+    id: "",
+    propertyId,
+    type,
+    date: new Date().toISOString().split("T")[0],
+    category: "",
+    subcategories: [""],
+    subcategoryBreakdown: [{ name: "", amount: 0, amountUsd: 0, amountThs: 0 }],
+    counterparty: "",
+    description: "",
+    amount: 0,
+    currency: "USD",
+    amountUsd: fx.amountUsd,
+    amountThs: fx.amountThs,
+    fxUsdThs: fx.fxUsdThs,
+    fxThsUsd: fx.fxThsUsd,
+    reservationId: "",
+    customerInvoiceId: "",
+    supplierInvoiceId: "",
+    documentType: "Other",
+    paymentMethod: "",
+    reference: "",
+    taxAmount: 0,
+    source: "Manual",
+    status: "Confirmed",
+    createdAt: new Date().toISOString(),
+  };
+};
 
 export function AccountancyLedgerManager({
   title = "Manual Accountancy Ledger",
@@ -96,6 +113,7 @@ export function AccountancyLedgerManager({
   const entries = accountancyEntries
     .filter(entry => entry.propertyId === selectedPropertyId)
     .filter(entry => availableTypes.includes(entry.type))
+    .map(normalizeAccountancyEntry)
     .sort((a, b) => b.date.localeCompare(a.date));
 
   const currentCategoryOptions = useMemo(
@@ -117,50 +135,77 @@ export function AccountancyLedgerManager({
       return;
     }
 
-    const payload: AccountancyEntry = {
-      ...editing,
-      propertyId: selectedPropertyId,
-      amount: Number(editing.amount),
-      taxAmount: Number(editing.taxAmount || 0),
-      subcategories: (editing.subcategories || []).map(item => item.trim()).filter(Boolean),
-      currency: (editing.currency || "USD").toUpperCase(),
-      source: editing.source || "Manual",
-      status: "Confirmed",
-      createdAt: editing.createdAt || new Date().toISOString(),
-    };
+    const normalized = normalizeBeforeSave(editing, selectedPropertyId);
+    const subcategoryError = validateSubcategoryTotals(normalized);
+    if (subcategoryError) {
+      alert(subcategoryError);
+      return;
+    }
 
-    if (payload.id) {
-      updateAccountancyEntry(payload.id, payload);
+    if (normalized.id) {
+      updateAccountancyEntry(normalized.id, normalized);
     } else {
-      addAccountancyEntry({ ...payload, id: `acc-${Date.now()}` });
+      addAccountancyEntry({ ...normalized, id: `acc-${Date.now()}` });
     }
     setEditing(null);
   };
 
   const removeEntry = (entry: AccountancyEntry) => {
-    if (confirm(`Delete ${entry.type.toLowerCase()} entry "${entry.category}" for ${formatMoney(entry.amount, entry.currency)}?`)) {
+    if (confirm(`Delete ${entry.type.toLowerCase()} entry "${entry.category}" for ${formatMoney(getEntryUsdAmount(entry), "USD")}?`)) {
       deleteAccountancyEntry(entry.id);
     }
   };
 
-  const updateSubcategory = (index: number, value: string) => {
+  const updateEditing = (updates: Partial<AccountancyEntry>) => {
     if (!editing) return;
-    const next = [...(editing.subcategories?.length ? editing.subcategories : [""])];
-    next[index] = value;
-    setEditing({ ...editing, subcategories: next });
+    setEditing(recalculateEditing({ ...editing, ...updates }));
+  };
+
+  const subcategoryBreakdown = editing?.subcategoryBreakdown?.length
+    ? editing.subcategoryBreakdown
+    : [{ name: "", amount: 0, amountUsd: 0, amountThs: 0 }];
+
+  const updateSubcategory = (index: number, updates: Partial<SubcategoryLine>) => {
+    if (!editing) return;
+    const next = [...subcategoryBreakdown];
+    const candidate = { ...next[index], ...updates };
+    const fx = buildDualCurrencyAmounts({
+      amount: Number(candidate.amount || 0),
+      currency: editing.currency,
+      fxUsdThs: editing.fxUsdThs,
+      fxThsUsd: editing.fxThsUsd,
+    });
+    next[index] = {
+      name: candidate.name || "",
+      amount: Number(candidate.amount || 0),
+      amountUsd: fx.amountUsd,
+      amountThs: fx.amountThs,
+    };
+    updateEditing({
+      subcategoryBreakdown: next,
+      subcategories: next.map(item => item.name).filter(Boolean),
+    });
   };
 
   const addSubcategory = () => {
     if (!editing) return;
-    setEditing({ ...editing, subcategories: [...(editing.subcategories?.length ? editing.subcategories : [""]), ""] });
+    updateEditing({
+      subcategoryBreakdown: [...subcategoryBreakdown, { name: "", amount: 0, amountUsd: 0, amountThs: 0 }],
+    });
   };
 
   const removeSubcategory = (index: number) => {
     if (!editing) return;
-    const current = editing.subcategories?.length ? editing.subcategories : [""];
-    const next = current.filter((_, itemIndex) => itemIndex !== index);
-    setEditing({ ...editing, subcategories: next.length ? next : [""] });
+    const next = subcategoryBreakdown.filter((_, itemIndex) => itemIndex !== index);
+    updateEditing({
+      subcategoryBreakdown: next.length ? next : [{ name: "", amount: 0, amountUsd: 0, amountThs: 0 }],
+      subcategories: next.map(item => item.name).filter(Boolean),
+    });
   };
+
+  const editingUsd = editing ? getEntryUsdAmount(normalizeAccountancyEntry(editing)) : 0;
+  const editingThs = editing ? getEntryThsAmount(normalizeAccountancyEntry(editing)) : 0;
+  const subcategoryTotal = subcategoryBreakdown.reduce((sum, item) => sum + Number(item.amount || 0), 0);
 
   return (
     <div className="rounded-xl border border-border bg-card shadow-sm">
@@ -189,7 +234,7 @@ export function AccountancyLedgerManager({
               <select
                 className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                 value={editing.type}
-                onChange={event => setEditing({ ...editing, type: event.target.value as AccountancyEntry["type"], category: "" })}
+                onChange={event => updateEditing({ type: event.target.value as AccountancyEntry["type"], category: "" })}
                 disabled={availableTypes.length === 1}
               >
                 {availableTypes.map(type => (
@@ -197,28 +242,43 @@ export function AccountancyLedgerManager({
                 ))}
               </select>
             </label>
-            <InputField label="Date" type="date" value={editing.date} onChange={value => setEditing({ ...editing, date: value })} />
-            <InputField label="Category" list="accountancy-category-options" value={editing.category} onChange={value => setEditing({ ...editing, category: value })} />
-            <InputField label="Counterparty" value={editing.counterparty} onChange={value => setEditing({ ...editing, counterparty: value })} />
-            <InputField label="Reference" value={editing.reference || ""} onChange={value => setEditing({ ...editing, reference: value })} />
-            <InputField label="Amount" type="number" value={String(editing.amount || 0)} onChange={value => setEditing({ ...editing, amount: Number(value) })} />
-            <InputField label="Currency" value={editing.currency || "USD"} onChange={value => setEditing({ ...editing, currency: value.toUpperCase() })} />
+            <InputField label="Date" type="date" value={editing.date} onChange={value => updateEditing({ date: value })} />
+            <InputField label="Category" list="accountancy-category-options" value={editing.category} onChange={value => updateEditing({ category: value })} />
+            <InputField label="Counterparty" value={editing.counterparty} onChange={value => updateEditing({ counterparty: value })} />
+            <InputField label="Reference" value={editing.reference || ""} onChange={value => updateEditing({ reference: value })} />
+            <InputField label="Invoice Total" type="number" value={String(editing.amount || 0)} onChange={value => updateEditing({ amount: Number(value) })} />
+            <label className="block text-sm font-medium">
+              Invoice Currency
+              <select
+                className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                value={normalizeCurrency(editing.currency)}
+                onChange={event => updateEditing({ currency: event.target.value })}
+              >
+                <option value="USD">USD</option>
+                <option value="THS">THS</option>
+              </select>
+            </label>
+            <InputField label="FX_USD_THS" type="number" value={String(editing.fxUsdThs || "")} onChange={value => updateEditing({ fxUsdThs: Number(value), fxThsUsd: Number(value) ? 1 / Number(value) : 0 })} />
+            <InputField label="FX_THS_USD" type="number" value={String(editing.fxThsUsd || "")} onChange={value => updateEditing({ fxThsUsd: Number(value), fxUsdThs: Number(value) ? 1 / Number(value) : 0 })} />
+            <ReadOnlyValue label="Amount USD" value={formatMoney(editingUsd, "USD")} />
+            <ReadOnlyValue label="Amount THS" value={formatMoney(editingThs, "THS")} />
+
             {editing.type === "Revenue" && (
               <>
-                <InputField label="Reservation ID" value={editing.reservationId || ""} onChange={value => setEditing({ ...editing, reservationId: value })} />
-                <InputField label="Customer Invoice ID" value={editing.customerInvoiceId || ""} onChange={value => setEditing({ ...editing, customerInvoiceId: value })} />
+                <InputField label="Reservation ID" value={editing.reservationId || ""} onChange={value => updateEditing({ reservationId: value })} />
+                <InputField label="Customer Invoice ID" value={editing.customerInvoiceId || ""} onChange={value => updateEditing({ customerInvoiceId: value })} />
               </>
             )}
             {editing.type === "Expense" && (
-              <InputField label="Supplier Invoice ID" value={editing.supplierInvoiceId || ""} onChange={value => setEditing({ ...editing, supplierInvoiceId: value })} />
+              <InputField label="Supplier Invoice ID" value={editing.supplierInvoiceId || ""} onChange={value => updateEditing({ supplierInvoiceId: value })} />
             )}
-            <InputField label="Tax Amount" type="number" value={String(editing.taxAmount || 0)} onChange={value => setEditing({ ...editing, taxAmount: Number(value) })} />
+            <InputField label="Tax Amount" type="number" value={String(editing.taxAmount || 0)} onChange={value => updateEditing({ taxAmount: Number(value) })} />
             <label className="block text-sm font-medium">
               Document Type
               <select
                 className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                 value={editing.documentType}
-                onChange={event => setEditing({ ...editing, documentType: event.target.value as AccountancyEntry["documentType"] })}
+                onChange={event => updateEditing({ documentType: event.target.value as AccountancyEntry["documentType"] })}
               >
                 <option value="Supplier Invoice">Supplier Invoice</option>
                 <option value="Proof of Payment">Proof of Payment</option>
@@ -228,21 +288,40 @@ export function AccountancyLedgerManager({
             </label>
 
             <div className="md:col-span-3">
-              <div className="mb-2 flex items-center justify-between gap-3">
-                <p className="text-sm font-medium">Subcategories</p>
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium">Subcategories with amount allocation</p>
+                  <p className="text-xs text-muted-foreground">
+                    Subcategory total: {formatMoney(subcategoryTotal, editing.currency)} / Invoice total: {formatMoney(editing.amount, editing.currency)}
+                  </p>
+                </div>
                 <Button type="button" variant="outline" size="sm" onClick={addSubcategory}>
                   <Plus className="mr-2 h-4 w-4" />
                   Add
                 </Button>
               </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                {(editing.subcategories?.length ? editing.subcategories : [""]).map((subcategory, index) => (
-                  <div key={index} className="flex gap-2">
+              <div className="space-y-3">
+                {subcategoryBreakdown.map((subcategory, index) => (
+                  <div key={index} className="grid gap-2 rounded-lg border border-border bg-background p-3 md:grid-cols-[minmax(0,1fr)_160px_140px_140px_40px]">
                     <Input
-                      value={subcategory}
-                      onChange={event => updateSubcategory(index, event.target.value)}
+                      value={subcategory.name}
+                      onChange={event => updateSubcategory(index, { name: event.target.value })}
                       placeholder={index === 0 ? "e.g., Carrot, Chicken, Room upgrade..." : "Additional subcategory"}
                     />
+                    <Input
+                      type="number"
+                      value={String(subcategory.amount || 0)}
+                      onChange={event => updateSubcategory(index, { amount: Number(event.target.value) })}
+                      placeholder="Amount"
+                    />
+                    <div className="rounded-md bg-muted px-3 py-2 text-xs">
+                      <span className="block text-muted-foreground">USD</span>
+                      <span className="font-semibold">{formatMoney(subcategory.amountUsd || 0, "USD")}</span>
+                    </div>
+                    <div className="rounded-md bg-muted px-3 py-2 text-xs">
+                      <span className="block text-muted-foreground">THS</span>
+                      <span className="font-semibold">{formatMoney(subcategory.amountThs || 0, "THS")}</span>
+                    </div>
                     <Button type="button" variant="outline" size="icon" onClick={() => removeSubcategory(index)} aria-label="Remove subcategory">
                       <X className="h-4 w-4" />
                     </Button>
@@ -256,7 +335,7 @@ export function AccountancyLedgerManager({
               <textarea
                 className="mt-1 min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 value={editing.description}
-                onChange={event => setEditing({ ...editing, description: event.target.value })}
+                onChange={event => updateEditing({ description: event.target.value })}
               />
             </label>
           </div>
@@ -268,7 +347,7 @@ export function AccountancyLedgerManager({
       )}
 
       <div className="overflow-auto">
-        <table className="w-full text-left text-sm">
+        <table className="w-full min-w-[1180px] text-left text-sm">
           <thead>
             <tr className="border-b border-border bg-muted/40 text-xs uppercase tracking-wider text-muted-foreground">
               <th className="p-4 font-medium">Date</th>
@@ -276,9 +355,11 @@ export function AccountancyLedgerManager({
               <th className="p-4 font-medium">Category</th>
               <th className="p-4 font-medium">Subcategories</th>
               <th className="p-4 font-medium">Traceability</th>
-              <th className="p-4 font-medium">Counterparty</th>
-              <th className="p-4 font-medium">Source</th>
-              <th className="p-4 text-right font-medium">Amount</th>
+              <th className="p-4 font-medium">Currency</th>
+              <th className="p-4 font-medium">FX_USD_THS</th>
+              <th className="p-4 font-medium">FX_THS_USD</th>
+              <th className="p-4 text-right font-medium">USD</th>
+              <th className="p-4 text-right font-medium">THS</th>
               <th className="p-4 text-right font-medium">Actions</th>
             </tr>
           </thead>
@@ -291,17 +372,23 @@ export function AccountancyLedgerManager({
                   <td className="p-4 font-medium">{entry.type}</td>
                   <td className="p-4">{entry.category}</td>
                   <td className="p-4 text-xs text-muted-foreground">
-                    {(entry.subcategories || []).length ? entry.subcategories?.join(", ") : "Unassigned"}
+                    {entry.subcategoryBreakdown?.length
+                      ? entry.subcategoryBreakdown.map(item => `${item.name}: ${formatMoney(item.amount, entry.currency)}`).join(", ")
+                      : "Unassigned"}
                   </td>
-                <td className="p-4 text-xs text-muted-foreground">{formatTraceability(entry)}</td>
-                <td className="p-4 text-muted-foreground">{entry.counterparty}</td>
-                  <td className="p-4 text-muted-foreground">{entry.source}</td>
+                  <td className="p-4 text-xs text-muted-foreground">{formatTraceability(entry)}</td>
+                  <td className="p-4 text-muted-foreground">{entry.currency}</td>
+                  <td className="p-4 text-muted-foreground">{Number(entry.fxUsdThs || 0).toFixed(6)}</td>
+                  <td className="p-4 text-muted-foreground">{Number(entry.fxThsUsd || 0).toFixed(8)}</td>
                   <td className={`p-4 text-right font-semibold ${positive ? "text-green-600" : "text-destructive"}`}>
-                    {positive ? "" : "-"}{formatMoney(entry.amount, entry.currency)}
+                    {positive ? "" : "-"}{formatMoney(getEntryUsdAmount(entry), "USD")}
+                  </td>
+                  <td className={`p-4 text-right font-semibold ${positive ? "text-green-600" : "text-destructive"}`}>
+                    {positive ? "" : "-"}{formatMoney(getEntryThsAmount(entry), "THS")}
                   </td>
                   <td className="p-4">
                     <div className="flex justify-end gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => setEditing({ ...entry, subcategories: entry.subcategories?.length ? entry.subcategories : [""] })}><Edit className="h-4 w-4" /></Button>
+                      <Button variant="ghost" size="icon" onClick={() => setEditing(normalizeAccountancyEntry(entry))}><Edit className="h-4 w-4" /></Button>
                       <Button variant="ghost" size="icon" className="text-destructive" onClick={() => removeEntry(entry)}><Trash2 className="h-4 w-4" /></Button>
                     </div>
                   </td>
@@ -310,7 +397,7 @@ export function AccountancyLedgerManager({
             })}
             {!entries.length && (
               <tr>
-                <td colSpan={9} className="p-8 text-center text-muted-foreground">No manual or AI ledger entries for this scope yet.</td>
+                <td colSpan={11} className="p-8 text-center text-muted-foreground">No manual or AI ledger entries for this scope yet.</td>
               </tr>
             )}
           </tbody>
@@ -318,6 +405,72 @@ export function AccountancyLedgerManager({
       </div>
     </div>
   );
+}
+
+function recalculateEditing(entry: AccountancyEntry) {
+  const fx = buildDualCurrencyAmounts({
+    amount: Number(entry.amount || 0),
+    currency: entry.currency,
+    fxUsdThs: entry.fxUsdThs,
+    fxThsUsd: entry.fxThsUsd,
+  });
+  const currency = normalizeCurrency(entry.currency);
+  const subcategoryBreakdown = (entry.subcategoryBreakdown?.length ? entry.subcategoryBreakdown : [{ name: "", amount: 0, amountUsd: 0, amountThs: 0 }])
+    .map(item => {
+      const itemFx = buildDualCurrencyAmounts({
+        amount: Number(item.amount || 0),
+        currency,
+        fxUsdThs: fx.fxUsdThs,
+        fxThsUsd: fx.fxThsUsd,
+      });
+      return {
+        name: item.name || "",
+        amount: Number(item.amount || 0),
+        amountUsd: itemFx.amountUsd,
+        amountThs: itemFx.amountThs,
+      };
+    });
+
+  return {
+    ...entry,
+    currency,
+    amountUsd: fx.amountUsd,
+    amountThs: fx.amountThs,
+    fxUsdThs: fx.fxUsdThs,
+    fxThsUsd: fx.fxThsUsd,
+    subcategoryBreakdown,
+    subcategories: subcategoryBreakdown.map(item => item.name).filter(Boolean),
+  };
+}
+
+function normalizeBeforeSave(entry: AccountancyEntry, propertyId: string) {
+  const recalculated = recalculateEditing({
+    ...entry,
+    propertyId,
+    amount: Number(entry.amount),
+    taxAmount: Number(entry.taxAmount || 0),
+    source: entry.source || "Manual",
+    status: "Confirmed",
+    createdAt: entry.createdAt || new Date().toISOString(),
+  });
+
+  return {
+    ...recalculated,
+    subcategoryBreakdown: recalculated.subcategoryBreakdown?.filter(item => item.name.trim()),
+    subcategories: recalculated.subcategoryBreakdown?.map(item => item.name.trim()).filter(Boolean),
+  };
+}
+
+function validateSubcategoryTotals(entry: AccountancyEntry) {
+  const breakdown = entry.subcategoryBreakdown || [];
+  if (!breakdown.length) return "";
+
+  const total = breakdown.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const tolerance = normalizeCurrency(entry.currency) === "THS" ? 1 : 0.01;
+  const difference = roundMoney(total - Number(entry.amount || 0), normalizeCurrency(entry.currency) === "THS" ? 0 : 2);
+  if (Math.abs(difference) <= tolerance) return "";
+
+  return `Subcategory amounts must equal the invoice total. Current subcategory total is ${formatMoney(total, entry.currency)} and invoice total is ${formatMoney(entry.amount, entry.currency)}. Difference: ${formatMoney(difference, entry.currency)}.`;
 }
 
 function formatTraceability(entry: AccountancyEntry) {
@@ -349,5 +502,16 @@ function InputField({
       {label}
       <Input className="mt-1" type={type} list={list} value={value} onChange={event => onChange(event.target.value)} />
     </label>
+  );
+}
+
+function ReadOnlyValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="block text-sm font-medium">
+      {label}
+      <div className="mt-1 flex h-10 items-center rounded-md border border-input bg-muted px-3 text-sm font-semibold">
+        {value}
+      </div>
+    </div>
   );
 }

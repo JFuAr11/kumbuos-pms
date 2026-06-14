@@ -4,7 +4,15 @@ import type { AccountancyEntry } from "../../context/AppContext";
 import { useAppContext } from "../../context/AppContext";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
-import { formatMoney } from "../../utils/accountancy";
+import {
+  buildDualCurrencyAmounts,
+  formatMoney,
+  getEntryThsAmount,
+  getEntryUsdAmount,
+  normalizeAccountancyEntry,
+  normalizeCurrency,
+  roundMoney,
+} from "../../utils/accountancy";
 
 type AssistantAction = "create" | "update" | "delete" | "none";
 
@@ -24,10 +32,20 @@ type AssistantExtraction = {
   date?: string;
   category?: string;
   subcategories?: string[];
+  subcategoryBreakdown?: {
+    name: string;
+    amount: number;
+    amountUsd?: number;
+    amountThs?: number;
+  }[];
   counterparty?: string;
   description?: string;
   amount?: number;
   currency?: string;
+  amountUsd?: number;
+  amountThs?: number;
+  fxUsdThs?: number;
+  fxThsUsd?: number;
   reservationId?: string;
   customerInvoiceId?: string;
   supplierInvoiceId?: string;
@@ -56,10 +74,15 @@ const emptyDraft: Partial<AccountancyEntry> = {
   date: new Date().toISOString().split("T")[0],
   category: "",
   subcategories: [],
+  subcategoryBreakdown: [{ name: "", amount: 0, amountUsd: 0, amountThs: 0 }],
   counterparty: "",
   description: "",
   amount: 0,
   currency: "USD",
+  amountUsd: 0,
+  amountThs: 0,
+  fxUsdThs: 2600,
+  fxThsUsd: 1 / 2600,
   reservationId: "",
   customerInvoiceId: "",
   supplierInvoiceId: "",
@@ -138,9 +161,14 @@ export function AccountancyGenAIAssistant() {
             date: entry.date,
             category: entry.category,
             subcategories: entry.subcategories || [],
+            subcategoryBreakdown: entry.subcategoryBreakdown || [],
             counterparty: entry.counterparty,
             amount: entry.amount,
             currency: entry.currency,
+            amountUsd: entry.amountUsd,
+            amountThs: entry.amountThs,
+            fxUsdThs: entry.fxUsdThs,
+            fxThsUsd: entry.fxThsUsd,
             reservationId: entry.reservationId || "",
             customerInvoiceId: entry.customerInvoiceId || "",
             supplierInvoiceId: entry.supplierInvoiceId || "",
@@ -215,16 +243,28 @@ export function AccountancyGenAIAssistant() {
     }
 
     const base = target || emptyDraft;
-    const draft: Partial<AccountancyEntry> = {
+    const draft: Partial<AccountancyEntry> = recalculateDraft({
       ...base,
       type: extraction.type !== "Unknown" ? extraction.type : base.type,
       date: extraction.date || base.date || emptyDraft.date,
       category: extraction.category || base.category || "",
       subcategories: extraction.subcategories?.length ? extraction.subcategories : base.subcategories || [],
+      subcategoryBreakdown: extraction.subcategoryBreakdown?.length
+        ? extraction.subcategoryBreakdown.map(item => ({
+          name: item.name,
+          amount: Number(item.amount || 0),
+          amountUsd: Number(item.amountUsd || 0),
+          amountThs: Number(item.amountThs || 0),
+        }))
+        : base.subcategoryBreakdown || emptyDraft.subcategoryBreakdown,
       counterparty: extraction.counterparty || base.counterparty || "",
       description: extraction.description || base.description || "",
       amount: Number(extraction.amount ?? base.amount ?? 0),
       currency: extraction.currency || base.currency || activeProperty?.currency || "USD",
+      amountUsd: Number(extraction.amountUsd ?? base.amountUsd ?? 0),
+      amountThs: Number(extraction.amountThs ?? base.amountThs ?? 0),
+      fxUsdThs: Number(extraction.fxUsdThs ?? base.fxUsdThs ?? 2600),
+      fxThsUsd: Number(extraction.fxThsUsd ?? base.fxThsUsd ?? 1 / 2600),
       reservationId: extraction.reservationId || base.reservationId || "",
       customerInvoiceId: extraction.customerInvoiceId || base.customerInvoiceId || "",
       supplierInvoiceId: extraction.supplierInvoiceId || base.supplierInvoiceId || "",
@@ -234,7 +274,7 @@ export function AccountancyGenAIAssistant() {
       taxAmount: Number(extraction.taxAmount ?? base.taxAmount ?? 0),
       attachmentName: attachmentName || base.attachmentName,
       rawSummary,
-    };
+    });
 
     setPendingAction({
       action,
@@ -259,34 +299,45 @@ export function AccountancyGenAIAssistant() {
       return;
     }
 
-    const draft = pendingAction.draft;
+    const draft = recalculateDraft(pendingAction.draft);
     if (!draft.type || !draft.date || !draft.category || !draft.counterparty || !draft.description || !Number(draft.amount)) {
       setError("Complete type, date, category, counterparty, description, and amount before confirming.");
       return;
     }
+    const subcategoryError = validateSubcategoryTotals(draft);
+    if (subcategoryError) {
+      setError(subcategoryError);
+      return;
+    }
+    const normalizedDraft = normalizeForPosting(draft);
 
     const payload: AccountancyEntry = {
       id: pendingAction.targetEntryId || `acc-${Date.now()}`,
       propertyId: selectedPropertyId,
-      type: draft.type,
-      date: draft.date,
-      category: draft.category,
-      subcategories: (draft.subcategories || []).map(item => item.trim()).filter(Boolean),
-      counterparty: draft.counterparty,
-      description: draft.description,
-      amount: Number(draft.amount),
-      currency: draft.currency || "USD",
-      reservationId: draft.reservationId,
-      customerInvoiceId: draft.customerInvoiceId,
-      supplierInvoiceId: draft.supplierInvoiceId,
-      documentType: draft.documentType || "Other",
-      paymentMethod: draft.paymentMethod,
-      reference: draft.reference,
-      taxAmount: Number(draft.taxAmount || 0),
+      type: normalizedDraft.type,
+      date: normalizedDraft.date,
+      category: normalizedDraft.category,
+      subcategories: normalizedDraft.subcategories || [],
+      subcategoryBreakdown: normalizedDraft.subcategoryBreakdown || [],
+      counterparty: normalizedDraft.counterparty,
+      description: normalizedDraft.description,
+      amount: Number(normalizedDraft.amount),
+      currency: normalizedDraft.currency || "USD",
+      amountUsd: normalizedDraft.amountUsd,
+      amountThs: normalizedDraft.amountThs,
+      fxUsdThs: normalizedDraft.fxUsdThs,
+      fxThsUsd: normalizedDraft.fxThsUsd,
+      reservationId: normalizedDraft.reservationId,
+      customerInvoiceId: normalizedDraft.customerInvoiceId,
+      supplierInvoiceId: normalizedDraft.supplierInvoiceId,
+      documentType: normalizedDraft.documentType || "Other",
+      paymentMethod: normalizedDraft.paymentMethod,
+      reference: normalizedDraft.reference,
+      taxAmount: Number(normalizedDraft.taxAmount || 0),
       source: pendingAction.action === "update" ? (pendingAction.original?.source || "GenAI Assistant") : "GenAI Assistant",
       status: "Confirmed",
-      attachmentName: draft.attachmentName,
-      rawSummary: draft.rawSummary,
+      attachmentName: normalizedDraft.attachmentName,
+      rawSummary: normalizedDraft.rawSummary,
       createdAt: pendingAction.original?.createdAt || new Date().toISOString(),
     };
 
@@ -424,10 +475,15 @@ export function AccountancyGenAIAssistant() {
                   <div className="flex items-center justify-between gap-3">
                     <span className="font-medium">{entry.category}</span>
                     <span className={entry.type === "Revenue" || entry.type === "Asset" ? "text-green-600" : "text-destructive"}>
-                      {entry.type === "Expense" || entry.type === "Liability" ? "-" : ""}{formatMoney(entry.amount, entry.currency)}
+                      {entry.type === "Expense" || entry.type === "Liability" ? "-" : ""}{formatMoney(getEntryUsdAmount(entry), "USD")}
                     </span>
                   </div>
-                  <p className="mt-1 text-xs text-muted-foreground">{entry.subcategories?.length ? entry.subcategories.join(", ") : "Unassigned subcategory"}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {entry.subcategoryBreakdown?.length
+                      ? entry.subcategoryBreakdown.map(item => `${item.name}: ${formatMoney(item.amount, entry.currency)}`).join(", ")
+                      : entry.subcategories?.length ? entry.subcategories.join(", ") : "Unassigned subcategory"}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">{formatMoney(getEntryThsAmount(entry), "THS")} | FX_USD_THS {Number(entry.fxUsdThs || 0).toFixed(4)}</p>
                   <p className="mt-1 text-xs text-muted-foreground">{entry.counterparty} - {entry.date}</p>
                 </div>
               ))}
@@ -464,19 +520,26 @@ function ReviewPanel({
     );
   }
 
-  const draft = pendingAction.draft;
-  const updateDraft = (updates: Partial<AccountancyEntry>) => setPendingAction({ ...pendingAction, draft: { ...draft, ...updates } });
+  const draft = recalculateDraft(pendingAction.draft);
+  const updateDraft = (updates: Partial<AccountancyEntry>) => setPendingAction({ ...pendingAction, draft: recalculateDraft({ ...draft, ...updates }) });
   const isDelete = pendingAction.action === "delete";
-  const subcategories = draft.subcategories?.length ? draft.subcategories : [""];
-  const updateSubcategory = (index: number, value: string) => {
-    const next = [...subcategories];
-    next[index] = value;
-    updateDraft({ subcategories: next });
+  const subcategoryBreakdown = draft.subcategoryBreakdown?.length ? draft.subcategoryBreakdown : [{ name: "", amount: 0, amountUsd: 0, amountThs: 0 }];
+  const subcategoryTotal = subcategoryBreakdown.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const updateSubcategory = (index: number, updates: Partial<NonNullable<AccountancyEntry["subcategoryBreakdown"]>[number]>) => {
+    const next = [...subcategoryBreakdown];
+    next[index] = { ...next[index], ...updates };
+    updateDraft({
+      subcategoryBreakdown: next,
+      subcategories: next.map(item => item.name).filter(Boolean),
+    });
   };
-  const addSubcategory = () => updateDraft({ subcategories: [...subcategories, ""] });
+  const addSubcategory = () => updateDraft({ subcategoryBreakdown: [...subcategoryBreakdown, { name: "", amount: 0, amountUsd: 0, amountThs: 0 }] });
   const removeSubcategory = (index: number) => {
-    const next = subcategories.filter((_, itemIndex) => itemIndex !== index);
-    updateDraft({ subcategories: next.length ? next : [""] });
+    const next = subcategoryBreakdown.filter((_, itemIndex) => itemIndex !== index);
+    updateDraft({
+      subcategoryBreakdown: next.length ? next : [{ name: "", amount: 0, amountUsd: 0, amountThs: 0 }],
+      subcategories: next.map(item => item.name).filter(Boolean),
+    });
   };
 
   return (
@@ -492,7 +555,7 @@ function ReviewPanel({
       {pendingAction.original && (
         <div className="mt-4 rounded-md border border-border bg-muted/30 p-3 text-sm">
           <p className="font-medium">Target entry</p>
-          <p className="text-muted-foreground">{pendingAction.original.id} - {pendingAction.original.category} - {formatMoney(pendingAction.original.amount, pendingAction.original.currency)}</p>
+          <p className="text-muted-foreground">{pendingAction.original.id} - {pendingAction.original.category} - {formatMoney(getEntryUsdAmount(pendingAction.original), "USD")}</p>
         </div>
       )}
 
@@ -508,32 +571,62 @@ function ReviewPanel({
         </label>
         <InputField disabled={isDelete} label="Date" type="date" value={draft.date || ""} onChange={value => updateDraft({ date: value })} />
         <InputField disabled={isDelete} label="Category" value={draft.category || ""} onChange={value => updateDraft({ category: value })} />
+        <InputField disabled={isDelete} label="Counterparty" value={draft.counterparty || ""} onChange={value => updateDraft({ counterparty: value })} />
+        <InputField disabled={isDelete} label="Reference" value={draft.reference || ""} onChange={value => updateDraft({ reference: value })} />
+        <InputField disabled={isDelete} label="Invoice Total" type="number" value={String(draft.amount || 0)} onChange={value => updateDraft({ amount: Number(value) })} />
+        <label className="block text-sm font-medium">
+          Invoice Currency
+          <select className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={normalizeCurrency(draft.currency)} onChange={event => updateDraft({ currency: event.target.value })} disabled={isDelete}>
+            <option value="USD">USD</option>
+            <option value="THS">THS</option>
+          </select>
+        </label>
+        <InputField disabled={isDelete} label="FX_USD_THS" type="number" value={String(draft.fxUsdThs || "")} onChange={value => updateDraft({ fxUsdThs: Number(value), fxThsUsd: Number(value) ? 1 / Number(value) : 0 })} />
+        <InputField disabled={isDelete} label="FX_THS_USD" type="number" value={String(draft.fxThsUsd || "")} onChange={value => updateDraft({ fxThsUsd: Number(value), fxUsdThs: Number(value) ? 1 / Number(value) : 0 })} />
+        <ReadOnlyValue label="Amount USD" value={formatMoney(getEntryUsdAmount(draft as AccountancyEntry), "USD")} />
+        <ReadOnlyValue label="Amount THS" value={formatMoney(getEntryThsAmount(draft as AccountancyEntry), "THS")} />
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-medium">Subcategories</p>
+            <div>
+              <p className="text-sm font-medium">Subcategories with amount allocation</p>
+              <p className="text-xs text-muted-foreground">
+                Subcategory total: {formatMoney(subcategoryTotal, draft.currency)} / Invoice total: {formatMoney(Number(draft.amount || 0), draft.currency)}
+              </p>
+            </div>
             <Button type="button" variant="outline" size="sm" onClick={addSubcategory} disabled={isDelete}>
               <Plus className="mr-2 h-4 w-4" />
               Add
             </Button>
           </div>
-          {subcategories.map((subcategory, index) => (
-            <div key={index} className="flex gap-2">
+          {subcategoryBreakdown.map((subcategory, index) => (
+            <div key={index} className="grid gap-2 rounded-md border border-border bg-muted/20 p-2 sm:grid-cols-[minmax(0,1fr)_110px_105px_105px_40px]">
               <Input
-                value={subcategory}
-                onChange={event => updateSubcategory(index, event.target.value)}
+                value={subcategory.name}
+                onChange={event => updateSubcategory(index, { name: event.target.value })}
                 placeholder={index === 0 ? "e.g., Carrot, Chicken, Cash, Deposit..." : "Additional subcategory"}
                 disabled={isDelete}
               />
+              <Input
+                type="number"
+                value={String(subcategory.amount || 0)}
+                onChange={event => updateSubcategory(index, { amount: Number(event.target.value) })}
+                placeholder="Amount"
+                disabled={isDelete}
+              />
+              <div className="rounded-md bg-background px-2 py-2 text-xs">
+                <span className="block text-muted-foreground">USD</span>
+                <span className="font-semibold">{formatMoney(subcategory.amountUsd || 0, "USD")}</span>
+              </div>
+              <div className="rounded-md bg-background px-2 py-2 text-xs">
+                <span className="block text-muted-foreground">THS</span>
+                <span className="font-semibold">{formatMoney(subcategory.amountThs || 0, "THS")}</span>
+              </div>
               <Button type="button" variant="outline" size="icon" onClick={() => removeSubcategory(index)} disabled={isDelete} aria-label="Remove subcategory">
                 <X className="h-4 w-4" />
               </Button>
             </div>
           ))}
         </div>
-        <InputField disabled={isDelete} label="Counterparty" value={draft.counterparty || ""} onChange={value => updateDraft({ counterparty: value })} />
-        <InputField disabled={isDelete} label="Reference" value={draft.reference || ""} onChange={value => updateDraft({ reference: value })} />
-        <InputField disabled={isDelete} label="Amount" type="number" value={String(draft.amount || 0)} onChange={value => updateDraft({ amount: Number(value) })} />
-        <InputField disabled={isDelete} label="Currency" value={draft.currency || "USD"} onChange={value => updateDraft({ currency: value.toUpperCase() })} />
         {draft.type === "Revenue" && (
           <>
             <InputField disabled={isDelete} label="Reservation ID" value={draft.reservationId || ""} onChange={value => updateDraft({ reservationId: value })} />
@@ -567,6 +660,102 @@ function InputField({ label, value, onChange, type = "text", disabled = false }:
       <Input className="mt-1" type={type} value={value} onChange={event => onChange(event.target.value)} disabled={disabled} />
     </label>
   );
+}
+
+function ReadOnlyValue({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-sm">
+      <span className="block text-xs font-medium text-muted-foreground">{label}</span>
+      <span className="font-semibold">{value}</span>
+    </div>
+  );
+}
+
+function recalculateDraft(entry: Partial<AccountancyEntry>): Partial<AccountancyEntry> {
+  const currency = normalizeCurrency(entry.currency);
+  const fx = buildDualCurrencyAmounts({
+    amount: Number(entry.amount || 0),
+    currency,
+    fxUsdThs: entry.fxUsdThs,
+    fxThsUsd: entry.fxThsUsd,
+  });
+  const sourceBreakdown = entry.subcategoryBreakdown?.length
+    ? entry.subcategoryBreakdown
+    : (entry.subcategories || []).map(name => ({ name, amount: 0, amountUsd: 0, amountThs: 0 }));
+  const subcategoryBreakdown = (sourceBreakdown.length ? sourceBreakdown : [{ name: "", amount: 0, amountUsd: 0, amountThs: 0 }])
+    .map(item => {
+      const lineFx = buildDualCurrencyAmounts({
+        amount: Number(item.amount || 0),
+        currency,
+        fxUsdThs: fx.fxUsdThs,
+        fxThsUsd: fx.fxThsUsd,
+      });
+      return {
+        name: item.name || "",
+        amount: Number(item.amount || 0),
+        amountUsd: lineFx.amountUsd,
+        amountThs: lineFx.amountThs,
+      };
+    });
+
+  return {
+    ...entry,
+    currency,
+    amountUsd: fx.amountUsd,
+    amountThs: fx.amountThs,
+    fxUsdThs: fx.fxUsdThs,
+    fxThsUsd: fx.fxThsUsd,
+    subcategoryBreakdown,
+    subcategories: subcategoryBreakdown.map(item => item.name).filter(Boolean),
+  };
+}
+
+function normalizeForPosting(draft: Partial<AccountancyEntry>): AccountancyEntry {
+  const recalculated = recalculateDraft(draft);
+  const subcategoryBreakdown = (recalculated.subcategoryBreakdown || []).filter(item => item.name.trim());
+
+  return normalizeAccountancyEntry({
+    id: recalculated.id || "",
+    propertyId: recalculated.propertyId || "",
+    type: recalculated.type || "Revenue",
+    date: recalculated.date || new Date().toISOString().split("T")[0],
+    category: recalculated.category || "",
+    subcategories: subcategoryBreakdown.map(item => item.name.trim()),
+    subcategoryBreakdown,
+    counterparty: recalculated.counterparty || "",
+    description: recalculated.description || "",
+    amount: Number(recalculated.amount || 0),
+    currency: recalculated.currency || "USD",
+    amountUsd: recalculated.amountUsd,
+    amountThs: recalculated.amountThs,
+    fxUsdThs: recalculated.fxUsdThs,
+    fxThsUsd: recalculated.fxThsUsd,
+    reservationId: recalculated.reservationId,
+    customerInvoiceId: recalculated.customerInvoiceId,
+    supplierInvoiceId: recalculated.supplierInvoiceId,
+    documentType: recalculated.documentType || "Other",
+    paymentMethod: recalculated.paymentMethod,
+    reference: recalculated.reference,
+    taxAmount: Number(recalculated.taxAmount || 0),
+    source: recalculated.source || "GenAI Assistant",
+    status: "Confirmed",
+    attachmentName: recalculated.attachmentName,
+    rawSummary: recalculated.rawSummary,
+    createdAt: recalculated.createdAt || new Date().toISOString(),
+  });
+}
+
+function validateSubcategoryTotals(entry: Partial<AccountancyEntry>) {
+  const breakdown = (entry.subcategoryBreakdown || []).filter(item => item.name.trim());
+  if (!breakdown.length) return "";
+
+  const total = breakdown.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const currency = normalizeCurrency(entry.currency);
+  const tolerance = currency === "THS" ? 1 : 0.01;
+  const difference = roundMoney(total - Number(entry.amount || 0), currency === "THS" ? 0 : 2);
+  if (Math.abs(difference) <= tolerance) return "";
+
+  return `Subcategory amounts must equal the invoice total. Current subcategory total is ${formatMoney(total, currency)} and invoice total is ${formatMoney(Number(entry.amount || 0), currency)}. Difference: ${formatMoney(difference, currency)}.`;
 }
 
 function resolveTargetEntry(extraction: AssistantExtraction, entries: AccountancyEntry[]) {
