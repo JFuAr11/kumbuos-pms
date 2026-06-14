@@ -3,7 +3,7 @@ import { useAppContext } from "../../context/AppContext";
 import { Button } from "../../components/ui/button";
 import { AccountancyLedgerManager } from "../../components/accountancy/AccountancyLedgerManager";
 import { AccountancyCurrencyFilter } from "../../components/accountancy/AccountancyCurrencyFilter";
-import { exportToCSV, exportToExcel, exportToJSON } from "../../utils/export";
+import { exportToCSV, exportToExcel, exportToJSON, exportToPDF } from "../../utils/export";
 import { formatDisplayMoney, formatMoney, getAccountancySummary, getDatedCategoryName, getEntryDisplayAmount, getEntryThsAmount, getEntryUsdAmount, groupAccountancyEntriesByCategory, normalizeAccountancyEntry } from "../../utils/accountancy";
 
 export function AccountancyExpenses() {
@@ -28,17 +28,18 @@ export function AccountancyExpenses() {
     Currency: entry.currency,
     FX_USD_THS: entry.fxUsdThs,
     FX_THS_USD: entry.fxThsUsd,
-    AmountUSD: getEntryUsdAmount(entry),
-    AmountTHS: getEntryThsAmount(entry),
-    DisplayAmount: getEntryDisplayAmount(entry, accountancyDisplayCurrency),
+    AmountUSD: -getEntryUsdAmount(entry),
+    AmountTHS: -getEntryThsAmount(entry),
+    DisplayAmount: -getEntryDisplayAmount(entry, accountancyDisplayCurrency),
     Source: entry.source,
     Details: entry.description,
   }));
 
-  const handleExport = (type: "csv" | "excel" | "json") => {
+  const handleExport = (type: "csv" | "excel" | "json" | "pdf") => {
     if (type === "csv") exportToCSV(rows, "Expenses");
     if (type === "excel") exportToExcel(rows, "Expenses");
     if (type === "json") exportToJSON(rows, "Expenses");
+    if (type === "pdf") exportToPDF(rows, "Expenses", "Expenses");
   };
 
   return (
@@ -53,13 +54,14 @@ export function AccountancyExpenses() {
           <Button variant="outline" size="sm" onClick={() => handleExport("csv")}><Download className="mr-2 h-4 w-4" />CSV</Button>
           <Button variant="outline" size="sm" onClick={() => handleExport("excel")}>Excel</Button>
           <Button variant="outline" size="sm" onClick={() => handleExport("json")}>JSON</Button>
+          <Button variant="outline" size="sm" onClick={() => handleExport("pdf")}>PDF</Button>
         </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <SummaryCard label="Ledger Expenses" value={formatDisplayMoney(summary.ledgerExpenses, accountancyDisplayCurrency)} />
+        <SummaryCard label="Ledger Expenses" value={`-${formatDisplayMoney(summary.ledgerExpenses, accountancyDisplayCurrency)}`} />
         <SummaryCard label="Confirmed Entries" value={String(expenseEntries.length)} />
-        <SummaryCard label="Total Expenses" value={formatDisplayMoney(summary.totalExpenses, accountancyDisplayCurrency)} strong />
+        <SummaryCard label="Total Expenses" value={`-${formatDisplayMoney(summary.totalExpenses, accountancyDisplayCurrency)}`} strong />
       </div>
 
       <AccountancyLedgerManager title="Manage Expense Ledger Entries" filter="Expense" />
@@ -97,7 +99,7 @@ export function AccountancyExpenses() {
                   <td className="p-4 text-muted-foreground">{row.Currency}</td>
                   <td className="p-4 text-muted-foreground">{Number(row.FX_USD_THS || 0).toFixed(6)}</td>
                   <td className="p-4 text-muted-foreground">{Number(row.FX_THS_USD || 0).toFixed(8)}</td>
-                  <td className="p-4 text-right font-semibold text-destructive">-{formatDisplayMoney(row.DisplayAmount, accountancyDisplayCurrency)}</td>
+                  <td className="p-4 text-right font-semibold text-destructive">-{formatDisplayMoney(Math.abs(row.DisplayAmount), accountancyDisplayCurrency)}</td>
                 </tr>
               ))}
               {!rows.length && (

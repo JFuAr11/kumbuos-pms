@@ -4,12 +4,11 @@ import { useAppContext } from "../../context/AppContext";
 import { Button } from "../../components/ui/button";
 import { AccountancyCurrencyFilter } from "../../components/accountancy/AccountancyCurrencyFilter";
 import { AccountancyLedgerManager } from "../../components/accountancy/AccountancyLedgerManager";
-import { exportToCSV, exportToExcel, exportToJSON } from "../../utils/export";
+import { exportToCSV, exportToExcel, exportToJSON, exportToPDF } from "../../utils/export";
 import {
   CategoryGroup,
   flattenCategoryGroups,
   formatDisplayMoney,
-  formatMoney,
   getAccountancySummary,
   groupAccountancyEntriesByCategory,
 } from "../../utils/accountancy";
@@ -21,7 +20,7 @@ export function AccountancyBalance() {
   const assetGroups = groupAccountancyEntriesByCategory(confirmedEntries.filter(entry => entry.type === "Asset"), accountancyDisplayCurrency);
   const liabilityGroups = groupAccountancyEntriesByCategory(confirmedEntries.filter(entry => entry.type === "Liability"), accountancyDisplayCurrency);
 
-  const handleExport = (type: "csv" | "excel" | "json") => {
+  const handleExport = (type: "csv" | "excel" | "json" | "pdf") => {
     const data = [
       ...flattenCategoryGroups(assetGroups, "Assets", 1),
       ...flattenCategoryGroups(liabilityGroups, "Liabilities", -1),
@@ -31,6 +30,7 @@ export function AccountancyBalance() {
     if (type === "csv") exportToCSV(data, "Balance");
     if (type === "excel") exportToExcel(data, "Balance");
     if (type === "json") exportToJSON(data, "Balance");
+    if (type === "pdf") exportToPDF(data, "Balance", "Balance Sheet");
   };
 
   return (
@@ -45,6 +45,7 @@ export function AccountancyBalance() {
           <Button variant="outline" size="sm" onClick={() => handleExport("csv")}>CSV</Button>
           <Button variant="outline" size="sm" onClick={() => handleExport("excel")}>Excel</Button>
           <Button variant="outline" size="sm" onClick={() => handleExport("json")}>JSON</Button>
+          <Button variant="outline" size="sm" onClick={() => handleExport("pdf")}>PDF</Button>
         </div>
       </div>
 

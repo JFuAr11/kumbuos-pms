@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Bot, FileText, LockKeyhole, Paperclip, Plus, Send, Sparkles, X } from "lucide-react";
+import { Bot, Download, FileText, LockKeyhole, Paperclip, Plus, Send, Sparkles, X } from "lucide-react";
 import type { AccountancyEntry } from "../../context/AppContext";
 import { useAppContext } from "../../context/AppContext";
 import { Button } from "../../components/ui/button";
@@ -18,6 +18,7 @@ import {
   roundMoney,
 } from "../../utils/accountancy";
 import { fetchFxRateForDate } from "../../utils/fxRates";
+import { exportToPDF } from "../../utils/export";
 
 type AssistantAction = "create" | "update" | "delete" | "none";
 
@@ -129,6 +130,36 @@ export function AccountancyGenAIAssistant() {
     () => propertyEntries.filter(entry => entry.source === "GenAI Assistant").slice(0, 5),
     [propertyEntries],
   );
+
+  const exportAssistantPdf = () => {
+    const pendingRows = pendingAction && pendingAction.action !== "delete"
+      ? [{
+        Status: "Pending review",
+        Action: pendingAction.action,
+        Type: pendingAction.draft.type || "",
+        Date: pendingAction.draft.date || "",
+        Category: getDatedCategoryName(pendingAction.draft.category || "Uncategorized", pendingAction.draft.date),
+        Counterparty: pendingAction.draft.counterparty || "",
+        Reference: pendingAction.draft.reference || "",
+        Amount: `${pendingAction.draft.type === "Expense" || pendingAction.draft.type === "Liability" ? "-" : ""}${formatDisplayMoney(getEntryDisplayAmount(pendingAction.draft as AccountancyEntry, accountancyDisplayCurrency), accountancyDisplayCurrency)}`,
+        Subcategories: pendingAction.draft.subcategoryBreakdown?.map(item => `${item.name}: ${formatMoney(Number(item.amount || 0), pendingAction.draft.currency || "USD")}`).join(", ") || "",
+      }]
+      : [];
+
+    const postedRows = recentAiEntries.map(entry => ({
+      Status: "Posted",
+      Action: "Confirmed",
+      Type: entry.type,
+      Date: entry.date,
+      Category: getDatedCategoryName(entry.category, entry.date),
+      Counterparty: entry.counterparty,
+      Reference: entry.reference || "",
+      Amount: `${entry.type === "Expense" || entry.type === "Liability" ? "-" : ""}${formatDisplayMoney(getEntryDisplayAmount(entry, accountancyDisplayCurrency), accountancyDisplayCurrency)}`,
+      Subcategories: entry.subcategoryBreakdown?.map(item => `${item.name}: ${formatMoney(Number(item.amount || 0), entry.currency)}`).join(", ") || "",
+    }));
+
+    exportToPDF([...pendingRows, ...postedRows], "GenAI-Assistant", "GenAI Assistant - Accountancy");
+  };
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -383,7 +414,13 @@ export function AccountancyGenAIAssistant() {
           <h1 className="text-3xl font-bold">GenAI Assistant</h1>
           <p className="text-muted-foreground">Create, review, modify, or delete revenues, expenses, assets, and liabilities only after explicit confirmation.</p>
         </div>
-        <AccountancyCurrencyFilter compact />
+        <div className="flex flex-wrap gap-2">
+          <AccountancyCurrencyFilter compact />
+          <Button variant="outline" size="sm" onClick={exportAssistantPdf}>
+            <Download className="mr-2 h-4 w-4" />
+            PDF
+          </Button>
+        </div>
       </div>
 
       <div className="rounded-xl border border-primary/30 bg-primary/10 p-4 text-sm">
@@ -396,7 +433,7 @@ export function AccountancyGenAIAssistant() {
         </div>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_420px]">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_560px] 2xl:grid-cols-[minmax(0,1fr)_620px]">
         <div className="rounded-xl border border-border bg-card shadow-sm overflow-hidden">
           <div className="border-b border-border bg-muted/30 p-4">
             <div className="flex items-center gap-3">
@@ -676,31 +713,43 @@ function ActiveReviewPanel({
             </Button>
           </div>
           {subcategoryBreakdown.map((subcategory, index) => (
-            <div key={index} className="grid gap-2 rounded-md border border-border bg-muted/20 p-2 sm:grid-cols-[minmax(0,1fr)_110px_105px_105px_40px]">
-              <Input
-                value={subcategory.name}
-                onChange={event => updateSubcategory(index, { name: event.target.value })}
-                placeholder={index === 0 ? "e.g., Carrot, Chicken, Cash, Deposit..." : "Additional subcategory"}
-                disabled={isDelete}
-              />
-              <Input
-                type="number"
-                value={String(subcategory.amount || 0)}
-                onChange={event => updateSubcategory(index, { amount: Number(event.target.value) })}
-                placeholder="Amount"
-                disabled={isDelete}
-              />
-              <div className="rounded-md bg-background px-2 py-2 text-xs">
-                <span className="block text-muted-foreground">USD</span>
-                <span className="font-semibold">{formatMoney(subcategory.amountUsd || 0, "USD")}</span>
+            <div key={index} className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
+              <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Subcategory name
+                <Input
+                  className="mt-1"
+                  value={subcategory.name}
+                  onChange={event => updateSubcategory(index, { name: event.target.value })}
+                  placeholder={index === 0 ? "e.g., Carrot, Chicken, Cash, Deposit..." : "Additional subcategory"}
+                  disabled={isDelete}
+                />
+              </label>
+              <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_170px_40px]">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                  Invoice amount
+                  <Input
+                    className="mt-1"
+                    type="number"
+                    value={String(subcategory.amount || 0)}
+                    onChange={event => updateSubcategory(index, { amount: Number(event.target.value) })}
+                    placeholder="Amount"
+                    disabled={isDelete}
+                  />
+                </label>
+                <div className="space-y-2 rounded-md bg-background px-3 py-2 text-xs">
+                  <div>
+                    <span className="block text-muted-foreground">USD</span>
+                    <span className="font-semibold">{formatMoney(subcategory.amountUsd || 0, "USD")}</span>
+                  </div>
+                  <div>
+                    <span className="block text-muted-foreground">THS</span>
+                    <span className="font-semibold">{formatMoney(subcategory.amountThs || 0, "THS")}</span>
+                  </div>
+                </div>
+                <Button type="button" variant="outline" size="icon" onClick={() => removeSubcategory(index)} disabled={isDelete} aria-label="Remove subcategory">
+                  <X className="h-4 w-4" />
+                </Button>
               </div>
-              <div className="rounded-md bg-background px-2 py-2 text-xs">
-                <span className="block text-muted-foreground">THS</span>
-                <span className="font-semibold">{formatMoney(subcategory.amountThs || 0, "THS")}</span>
-              </div>
-              <Button type="button" variant="outline" size="icon" onClick={() => removeSubcategory(index)} disabled={isDelete} aria-label="Remove subcategory">
-                <X className="h-4 w-4" />
-              </Button>
             </div>
           ))}
         </div>

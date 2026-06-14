@@ -3,7 +3,7 @@ import { AccountancyLedgerManager } from "../../components/accountancy/Accountan
 import { AccountancyCurrencyFilter } from "../../components/accountancy/AccountancyCurrencyFilter";
 import { Button } from "../../components/ui/button";
 import { useAppContext } from "../../context/AppContext";
-import { exportToCSV, exportToExcel, exportToJSON } from "../../utils/export";
+import { exportToCSV, exportToExcel, exportToJSON, exportToPDF } from "../../utils/export";
 import { formatDisplayMoney, formatMoney, getAccountancySummary, getDatedCategoryName, getEntryDisplayAmount, getEntryThsAmount, getEntryUsdAmount, groupAccountancyEntriesByCategory, normalizeAccountancyEntry } from "../../utils/accountancy";
 
 export function AccountancyAssets() {
@@ -33,10 +33,11 @@ export function AccountancyAssets() {
     Details: entry.description,
   }));
 
-  const handleExport = (type: "csv" | "excel" | "json") => {
+  const handleExport = (type: "csv" | "excel" | "json" | "pdf") => {
     if (type === "csv") exportToCSV(rows, "Assets");
     if (type === "excel") exportToExcel(rows, "Assets");
     if (type === "json") exportToJSON(rows, "Assets");
+    if (type === "pdf") exportToPDF(rows, "Assets", "Assets");
   };
 
   return (
@@ -51,6 +52,7 @@ export function AccountancyAssets() {
           <Button variant="outline" size="sm" onClick={() => handleExport("csv")}><Download className="mr-2 h-4 w-4" />CSV</Button>
           <Button variant="outline" size="sm" onClick={() => handleExport("excel")}>Excel</Button>
           <Button variant="outline" size="sm" onClick={() => handleExport("json")}>JSON</Button>
+          <Button variant="outline" size="sm" onClick={() => handleExport("pdf")}>PDF</Button>
         </div>
       </div>
 

@@ -22,6 +22,7 @@ import {
   TrendingDown,
   Scale,
   Coffee,
+  Calculator,
   Utensils,
   Wind,
   Wrench,
@@ -60,7 +61,7 @@ const RESERVATION_ITEMS = [
 
 const ACCOUNTANCY_ITEMS = [
   { path: "/app/accountancy/overview", label: "Overview", icon: BarChart },
-  { path: "/app/accountancy/profit-loss", label: "Profit & Loss (P&L)", icon: BarChart },
+  { path: "/app/accountancy/profit-loss", label: "Profit & Loss (P&L)", icon: Calculator },
   { path: "/app/accountancy/revenues", label: "Revenues", icon: TrendingUp, level: 1 },
   { path: "/app/accountancy/expenses", label: "Expenses", icon: TrendingDown, level: 1 },
   { path: "/app/accountancy/balance", label: "Balance", icon: Scale },

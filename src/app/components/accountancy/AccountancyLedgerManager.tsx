@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Edit, Plus, Trash2, X } from "lucide-react";
+import { Download, Edit, Plus, Trash2, X } from "lucide-react";
 import type { AccountancyEntry } from "../../context/AppContext";
 import { useAppContext } from "../../context/AppContext";
 import { Button } from "../ui/button";
@@ -17,6 +17,7 @@ import {
   roundMoney,
 } from "../../utils/accountancy";
 import { fetchFxRateForDate } from "../../utils/fxRates";
+import { exportToPDF } from "../../utils/export";
 
 type LedgerFilter = AccountancyEntry["type"] | "All";
 type SubcategoryLine = NonNullable<AccountancyEntry["subcategoryBreakdown"]>[number];
@@ -132,6 +133,28 @@ export function AccountancyLedgerManager({
       ? "Manual entries are scoped only to the active property and feed Assets, Liabilities, and Balance."
       : "Manual entries are scoped only to the active property and feed the relevant Accountancy statements.";
 
+  const exportLedgerPdf = () => {
+    const rows = entries.map(entry => {
+      const negative = entry.type === "Expense" || entry.type === "Liability";
+      return {
+        Date: entry.date,
+        Type: entry.type,
+        Category: getDatedCategoryName(entry.category, entry.date),
+        Subcategories: entry.subcategoryBreakdown?.length
+          ? entry.subcategoryBreakdown.map(item => `${item.name}: ${formatMoney(Number(item.amount || 0), entry.currency)}`).join(", ")
+          : "Unassigned",
+        Traceability: formatTraceability(entry),
+        Counterparty: entry.counterparty,
+        Reference: entry.reference || "",
+        Amount: `${negative ? "-" : ""}${formatDisplayMoney(getEntryDisplayAmount(entry, accountancyDisplayCurrency), accountancyDisplayCurrency)}`,
+        Currency: entry.currency,
+        FX_USD_THS: Number(entry.fxUsdThs || 0).toFixed(6),
+        FX_THS_USD: Number(entry.fxThsUsd || 0).toFixed(8),
+      };
+    });
+    exportToPDF(rows, title.replace(/[^a-z0-9]+/gi, "-"), `${title} - Accountancy`);
+  };
+
   const startNew = () => setEditing(blankEntry(selectedPropertyId, defaultType));
 
   useEffect(() => {
@@ -242,10 +265,16 @@ export function AccountancyLedgerManager({
           <h2 className="text-lg font-semibold">{title}</h2>
           <p className="text-sm text-muted-foreground">{scopeDescription}</p>
         </div>
-        <Button onClick={startNew}>
-          <Plus className="mr-2 h-4 w-4" />
-          Add Entry
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={exportLedgerPdf}>
+            <Download className="mr-2 h-4 w-4" />
+            PDF
+          </Button>
+          <Button onClick={startNew}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add Entry
+          </Button>
+        </div>
       </div>
 
       {editing && (

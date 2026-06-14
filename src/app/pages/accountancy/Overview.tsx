@@ -1,4 +1,4 @@
-import { Bot, Scale, TrendingDown, TrendingUp, Wallet } from "lucide-react";
+import { Bot, Download, Scale, TrendingDown, TrendingUp, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
 import {
   Area,
@@ -15,14 +15,15 @@ import {
 import type { AccountancyEntry } from "../../context/AppContext";
 import { useAppContext } from "../../context/AppContext";
 import { AccountancyCurrencyFilter } from "../../components/accountancy/AccountancyCurrencyFilter";
+import { Button } from "../../components/ui/button";
 import {
   formatDisplayMoney,
-  formatMoney,
   getAccountancySummary,
   getConfirmedAccountancyEntries,
   getEntryDisplayAmount,
   groupAccountancyEntriesByCategory,
 } from "../../utils/accountancy";
+import { exportToPDF } from "../../utils/export";
 
 type ChartRow = Record<string, string | number>;
 
@@ -47,6 +48,36 @@ export function AccountancyOverview() {
     { label: "Liabilities", entries: liabilityEntries },
   ], accountancyDisplayCurrency);
   const monthlyRows = buildMonthlyRows(confirmedEntries, accountancyDisplayCurrency);
+  const overviewRows = [
+    { Section: "Summary", Metric: "P&L Revenues", Amount: formatDisplayMoney(summary.totalRevenue, accountancyDisplayCurrency) },
+    { Section: "Summary", Metric: "P&L Expenses", Amount: `-${formatDisplayMoney(summary.totalExpenses, accountancyDisplayCurrency)}` },
+    { Section: "Summary", Metric: "P&L Net Profit", Amount: formatDisplayMoney(summary.netProfit, accountancyDisplayCurrency) },
+    { Section: "Summary", Metric: "Balance Assets", Amount: formatDisplayMoney(summary.totalAssets, accountancyDisplayCurrency) },
+    { Section: "Summary", Metric: "Balance Liabilities", Amount: `-${formatDisplayMoney(summary.totalLiabilities, accountancyDisplayCurrency)}` },
+    { Section: "Summary", Metric: "Balance Net Position", Amount: formatDisplayMoney(summary.netBalance, accountancyDisplayCurrency) },
+    ...pnlCategoryRows.map(row => ({
+      Section: "Profit & Loss by Category",
+      Metric: row.category,
+      Revenue: formatDisplayMoney(Number(row.Revenue || 0), accountancyDisplayCurrency),
+      Expenses: formatDisplayMoney(Number(row.Expenses || 0), accountancyDisplayCurrency),
+    })),
+    ...balanceCategoryRows.map(row => ({
+      Section: "Balance by Category",
+      Metric: row.category,
+      Assets: formatDisplayMoney(Number(row.Assets || 0), accountancyDisplayCurrency),
+      Liabilities: formatDisplayMoney(Number(row.Liabilities || 0), accountancyDisplayCurrency),
+    })),
+    ...monthlyRows.map(row => ({
+      Section: "Monthly Trend",
+      Metric: row.month,
+      Revenue: formatDisplayMoney(row.Revenue, accountancyDisplayCurrency),
+      Expenses: formatDisplayMoney(row.Expenses, accountancyDisplayCurrency),
+      Assets: formatDisplayMoney(row.Assets, accountancyDisplayCurrency),
+      Liabilities: formatDisplayMoney(row.Liabilities, accountancyDisplayCurrency),
+    })),
+  ];
+
+  const exportOverviewPdf = () => exportToPDF(overviewRows, "Accountancy-Overview", "Accountancy Overview");
 
   return (
     <div className="space-y-6 p-4 sm:p-6 lg:p-8">
@@ -57,12 +88,18 @@ export function AccountancyOverview() {
             Overview is calculated from Profit & Loss and Balance data for the active property.
           </p>
         </div>
-        <AccountancyCurrencyFilter compact />
+        <div className="flex flex-wrap gap-2">
+          <AccountancyCurrencyFilter compact />
+          <Button variant="outline" size="sm" onClick={exportOverviewPdf}>
+            <Download className="mr-2 h-4 w-4" />
+            PDF
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 xl:grid-cols-5">
         <Metric title="P&L Revenues" value={formatDisplayMoney(summary.totalRevenue, accountancyDisplayCurrency)} tone="positive" icon={TrendingUp} />
-        <Metric title="P&L Expenses" value={formatDisplayMoney(summary.totalExpenses, accountancyDisplayCurrency)} tone="negative" icon={TrendingDown} />
+        <Metric title="P&L Expenses" value={`-${formatDisplayMoney(summary.totalExpenses, accountancyDisplayCurrency)}`} tone="negative" icon={TrendingDown} />
         <Metric title="P&L Net Profit" value={formatDisplayMoney(summary.netProfit, accountancyDisplayCurrency)} tone={summary.netProfit >= 0 ? "positive" : "negative"} icon={Scale} />
         <Metric title="Balance Net Position" value={formatDisplayMoney(summary.netBalance, accountancyDisplayCurrency)} tone={summary.netBalance >= 0 ? "positive" : "negative"} icon={Wallet} />
         <Metric title="AI Posted Entries" value={String(aiEntries.length)} tone="neutral" icon={Bot} />
@@ -178,7 +215,8 @@ function mergeCategoryGroups(series: Array<{ label: string; entries: Accountancy
   series.forEach(({ label, entries }) => {
     groupAccountancyEntriesByCategory(entries, displayCurrency).forEach(group => {
       const existing = rows.get(group.category) || { category: group.category };
-      existing[label] = group.total;
+      const signedTotal = label === "Expenses" || label === "Liabilities" ? -group.total : group.total;
+      existing[label] = signedTotal;
       rows.set(group.category, existing);
     });
   });
@@ -189,8 +227,8 @@ function mergeCategoryGroups(series: Array<{ label: string; entries: Accountancy
       ...series.reduce((acc, item) => ({ ...acc, [item.label]: Number(row[item.label] || 0) }), {}),
     }))
     .sort((left, right) => {
-      const leftTotal = series.reduce((sum, item) => sum + Number(left[item.label] || 0), 0);
-      const rightTotal = series.reduce((sum, item) => sum + Number(right[item.label] || 0), 0);
+      const leftTotal = series.reduce((sum, item) => sum + Math.abs(Number(left[item.label] || 0)), 0);
+      const rightTotal = series.reduce((sum, item) => sum + Math.abs(Number(right[item.label] || 0)), 0);
       return rightTotal - leftTotal;
     });
 }
@@ -208,9 +246,9 @@ function buildMonthlyRows(entries: AccountancyEntry[], displayCurrency: "USD" | 
 
     const amount = getEntryDisplayAmount(entry, displayCurrency);
     if (entry.type === "Revenue") existing.Revenue += amount;
-    if (entry.type === "Expense") existing.Expenses += amount;
+    if (entry.type === "Expense") existing.Expenses -= amount;
     if (entry.type === "Asset") existing.Assets += amount;
-    if (entry.type === "Liability") existing.Liabilities += amount;
+    if (entry.type === "Liability") existing.Liabilities -= amount;
 
     acc.set(month, existing);
     return acc;
