@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Edit, Plus, Trash2, X } from "lucide-react";
 import type { AccountancyEntry } from "../../context/AppContext";
 import { useAppContext } from "../../context/AppContext";
@@ -13,6 +13,7 @@ import {
   normalizeCurrency,
   roundMoney,
 } from "../../utils/accountancy";
+import { fetchFxRateForDate } from "../../utils/fxRates";
 
 type LedgerFilter = AccountancyEntry["type"] | "All";
 type SubcategoryLine = NonNullable<AccountancyEntry["subcategoryBreakdown"]>[number];
@@ -109,6 +110,7 @@ export function AccountancyLedgerManager({
       : [filter];
   const defaultType: AccountancyEntry["type"] = availableTypes[0] || "Revenue";
   const [editing, setEditing] = useState<AccountancyEntry | null>(null);
+  const [fxStatus, setFxStatus] = useState("");
 
   const entries = accountancyEntries
     .filter(entry => entry.propertyId === selectedPropertyId)
@@ -127,6 +129,28 @@ export function AccountancyLedgerManager({
       : "Manual entries are scoped only to the active property and feed the relevant Accountancy statements.";
 
   const startNew = () => setEditing(blankEntry(selectedPropertyId, defaultType));
+
+  useEffect(() => {
+    if (!editing?.date) return;
+    let cancelled = false;
+
+    fetchFxRateForDate(editing.date).then(rate => {
+      if (cancelled) return;
+      setEditing(current => {
+        if (!current || current.date !== editing.date) return current;
+        return recalculateEditing({
+          ...current,
+          fxUsdThs: rate.fxUsdThs,
+          fxThsUsd: rate.fxThsUsd,
+        });
+      });
+      setFxStatus(`FX loaded from ${rate.source} for ${rate.rateDate}.`);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [editing?.date]);
 
   const saveEntry = () => {
     if (!editing) return;
@@ -262,6 +286,7 @@ export function AccountancyLedgerManager({
             <InputField label="FX_THS_USD" type="number" value={String(editing.fxThsUsd || "")} onChange={value => updateEditing({ fxThsUsd: Number(value), fxUsdThs: Number(value) ? 1 / Number(value) : 0 })} />
             <ReadOnlyValue label="Amount USD" value={formatMoney(editingUsd, "USD")} />
             <ReadOnlyValue label="Amount THS" value={formatMoney(editingThs, "THS")} />
+            {fxStatus && <p className="text-xs text-muted-foreground md:col-span-3">{fxStatus}</p>}
 
             {editing.type === "Revenue" && (
               <>

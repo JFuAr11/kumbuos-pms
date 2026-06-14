@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Bot, FileText, LockKeyhole, Paperclip, Plus, Send, Sparkles, X } from "lucide-react";
 import type { AccountancyEntry } from "../../context/AppContext";
 import { useAppContext } from "../../context/AppContext";
@@ -13,6 +13,7 @@ import {
   normalizeCurrency,
   roundMoney,
 } from "../../utils/accountancy";
+import { fetchFxRateForDate } from "../../utils/fxRates";
 
 type AssistantAction = "create" | "update" | "delete" | "none";
 
@@ -520,8 +521,21 @@ function ReviewPanel({
     );
   }
 
+  return <ActiveReviewPanel pendingAction={pendingAction} setPendingAction={setPendingAction} onConfirm={onConfirm} />;
+}
+
+function ActiveReviewPanel({
+  pendingAction,
+  setPendingAction,
+  onConfirm,
+}: {
+  pendingAction: PendingAction;
+  setPendingAction: (action: PendingAction | null) => void;
+  onConfirm: () => void;
+}) {
   const draft = recalculateDraft(pendingAction.draft);
   const updateDraft = (updates: Partial<AccountancyEntry>) => setPendingAction({ ...pendingAction, draft: recalculateDraft({ ...draft, ...updates }) });
+  const [fxStatus, setFxStatus] = useState("");
   const isDelete = pendingAction.action === "delete";
   const subcategoryBreakdown = draft.subcategoryBreakdown?.length ? draft.subcategoryBreakdown : [{ name: "", amount: 0, amountUsd: 0, amountThs: 0 }];
   const subcategoryTotal = subcategoryBreakdown.reduce((sum, item) => sum + Number(item.amount || 0), 0);
@@ -541,6 +555,28 @@ function ReviewPanel({
       subcategories: next.map(item => item.name).filter(Boolean),
     });
   };
+
+  useEffect(() => {
+    if (!pendingAction || isDelete || !draft.date) return;
+    let cancelled = false;
+
+    fetchFxRateForDate(draft.date).then(rate => {
+      if (cancelled) return;
+      setPendingAction({
+        ...pendingAction,
+        draft: recalculateDraft({
+          ...draft,
+          fxUsdThs: rate.fxUsdThs,
+          fxThsUsd: rate.fxThsUsd,
+        }),
+      });
+      setFxStatus(`FX loaded from ${rate.source} for ${rate.rateDate}.`);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [draft.date, isDelete]);
 
   return (
     <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
@@ -585,6 +621,7 @@ function ReviewPanel({
         <InputField disabled={isDelete} label="FX_THS_USD" type="number" value={String(draft.fxThsUsd || "")} onChange={value => updateDraft({ fxThsUsd: Number(value), fxUsdThs: Number(value) ? 1 / Number(value) : 0 })} />
         <ReadOnlyValue label="Amount USD" value={formatMoney(getEntryUsdAmount(draft as AccountancyEntry), "USD")} />
         <ReadOnlyValue label="Amount THS" value={formatMoney(getEntryThsAmount(draft as AccountancyEntry), "THS")} />
+        {fxStatus && <p className="text-xs text-muted-foreground">{fxStatus}</p>}
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-3">
             <div>
