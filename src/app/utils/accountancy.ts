@@ -1,13 +1,21 @@
-import type { AccountancyEntry, Reservation, SupplyRequest } from "../context/AppContext";
+import type { AccountancyEntry } from "../context/AppContext";
 
 export type AccountancySummary = {
-  bookingsRevenue: number;
   ledgerRevenue: number;
-  supplyExpenses: number;
   ledgerExpenses: number;
+  totalAssets: number;
+  totalLiabilities: number;
   totalRevenue: number;
   totalExpenses: number;
   netProfit: number;
+  netBalance: number;
+};
+
+export type CategoryGroup = {
+  category: string;
+  total: number;
+  entries: AccountancyEntry[];
+  subcategories: Record<string, number>;
 };
 
 export function formatMoney(value: number, currency = "USD") {
@@ -18,46 +26,87 @@ export function formatMoney(value: number, currency = "USD") {
   }).format(value || 0);
 }
 
-export function getAccountancySummary(params: {
+export function getConfirmedAccountancyEntries(params: {
   propertyId: string;
-  reservations: Reservation[];
-  supplyRequests: SupplyRequest[];
   accountancyEntries: AccountancyEntry[];
-}): AccountancySummary {
-  const propertyReservations = params.reservations.filter(
-    reservation => reservation.propertyId === params.propertyId && reservation.status !== "Cancelled",
-  );
-  const propertySupplyRequests = params.supplyRequests.filter(request => request.propertyId === params.propertyId);
-  const confirmedEntries = params.accountancyEntries.filter(
+}) {
+  return params.accountancyEntries.filter(
     entry => entry.propertyId === params.propertyId && entry.status === "Confirmed",
   );
+}
 
-  const bookingsRevenue = propertyReservations.reduce((sum, reservation) => sum + reservation.price, 0);
-  const ledgerRevenue = confirmedEntries
-    .filter(entry => entry.type === "Revenue")
-    .reduce((sum, entry) => sum + entry.amount, 0);
-  const supplyExpenses = propertySupplyRequests.reduce((sum, request) => sum + request.amount, 0);
-  const ledgerExpenses = confirmedEntries
-    .filter(entry => entry.type === "Expense")
-    .reduce((sum, entry) => sum + entry.amount, 0);
+export function getAccountancySummary(params: {
+  propertyId: string;
+  accountancyEntries: AccountancyEntry[];
+}): AccountancySummary {
+  const confirmedEntries = getConfirmedAccountancyEntries(params);
 
-  const totalRevenue = bookingsRevenue + ledgerRevenue;
-  const totalExpenses = supplyExpenses + ledgerExpenses;
+  const ledgerRevenue = sumByType(confirmedEntries, "Revenue");
+  const ledgerExpenses = sumByType(confirmedEntries, "Expense");
+  const totalAssets = sumByType(confirmedEntries, "Asset");
+  const totalLiabilities = sumByType(confirmedEntries, "Liability");
 
   return {
-    bookingsRevenue,
     ledgerRevenue,
-    supplyExpenses,
     ledgerExpenses,
-    totalRevenue,
-    totalExpenses,
-    netProfit: totalRevenue - totalExpenses,
+    totalAssets,
+    totalLiabilities,
+    totalRevenue: ledgerRevenue,
+    totalExpenses: ledgerExpenses,
+    netProfit: ledgerRevenue - ledgerExpenses,
+    netBalance: totalAssets - totalLiabilities,
   };
 }
 
 export function groupAccountancyEntriesByCategory(entries: AccountancyEntry[]) {
-  return entries.reduce((acc, entry) => {
-    acc[entry.category] = (acc[entry.category] || 0) + entry.amount;
+  const groups = entries.reduce((acc, entry) => {
+    const key = entry.category || "Uncategorized";
+    if (!acc[key]) {
+      acc[key] = {
+        category: key,
+        total: 0,
+        entries: [],
+        subcategories: {},
+      };
+    }
+
+    acc[key].total += entry.amount;
+    acc[key].entries.push(entry);
+
+    const subcategories = normalizeSubcategories(entry.subcategories);
+    const splitAmount = entry.amount / subcategories.length;
+    subcategories.forEach(subcategory => {
+      acc[key].subcategories[subcategory] = (acc[key].subcategories[subcategory] || 0) + splitAmount;
+    });
+
     return acc;
-  }, {} as Record<string, number>);
+  }, {} as Record<string, CategoryGroup>);
+
+  return Object.values(groups).sort((left, right) => right.total - left.total);
+}
+
+export function flattenCategoryGroups(groups: CategoryGroup[], section: string, sign = 1) {
+  return groups.flatMap(group => [
+    { Section: section, Category: group.category, Subcategory: "", Amount: group.total * sign },
+    ...Object.entries(group.subcategories).map(([subcategory, amount]) => ({
+      Section: section,
+      Category: group.category,
+      Subcategory: subcategory,
+      Amount: amount * sign,
+    })),
+  ]);
+}
+
+function sumByType(entries: AccountancyEntry[], type: AccountancyEntry["type"]) {
+  return entries
+    .filter(entry => entry.type === type)
+    .reduce((sum, entry) => sum + entry.amount, 0);
+}
+
+function normalizeSubcategories(subcategories?: string[]) {
+  const cleaned = (subcategories || [])
+    .map(item => item.trim())
+    .filter(Boolean);
+
+  return cleaned.length ? cleaned : ["Unassigned"];
 }

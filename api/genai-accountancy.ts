@@ -23,6 +23,7 @@ const safeHelpResponse = {
     confidence: 1,
     date: "",
     category: "",
+    subcategories: [],
     counterparty: "",
     description: "",
     amount: 0,
@@ -46,6 +47,7 @@ const safeUnableToExtractResponse = {
     confidence: 0,
     date: "",
     category: "",
+    subcategories: [],
     counterparty: "",
     description: "",
     amount: 0,
@@ -55,7 +57,7 @@ const safeUnableToExtractResponse = {
     reference: "",
     taxAmount: 0,
     questions: [
-      "Please provide date, counterparty, amount, currency, category, and whether it is revenue or expense.",
+    "Please provide date, counterparty, amount, currency, category, subcategories if available, and whether it is revenue, expense, asset, or liability.",
     ],
   },
 };
@@ -71,8 +73,8 @@ You are KumbuOS GenAI Assistant for the Accountancy module of a luxury hospitali
 Your job:
 1. Read supplier invoices and customer proof-of-payment documents.
 2. Interpret Accountancy-only requests to create, update, or delete ledger entries.
-3. Decide whether the accounting entry is Revenue or Expense.
-4. Extract the exact fields required by the KumbuOS Accountancy ledger.
+3. Decide whether the accounting entry is Revenue, Expense, Asset, or Liability.
+4. Extract the exact fields required by the KumbuOS Accountancy ledger, including category and one or many subcategories.
 5. Never post, edit, or delete directly. Return a reviewable JSON candidate so the user can confirm or edit it.
 
 Hard guardrails:
@@ -84,7 +86,17 @@ Hard guardrails:
 Classify:
 - Proof of payment, bank transfer proof, customer receipt, OTA payout, reservation payment: Revenue.
 - Supplier invoice, purchase receipt, bill, vendor statement, operating cost: Expense.
+- Cash, bank deposits, receivables, inventory, equipment, vehicles, fixed assets, prepayments: Asset.
+- Supplier balances payable, customer deposits, taxes payable, loans, accrued costs: Liability.
 - If the document is ambiguous, return type "Unknown" and list questions.
+
+Category and subcategory guidance:
+- Revenue categories include Accommodation Revenue, Food & Beverage Revenue, Activities Revenue, OTA Payments, Direct Client Payments, Agency Payments, Tour Operator Payments.
+- Expense categories include Food Supply, Beverage Supply, Housekeeping, Maintenance, Fuel, Payroll, Utilities, Marketing, Bank Fees, Taxes.
+- Asset categories include Cash and Bank, Accounts Receivable, Inventory, Fixed Assets, Prepayments.
+- Liability categories include Accounts Payable, Customer Deposits, Taxes Payable, Loans, Accruals.
+- Always identify subcategories when visible. For food invoices, use ingredients or line items as subcategories, for example Carrot, Chicken, Leek.
+- A category can have one or many subcategories. If subcategories are not visible or cannot be inferred safely, return an empty subcategories array and ask the user to add them.
 
 Return strict JSON only:
 {
@@ -93,10 +105,11 @@ Return strict JSON only:
     "action": "create|update|delete|none",
     "targetEntryId": "existing ledger id for update/delete or empty",
     "targetReference": "existing ledger reference if useful or empty",
-    "type": "Revenue|Expense|Unknown",
+    "type": "Revenue|Expense|Asset|Liability|Unknown",
     "confidence": 0.0,
     "date": "YYYY-MM-DD or empty",
     "category": "short ledger category",
+    "subcategories": ["one or more concrete subcategories when visible"],
     "counterparty": "customer, agency, OTA, supplier, or vendor name",
     "description": "one-line accounting description",
     "amount": 0,
@@ -117,7 +130,7 @@ Rules:
 - For update/delete, only choose a targetEntryId when the existing entry is clearly identifiable from the active-property ledger list.
 - Use the document's currency when visible; default to the active property currency.
 - Do not invent invoice numbers, dates, tax, or payment references.
-- If multiple line items exist, summarize them into the accounting category and description.
+- If multiple line items exist, use the accounting category for the group and put each meaningful line item into subcategories.
 - Use hotel finance language, concise and operational.
 `.trim();
 
@@ -199,7 +212,7 @@ function normalizeAssistantPayload(payload: any, propertyCurrency = "USD") {
   const action = ["create", "update", "delete", "none"].includes(extraction.action)
     ? extraction.action
     : "none";
-  const type = ["Revenue", "Expense", "Unknown"].includes(extraction.type)
+  const type = ["Revenue", "Expense", "Asset", "Liability", "Unknown"].includes(extraction.type)
     ? extraction.type
     : "Unknown";
   const documentType = ["Supplier Invoice", "Proof of Payment", "Reservation Payment", "Other"].includes(extraction.documentType)
@@ -218,6 +231,9 @@ function normalizeAssistantPayload(payload: any, propertyCurrency = "USD") {
       confidence: Number.isFinite(Number(extraction.confidence)) ? Number(extraction.confidence) : 0,
       date: String(extraction.date || ""),
       category: String(extraction.category || ""),
+      subcategories: Array.isArray(extraction.subcategories)
+        ? extraction.subcategories.map(String).map((item: string) => item.trim()).filter(Boolean)
+        : [],
       counterparty: String(extraction.counterparty || ""),
       description: String(extraction.description || ""),
       amount: Number.isFinite(Number(extraction.amount)) ? Number(extraction.amount) : 0,
@@ -232,9 +248,14 @@ function normalizeAssistantPayload(payload: any, propertyCurrency = "USD") {
 }
 
 function isBasicHelpRequest(message: string) {
-  const normalized = message.trim().toLowerCase();
+  const normalized = message
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\w\s?!.]/g, "")
+    .trim()
+    .toLowerCase();
   if (!normalized) return false;
-  return /^(hola|hello|hi|hey|buenas|que puedes hacer|qué puedes hacer|what can you do|help|ayuda)[\s?!.¿¡]*$/i.test(normalized);
+  return /^(hola|hello|hi|hey|buenas|que puedes hacer|what can you do|help|ayuda)[\s?!.]*$/i.test(normalized);
 }
 
 async function callGemini(model: string, body: any, apiKey: string) {
@@ -374,3 +395,4 @@ ${JSON.stringify(accountancyEntries).slice(0, 12000)}
     detail: getErrorMessage(lastError),
   });
 }
+

@@ -1,18 +1,29 @@
+import { useState } from "react";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { useAppContext } from "../../context/AppContext";
 import { Button } from "../../components/ui/button";
 import { AccountancyLedgerManager } from "../../components/accountancy/AccountancyLedgerManager";
 import { exportToCSV, exportToExcel, exportToJSON } from "../../utils/export";
-import { formatMoney, getAccountancySummary } from "../../utils/accountancy";
+import {
+  CategoryGroup,
+  flattenCategoryGroups,
+  formatMoney,
+  getAccountancySummary,
+  groupAccountancyEntriesByCategory,
+} from "../../utils/accountancy";
 
 export function AccountancyBalance() {
-  const { reservations, supplyRequests, accountancyEntries, selectedPropertyId } = useAppContext();
-  const summary = getAccountancySummary({ propertyId: selectedPropertyId, reservations, supplyRequests, accountancyEntries });
+  const { accountancyEntries, selectedPropertyId } = useAppContext();
+  const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries });
+  const confirmedEntries = accountancyEntries.filter(entry => entry.propertyId === selectedPropertyId && entry.status === "Confirmed");
+  const assetGroups = groupAccountancyEntriesByCategory(confirmedEntries.filter(entry => entry.type === "Asset"));
+  const liabilityGroups = groupAccountancyEntriesByCategory(confirmedEntries.filter(entry => entry.type === "Liability"));
 
   const handleExport = (type: "csv" | "excel" | "json") => {
     const data = [
-      { Category: "Total Assets", Amount: summary.totalRevenue },
-      { Category: "Total Liabilities", Amount: -summary.totalExpenses },
-      { Category: "Net Balance", Amount: summary.netProfit },
+      ...flattenCategoryGroups(assetGroups, "Assets", 1),
+      ...flattenCategoryGroups(liabilityGroups, "Liabilities", -1),
+      { Section: "Result", Category: "Net Balance", Subcategory: "", Amount: summary.netBalance },
     ];
 
     if (type === "csv") exportToCSV(data, "Balance");
@@ -21,11 +32,11 @@ export function AccountancyBalance() {
   };
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="space-y-6 p-4 sm:p-6 lg:p-8">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold">Balance Sheet</h1>
-          <p className="text-muted-foreground">Balance updates automatically when revenues, expenses, or GenAI postings are confirmed.</p>
+          <p className="text-muted-foreground">Assets and liabilities update automatically from confirmed Accountancy ledger entries.</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" onClick={() => handleExport("csv")}>CSV</Button>
@@ -34,37 +45,16 @@ export function AccountancyBalance() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-        <div className="bg-card border border-border rounded-lg p-6 shadow-sm">
-          <h2 className="text-xl font-bold text-green-600 mb-4 border-b border-border pb-2">Assets</h2>
-          <div className="space-y-3">
-            <Line label="Bookings" value={formatMoney(summary.bookingsRevenue)} />
-            <Line label="Posted revenue documents" value={formatMoney(summary.ledgerRevenue)} />
-            <div className="pt-4 mt-4 border-t border-border flex justify-between">
-              <span className="font-bold">Total Assets</span>
-              <span className="font-bold text-green-600">{formatMoney(summary.totalRevenue)}</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-card border border-border rounded-lg p-6 shadow-sm">
-          <h2 className="text-xl font-bold text-destructive mb-4 border-b border-border pb-2">Liabilities</h2>
-          <div className="space-y-3">
-            <Line label="Supply requests" value={formatMoney(summary.supplyExpenses)} />
-            <Line label="Posted supplier invoices" value={formatMoney(summary.ledgerExpenses)} />
-            <div className="pt-4 mt-4 border-t border-border flex justify-between">
-              <span className="font-bold">Total Liabilities</span>
-              <span className="font-bold text-destructive">{formatMoney(summary.totalExpenses)}</span>
-            </div>
-          </div>
-        </div>
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
+        <BalancePanel title="Assets" groups={assetGroups} total={summary.totalAssets} tone="positive" />
+        <BalancePanel title="Liabilities" groups={liabilityGroups} total={summary.totalLiabilities} tone="negative" />
       </div>
 
-      <div className={`p-6 rounded-lg border-2 flex items-center justify-between shadow-sm ${
-        summary.netProfit >= 0 ? "bg-green-500/10 border-green-500/30 text-green-800" : "bg-red-500/10 border-red-500/30 text-red-800"
-      }`}>
-        <h2 className="text-2xl font-bold">Net Balance</h2>
-        <span className="text-3xl font-bold">{summary.netProfit < 0 ? `-${formatMoney(Math.abs(summary.netProfit))}` : formatMoney(summary.netProfit)}</span>
+      <div className={`rounded-lg border-2 p-6 shadow-sm ${summary.netBalance >= 0 ? "border-green-500/30 bg-green-500/10 text-green-800" : "border-red-500/30 bg-red-500/10 text-red-800"}`}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="text-2xl font-bold">Net Balance</h2>
+          <span className="text-3xl font-bold">{summary.netBalance < 0 ? `-${formatMoney(Math.abs(summary.netBalance))}` : formatMoney(summary.netBalance)}</span>
+        </div>
       </div>
 
       <AccountancyLedgerManager title="Manage Balance Source Entries" filter="All" />
@@ -72,11 +62,61 @@ export function AccountancyBalance() {
   );
 }
 
-function Line({ label, value }: { label: string; value: string }) {
+function BalancePanel({
+  title,
+  groups,
+  total,
+  tone,
+}: {
+  title: string;
+  groups: CategoryGroup[];
+  total: number;
+  tone: "positive" | "negative";
+}) {
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const toneClass = tone === "positive" ? "text-green-600" : "text-destructive";
+  const sign = tone === "negative" ? "-" : "";
+
   return (
-    <div className="flex justify-between">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-medium">{value}</span>
+    <div className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">
+      <div className="border-b border-border p-5">
+        <h2 className={`text-xl font-bold ${toneClass}`}>{title}</h2>
+      </div>
+      <div className="divide-y divide-border">
+        {groups.map(group => {
+          const isOpen = openGroups[group.category] ?? true;
+          return (
+            <div key={group.category}>
+              <button
+                type="button"
+                className="flex w-full items-center justify-between gap-3 p-4 text-left hover:bg-muted/40"
+                onClick={() => setOpenGroups(current => ({ ...current, [group.category]: !isOpen }))}
+              >
+                <span className="flex min-w-0 items-center gap-2 font-semibold">
+                  {isOpen ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
+                  <span className="truncate">{group.category}</span>
+                </span>
+                <span className={`shrink-0 font-semibold ${toneClass}`}>{sign}{formatMoney(group.total)}</span>
+              </button>
+              {isOpen && (
+                <div className="space-y-2 px-8 pb-4">
+                  {Object.entries(group.subcategories).map(([subcategory, amount]) => (
+                    <div key={subcategory} className="flex items-center justify-between gap-3 rounded-md bg-muted/40 px-3 py-2 text-sm">
+                      <span className="min-w-0 truncate text-xs text-muted-foreground">{subcategory}</span>
+                      <span className={`text-xs font-semibold ${toneClass}`}>{sign}{formatMoney(amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+        {!groups.length && <p className="p-6 text-sm text-muted-foreground">No confirmed {title.toLowerCase()} entries yet.</p>}
+      </div>
+      <div className="flex justify-between border-t border-border bg-muted/30 p-4">
+        <span className="font-bold">Total {title}</span>
+        <span className={`font-bold ${toneClass}`}>{sign}{formatMoney(total)}</span>
+      </div>
     </div>
   );
 }

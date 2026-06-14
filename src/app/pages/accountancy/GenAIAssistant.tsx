@@ -1,5 +1,5 @@
 import { FormEvent, useMemo, useState } from "react";
-import { Bot, FileText, LockKeyhole, Paperclip, Send, Sparkles } from "lucide-react";
+import { Bot, FileText, LockKeyhole, Paperclip, Plus, Send, Sparkles, X } from "lucide-react";
 import type { AccountancyEntry } from "../../context/AppContext";
 import { useAppContext } from "../../context/AppContext";
 import { Button } from "../../components/ui/button";
@@ -19,10 +19,11 @@ type AssistantExtraction = {
   action?: AssistantAction;
   targetEntryId?: string;
   targetReference?: string;
-  type: "Revenue" | "Expense" | "Unknown";
+  type: AccountancyEntry["type"] | "Unknown";
   confidence?: number;
   date?: string;
   category?: string;
+  subcategories?: string[];
   counterparty?: string;
   description?: string;
   amount?: number;
@@ -51,6 +52,7 @@ const emptyDraft: Partial<AccountancyEntry> = {
   type: "Revenue",
   date: new Date().toISOString().split("T")[0],
   category: "",
+  subcategories: [],
   counterparty: "",
   description: "",
   amount: 0,
@@ -129,6 +131,7 @@ export function AccountancyGenAIAssistant() {
             type: entry.type,
             date: entry.date,
             category: entry.category,
+            subcategories: entry.subcategories || [],
             counterparty: entry.counterparty,
             amount: entry.amount,
             currency: entry.currency,
@@ -208,6 +211,7 @@ export function AccountancyGenAIAssistant() {
       type: extraction.type !== "Unknown" ? extraction.type : base.type,
       date: extraction.date || base.date || emptyDraft.date,
       category: extraction.category || base.category || "",
+      subcategories: extraction.subcategories?.length ? extraction.subcategories : base.subcategories || [],
       counterparty: extraction.counterparty || base.counterparty || "",
       description: extraction.description || base.description || "",
       amount: Number(extraction.amount ?? base.amount ?? 0),
@@ -255,6 +259,7 @@ export function AccountancyGenAIAssistant() {
       type: draft.type,
       date: draft.date,
       category: draft.category,
+      subcategories: (draft.subcategories || []).map(item => item.trim()).filter(Boolean),
       counterparty: draft.counterparty,
       description: draft.description,
       amount: Number(draft.amount),
@@ -299,7 +304,7 @@ export function AccountancyGenAIAssistant() {
   };
 
   return (
-    <div className="p-8 space-y-6">
+    <div className="space-y-6 p-4 sm:p-6 lg:p-8">
       <div>
         <p className="text-sm font-semibold uppercase tracking-wider text-primary">Accountancy Intelligence</p>
         <h1 className="text-3xl font-bold">GenAI Assistant</h1>
@@ -330,10 +335,10 @@ export function AccountancyGenAIAssistant() {
             </div>
           </div>
 
-          <div className="h-[520px] space-y-4 overflow-y-auto p-5">
+          <div className="h-[520px] space-y-4 overflow-y-auto p-4 sm:p-5">
             {messages.map(message => (
               <div key={message.id} className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}>
-                <div className={`max-w-[82%] rounded-lg border px-4 py-3 text-sm shadow-sm ${
+                <div className={`max-w-[92%] rounded-lg border px-4 py-3 text-sm shadow-sm sm:max-w-[82%] ${
                   message.role === "user"
                     ? "border-primary/40 bg-primary text-primary-foreground"
                     : "border-border bg-background"
@@ -403,10 +408,11 @@ export function AccountancyGenAIAssistant() {
                 <div key={entry.id} className="rounded-md border border-border bg-muted/30 p-3 text-sm">
                   <div className="flex items-center justify-between gap-3">
                     <span className="font-medium">{entry.category}</span>
-                    <span className={entry.type === "Revenue" ? "text-green-600" : "text-destructive"}>
-                      {entry.type === "Expense" ? "-" : ""}{formatMoney(entry.amount, entry.currency)}
+                    <span className={entry.type === "Revenue" || entry.type === "Asset" ? "text-green-600" : "text-destructive"}>
+                      {entry.type === "Expense" || entry.type === "Liability" ? "-" : ""}{formatMoney(entry.amount, entry.currency)}
                     </span>
                   </div>
+                  <p className="mt-1 text-xs text-muted-foreground">{entry.subcategories?.length ? entry.subcategories.join(", ") : "Unassigned subcategory"}</p>
                   <p className="mt-1 text-xs text-muted-foreground">{entry.counterparty} - {entry.date}</p>
                 </div>
               ))}
@@ -440,6 +446,17 @@ function ReviewPanel({
   const draft = pendingAction.draft;
   const updateDraft = (updates: Partial<AccountancyEntry>) => setPendingAction({ ...pendingAction, draft: { ...draft, ...updates } });
   const isDelete = pendingAction.action === "delete";
+  const subcategories = draft.subcategories?.length ? draft.subcategories : [""];
+  const updateSubcategory = (index: number, value: string) => {
+    const next = [...subcategories];
+    next[index] = value;
+    updateDraft({ subcategories: next });
+  };
+  const addSubcategory = () => updateDraft({ subcategories: [...subcategories, ""] });
+  const removeSubcategory = (index: number) => {
+    const next = subcategories.filter((_, itemIndex) => itemIndex !== index);
+    updateDraft({ subcategories: next.length ? next : [""] });
+  };
 
   return (
     <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
@@ -464,10 +481,34 @@ function ReviewPanel({
           <select className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={draft.type || "Revenue"} onChange={event => updateDraft({ type: event.target.value as AccountancyEntry["type"] })} disabled={isDelete}>
             <option value="Revenue">Revenue</option>
             <option value="Expense">Expense</option>
+            <option value="Asset">Asset</option>
+            <option value="Liability">Liability</option>
           </select>
         </label>
         <InputField disabled={isDelete} label="Date" type="date" value={draft.date || ""} onChange={value => updateDraft({ date: value })} />
         <InputField disabled={isDelete} label="Category" value={draft.category || ""} onChange={value => updateDraft({ category: value })} />
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm font-medium">Subcategories</p>
+            <Button type="button" variant="outline" size="sm" onClick={addSubcategory} disabled={isDelete}>
+              <Plus className="mr-2 h-4 w-4" />
+              Add
+            </Button>
+          </div>
+          {subcategories.map((subcategory, index) => (
+            <div key={index} className="flex gap-2">
+              <Input
+                value={subcategory}
+                onChange={event => updateSubcategory(index, event.target.value)}
+                placeholder={index === 0 ? "e.g., Carrot, Chicken, Cash, Deposit..." : "Additional subcategory"}
+                disabled={isDelete}
+              />
+              <Button type="button" variant="outline" size="icon" onClick={() => removeSubcategory(index)} disabled={isDelete} aria-label="Remove subcategory">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
+        </div>
         <InputField disabled={isDelete} label="Counterparty" value={draft.counterparty || ""} onChange={value => updateDraft({ counterparty: value })} />
         <InputField disabled={isDelete} label="Reference" value={draft.reference || ""} onChange={value => updateDraft({ reference: value })} />
         <InputField disabled={isDelete} label="Amount" type="number" value={String(draft.amount || 0)} onChange={value => updateDraft({ amount: Number(value) })} />

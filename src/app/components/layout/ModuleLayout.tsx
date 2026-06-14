@@ -1,12 +1,12 @@
 import { Outlet, NavLink, useLocation, useNavigate } from "react-router";
 import { useEffect, useState } from "react";
-import { 
-  CalendarDays, 
-  LayoutDashboard, 
-  BookOpenCheck, 
-  UserCheck, 
-  Settings as SettingsIcon, 
-  ShieldAlert, 
+import {
+  CalendarDays,
+  LayoutDashboard,
+  BookOpenCheck,
+  UserCheck,
+  Settings as SettingsIcon,
+  ShieldAlert,
   LogOut,
   Bell,
   Search,
@@ -30,12 +30,22 @@ import {
   Database,
   Users,
   Crown,
-  ChevronDown
+  ChevronDown,
+  Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
+  X,
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "../ui/avatar";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { useAppContext } from "../../context/AppContext";
+
+type NavItem = {
+  path: string;
+  label: string;
+  icon: typeof CalendarDays;
+};
 
 const RESERVATION_ITEMS = [
   { path: "/app/reservations/calendar", label: "Calendar", icon: CalendarDays },
@@ -91,14 +101,20 @@ export function ModuleLayout() {
   const navigate = useNavigate();
   const { properties, selectedPropertyId, currentUser, logout } = useAppContext();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
   const activeProperty = properties.find(p => p.id === selectedPropertyId) || properties[0];
 
   useEffect(() => {
     if (!currentUser) navigate("/login");
   }, [currentUser, navigate]);
 
-  let navItems: any[] = [];
+  useEffect(() => {
+    setMobileMenuOpen(false);
+  }, [location.pathname]);
+
+  let navItems: NavItem[] = [];
   let moduleTitle = "Module";
 
   if (location.pathname.startsWith("/app/reservations")) {
@@ -153,90 +169,122 @@ export function ModuleLayout() {
   }, [currentUser, hasCurrentModuleAccess, navigate]);
 
   return (
-    <div className="flex h-screen bg-background text-foreground overflow-hidden font-sans">
-      {/* Sidebar */}
-      <aside className="w-64 border-r border-border bg-card flex flex-col">
-        <div className="h-16 flex items-center justify-between px-4 border-b border-border cursor-pointer hover:bg-muted/50 transition-colors" onClick={() => navigate("/app")}>
-          <h1 className="text-xl font-bold text-primary truncate flex-1">KumbuOS</h1>
-          <Home className="h-5 w-5 text-muted-foreground shrink-0" />
+    <div className="flex h-screen overflow-hidden bg-background font-sans text-foreground">
+      {mobileMenuOpen && (
+        <div className="fixed inset-0 z-50 flex flex-col bg-card lg:hidden">
+          <div className="flex h-16 items-center justify-between border-b border-border px-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wider text-primary">Section Menu</p>
+              <h2 className="text-lg font-semibold">{moduleTitle}</h2>
+            </div>
+            <Button variant="ghost" size="icon" onClick={() => setMobileMenuOpen(false)} aria-label="Close section menu">
+              <X className="h-5 w-5" />
+            </Button>
+          </div>
+
+          <div className="border-b border-border p-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md bg-secondary font-bold text-secondary-foreground">
+                {(activeProperty?.name || "OS").substring(0, 2).toUpperCase()}
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">{activeProperty?.name || "No property selected"}</p>
+                <p className="truncate text-xs text-muted-foreground">{moduleTitle}</p>
+              </div>
+            </div>
+          </div>
+
+          <nav className="flex-1 space-y-2 overflow-y-auto p-4">
+            <NavigationList items={visibleNavItems} collapsed={false} onNavigate={() => setMobileMenuOpen(false)} />
+          </nav>
         </div>
-        
-        <div className="p-4 border-b border-border flex items-center gap-3">
-          <div className="w-10 h-10 rounded-md bg-secondary flex items-center justify-center text-secondary-foreground font-bold shrink-0">
+      )}
+
+      <aside className={`hidden border-r border-border bg-card transition-all duration-200 lg:flex lg:flex-col ${sidebarCollapsed ? "lg:w-20" : "lg:w-64"}`}>
+        <div className="flex h-16 items-center gap-2 border-b border-border px-3">
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-2 text-left hover:bg-muted/50"
+            onClick={() => navigate("/app")}
+            title="Home"
+          >
+            <h1 className={`truncate font-bold text-primary ${sidebarCollapsed ? "text-lg" : "text-xl"}`}>
+              {sidebarCollapsed ? "KO" : "KumbuOS"}
+            </h1>
+            {!sidebarCollapsed && <Home className="h-5 w-5 shrink-0 text-muted-foreground" />}
+          </button>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setSidebarCollapsed(current => !current)}
+            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+          </Button>
+        </div>
+
+        <div className={`border-b border-border p-4 ${sidebarCollapsed ? "flex justify-center" : "flex items-center gap-3"}`}>
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-secondary font-bold text-secondary-foreground">
             {(activeProperty?.name || "OS").substring(0, 2).toUpperCase()}
           </div>
-          <div className="min-w-0">
-            <p className="text-sm font-medium truncate">{activeProperty?.name || "No property selected"}</p>
-            <p className="text-xs text-muted-foreground truncate">{moduleTitle}</p>
-          </div>
+          {!sidebarCollapsed && (
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium">{activeProperty?.name || "No property selected"}</p>
+              <p className="truncate text-xs text-muted-foreground">{moduleTitle}</p>
+            </div>
+          )}
         </div>
 
-        <nav className="flex-1 overflow-y-auto py-4 px-3 flex flex-col gap-1">
-          {visibleNavItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = location.pathname === item.path || location.pathname.startsWith(item.path + "/");
-            return (
-              <NavLink
-                key={item.path}
-                to={item.path}
-                className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-                  isActive 
-                    ? "bg-primary text-primary-foreground" 
-                    : "text-foreground hover:bg-muted"
-                }`}
-              >
-                <Icon size={18} />
-                {item.label}
-              </NavLink>
-            );
-          })}
+        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-4">
+          <NavigationList items={visibleNavItems} collapsed={sidebarCollapsed} />
         </nav>
 
-        <div className="p-4 border-t border-border">
-          <Button variant="outline" className="w-full justify-start gap-2 text-destructive border-transparent hover:bg-destructive/10" asChild>
-            <NavLink to="/login" onClick={() => logout()}>
+        <div className="border-t border-border p-4">
+          <Button variant="outline" className={`w-full gap-2 border-transparent text-destructive hover:bg-destructive/10 ${sidebarCollapsed ? "justify-center px-0" : "justify-start"}`} asChild>
+            <NavLink to="/login" onClick={() => logout()} title="Log Out">
               <LogOut size={18} />
-              Log Out
+              {!sidebarCollapsed && "Log Out"}
             </NavLink>
           </Button>
         </div>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 flex flex-col min-w-0">
-        {/* Topbar */}
-        <header className="h-16 border-b border-border bg-card flex items-center justify-between px-6 shrink-0">
-          <div className="flex-1 flex items-center gap-4 max-w-xl">
-            <div className="relative w-full">
+      <main className="flex min-w-0 flex-1 flex-col">
+        <header className="flex h-16 shrink-0 items-center justify-between border-b border-border bg-card px-4 lg:px-6">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <Button variant="ghost" size="icon" className="lg:hidden" onClick={() => setMobileMenuOpen(true)} aria-label="Open section menu">
+              <Menu className="h-5 w-5" />
+            </Button>
+            <div className="relative hidden w-full max-w-xl sm:block">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input 
-                placeholder="Search..." 
-                className="pl-9 w-full bg-muted/50 border-transparent focus:bg-background"
+              <Input
+                placeholder="Search..."
+                className="w-full border-transparent bg-muted/50 pl-9 focus:bg-background"
               />
             </div>
           </div>
-          <div className="flex items-center gap-4 ml-4">
+          <div className="ml-4 flex items-center gap-2 sm:gap-4">
             <Button variant="ghost" size="icon" className="relative">
               <Bell size={20} />
-              <span className="absolute top-1 right-1 w-2 h-2 bg-destructive rounded-full" />
+              <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-destructive" />
             </Button>
-            <Button variant="ghost" size="icon">
+            <Button variant="ghost" size="icon" className="hidden sm:inline-flex">
               <MessageSquare size={20} />
             </Button>
-            <div className="h-8 w-px bg-border mx-2" />
+            <div className="mx-2 hidden h-8 w-px bg-border sm:block" />
             <div className="relative">
               <button
                 type="button"
                 className="flex items-center gap-3 rounded-md px-2 py-1.5 hover:bg-muted"
                 onClick={() => setUserMenuOpen(current => !current)}
               >
-              <div className="text-right hidden sm:block">
-                <p className="text-sm font-medium">{currentUser?.name || "User"}</p>
-                <p className="text-xs text-muted-foreground">{currentUser?.role || "Team Member"}</p>
-              </div>
-              <Avatar>
-                <AvatarFallback>{(currentUser?.name || "User").substring(0, 2).toUpperCase()}</AvatarFallback>
-              </Avatar>
+                <div className="hidden text-right sm:block">
+                  <p className="text-sm font-medium">{currentUser?.name || "User"}</p>
+                  <p className="text-xs text-muted-foreground">{currentUser?.role || "Team Member"}</p>
+                </div>
+                <Avatar>
+                  <AvatarFallback>{(currentUser?.name || "User").substring(0, 2).toUpperCase()}</AvatarFallback>
+                </Avatar>
                 <ChevronDown className="h-4 w-4 text-muted-foreground" />
               </button>
               {userMenuOpen && (
@@ -278,11 +326,46 @@ export function ModuleLayout() {
           </div>
         </header>
 
-        {/* Page Content */}
-        <div className="flex-1 overflow-auto bg-background/50 relative">
+        <div className="relative flex-1 overflow-auto bg-background/50">
           <Outlet />
         </div>
       </main>
     </div>
+  );
+}
+
+function NavigationList({
+  items,
+  collapsed,
+  onNavigate,
+}: {
+  items: NavItem[];
+  collapsed: boolean;
+  onNavigate?: () => void;
+}) {
+  return (
+    <>
+      {items.map((item) => {
+        const Icon = item.icon;
+        return (
+          <NavLink
+            key={item.path}
+            to={item.path}
+            title={item.label}
+            onClick={onNavigate}
+            className={({ isActive }) => `flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+              collapsed ? "justify-center" : ""
+            } ${
+              isActive
+                ? "bg-primary text-primary-foreground"
+                : "text-foreground hover:bg-muted"
+            }`}
+          >
+            <Icon size={18} />
+            {!collapsed && <span>{item.label}</span>}
+          </NavLink>
+        );
+      })}
+    </>
   );
 }

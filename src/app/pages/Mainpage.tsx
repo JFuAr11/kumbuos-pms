@@ -100,13 +100,9 @@ export function Mainpage() {
 
         <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col justify-center gap-8 py-10">
           <section className="max-w-3xl">
-            <p className="text-sm font-medium uppercase text-[#f4c27d]">Property Management System</p>
-            <h2 className="mt-3 text-4xl font-semibold leading-tight text-white md:text-5xl">
+            <h2 className="text-3xl font-semibold leading-tight text-white md:text-4xl">
               Select the operating module
             </h2>
-            <p className="mt-4 max-w-2xl text-base leading-7 text-[#f7ead8]">
-              Focused tools for luxury hotel operations, finance, supplies, guest check-in, and administration.
-            </p>
           </section>
 
           <section className="grid grid-cols-1 gap-4 md:grid-cols-2">

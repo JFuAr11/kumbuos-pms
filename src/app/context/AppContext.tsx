@@ -246,9 +246,10 @@ export type SupplyRequest = {
 export type AccountancyEntry = {
   id: string;
   propertyId: string;
-  type: 'Revenue' | 'Expense';
+  type: 'Revenue' | 'Expense' | 'Asset' | 'Liability';
   date: string;
   category: string;
+  subcategories?: string[];
   counterparty: string;
   description: string;
   amount: number;
@@ -818,38 +819,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     { id: 's2', propertyId: '1', category: 'Housekeeping', amount: 150, date: '2026-06-05', description: 'Cleaning supplies' },
   ]);
 
-  const [accountancyEntries, setAccountancyEntries] = usePersistentState<AccountancyEntry[]>('pms-accountancy-entries', [
-    {
-      id: 'acc-inhouse-1',
-      propertyId: '1',
-      type: 'Revenue',
-      date: '2026-06-01',
-      category: 'In-house Sales',
-      counterparty: 'In-house guests',
-      description: 'Shishas, drinks, meals, and camp extras',
-      amount: 1250,
-      currency: 'USD',
-      documentType: 'Other',
-      source: 'Manual',
-      status: 'Confirmed',
-      createdAt: '2026-06-01T08:00:00.000Z',
-    },
-    {
-      id: 'acc-activities-1',
-      propertyId: '1',
-      type: 'Revenue',
-      date: '2026-06-02',
-      category: 'Activities',
-      counterparty: 'Guest activities',
-      description: 'Safaris, hot air balloon, and activity commissions',
-      amount: 3400,
-      currency: 'USD',
-      documentType: 'Other',
-      source: 'Manual',
-      status: 'Confirmed',
-      createdAt: '2026-06-02T08:00:00.000Z',
-    },
-  ]);
+  const [accountancyEntries, setAccountancyEntries] = usePersistentState<AccountancyEntry[]>('pms-accountancy-entries-v2', []);
 
   const currentUser = systemUsers.find(user => user.id === currentUserId) || (currentUserId === ROOT_OWNER_ID ? getRootOwnerUser() : null);
 
