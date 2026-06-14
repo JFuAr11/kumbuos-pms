@@ -28,6 +28,9 @@ type AssistantExtraction = {
   description?: string;
   amount?: number;
   currency?: string;
+  reservationId?: string;
+  customerInvoiceId?: string;
+  supplierInvoiceId?: string;
   documentType?: AccountancyEntry["documentType"];
   paymentMethod?: string;
   reference?: string;
@@ -57,6 +60,9 @@ const emptyDraft: Partial<AccountancyEntry> = {
   description: "",
   amount: 0,
   currency: "USD",
+  reservationId: "",
+  customerInvoiceId: "",
+  supplierInvoiceId: "",
   documentType: "Other",
   paymentMethod: "",
   reference: "",
@@ -81,7 +87,7 @@ export function AccountancyGenAIAssistant() {
     {
       id: "welcome",
       role: "assistant",
-      content: "Upload or describe a supplier invoice, proof of payment, or an accounting change. I will prepare a proposal first. Nothing is posted, edited, or deleted until you confirm it here.",
+      content: "Upload or describe a supplier invoice, proof of payment, asset, liability, or accounting change. I will prepare a proposal first. Revenues and Expenses feed P&L; Assets and Liabilities feed Balance. Nothing is posted, edited, or deleted until you confirm it here.",
     },
   ]);
   const [input, setInput] = useState("");
@@ -135,6 +141,9 @@ export function AccountancyGenAIAssistant() {
             counterparty: entry.counterparty,
             amount: entry.amount,
             currency: entry.currency,
+            reservationId: entry.reservationId || "",
+            customerInvoiceId: entry.customerInvoiceId || "",
+            supplierInvoiceId: entry.supplierInvoiceId || "",
             reference: entry.reference || "",
             description: entry.description,
             source: entry.source,
@@ -216,6 +225,9 @@ export function AccountancyGenAIAssistant() {
       description: extraction.description || base.description || "",
       amount: Number(extraction.amount ?? base.amount ?? 0),
       currency: extraction.currency || base.currency || activeProperty?.currency || "USD",
+      reservationId: extraction.reservationId || base.reservationId || "",
+      customerInvoiceId: extraction.customerInvoiceId || base.customerInvoiceId || "",
+      supplierInvoiceId: extraction.supplierInvoiceId || base.supplierInvoiceId || "",
       documentType: extraction.documentType || base.documentType || (extraction.type === "Expense" ? "Supplier Invoice" : "Proof of Payment"),
       paymentMethod: extraction.paymentMethod || base.paymentMethod || "",
       reference: extraction.reference || base.reference || extraction.targetReference || "",
@@ -241,7 +253,7 @@ export function AccountancyGenAIAssistant() {
         return;
       }
       deleteAccountancyEntry(pendingAction.targetEntryId);
-      appendPostedMessage(`Deleted ${pendingAction.original.type.toLowerCase()} entry "${pendingAction.original.category}" from Accountancy. Overview, P&L, and Balance are now updated.`);
+      appendPostedMessage(`Deleted ${pendingAction.original.type.toLowerCase()} entry "${pendingAction.original.category}" from Accountancy. ${statementImpact(pendingAction.original.type)} and Overview are now updated.`);
       setPendingAction(null);
       setError("");
       return;
@@ -264,6 +276,9 @@ export function AccountancyGenAIAssistant() {
       description: draft.description,
       amount: Number(draft.amount),
       currency: draft.currency || "USD",
+      reservationId: draft.reservationId,
+      customerInvoiceId: draft.customerInvoiceId,
+      supplierInvoiceId: draft.supplierInvoiceId,
       documentType: draft.documentType || "Other",
       paymentMethod: draft.paymentMethod,
       reference: draft.reference,
@@ -282,10 +297,10 @@ export function AccountancyGenAIAssistant() {
         return;
       }
       updateAccountancyEntry(original.id, payload);
-      appendPostedMessage(`Updated ${payload.type.toLowerCase()} entry "${payload.category}" for ${formatMoney(payload.amount, payload.currency)}. Revenues, Expenses, P&L, and Balance are now recalculated.`);
+      appendPostedMessage(`Updated ${payload.type.toLowerCase()} entry "${payload.category}" for ${formatMoney(payload.amount, payload.currency)}. ${statementImpact(payload.type)} and Overview are now recalculated.`);
     } else {
       addAccountancyEntry(payload);
-      appendPostedMessage(`${payload.type} posted to Accountancy for ${formatMoney(payload.amount, payload.currency)}. Revenues, Expenses, P&L, and Balance are now updated.`);
+      appendPostedMessage(`${payload.type} posted to Accountancy for ${formatMoney(payload.amount, payload.currency)}. ${statementImpact(payload.type)} and Overview are now updated.`);
     }
 
     setPendingAction(null);
@@ -308,7 +323,7 @@ export function AccountancyGenAIAssistant() {
       <div>
         <p className="text-sm font-semibold uppercase tracking-wider text-primary">Accountancy Intelligence</p>
         <h1 className="text-3xl font-bold">GenAI Assistant</h1>
-        <p className="text-muted-foreground">Create, review, modify, or delete accounting ledger entries only after explicit confirmation.</p>
+        <p className="text-muted-foreground">Create, review, modify, or delete revenues, expenses, assets, and liabilities only after explicit confirmation.</p>
       </div>
 
       <div className="rounded-xl border border-primary/30 bg-primary/10 p-4 text-sm">
@@ -316,7 +331,7 @@ export function AccountancyGenAIAssistant() {
           <LockKeyhole className="mt-0.5 h-5 w-5 text-primary" />
           <div>
             <p className="font-semibold">Accountancy-only guardrail</p>
-            <p className="text-muted-foreground">This assistant can only prepare changes for the active property ledger in Accountancy. It cannot change Reservations, Supply Requests, Check-in, Admin Platform, Owner Console, companies, properties, users, or permissions.</p>
+            <p className="text-muted-foreground">This assistant can only prepare changes for the active property ledger in Accountancy. Confirmed Revenue and Expense entries feed Profit & Loss; confirmed Asset and Liability entries feed Balance. It cannot change Reservations, Supply Requests, Check-in, Admin Platform, Owner Console, companies, properties, users, or permissions.</p>
           </div>
         </div>
       </div>
@@ -425,6 +440,12 @@ export function AccountancyGenAIAssistant() {
   );
 }
 
+function statementImpact(type: AccountancyEntry["type"]) {
+  return type === "Revenue" || type === "Expense"
+    ? "Profit & Loss"
+    : "Balance";
+}
+
 function ReviewPanel({
   pendingAction,
   setPendingAction,
@@ -513,6 +534,15 @@ function ReviewPanel({
         <InputField disabled={isDelete} label="Reference" value={draft.reference || ""} onChange={value => updateDraft({ reference: value })} />
         <InputField disabled={isDelete} label="Amount" type="number" value={String(draft.amount || 0)} onChange={value => updateDraft({ amount: Number(value) })} />
         <InputField disabled={isDelete} label="Currency" value={draft.currency || "USD"} onChange={value => updateDraft({ currency: value.toUpperCase() })} />
+        {draft.type === "Revenue" && (
+          <>
+            <InputField disabled={isDelete} label="Reservation ID" value={draft.reservationId || ""} onChange={value => updateDraft({ reservationId: value })} />
+            <InputField disabled={isDelete} label="Customer Invoice ID" value={draft.customerInvoiceId || ""} onChange={value => updateDraft({ customerInvoiceId: value })} />
+          </>
+        )}
+        {draft.type === "Expense" && (
+          <InputField disabled={isDelete} label="Supplier Invoice ID" value={draft.supplierInvoiceId || ""} onChange={value => updateDraft({ supplierInvoiceId: value })} />
+        )}
         <label className="block text-sm font-medium">
           Description
           <textarea

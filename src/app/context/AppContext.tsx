@@ -254,6 +254,9 @@ export type AccountancyEntry = {
   description: string;
   amount: number;
   currency: string;
+  reservationId?: string;
+  customerInvoiceId?: string;
+  supplierInvoiceId?: string;
   documentType: 'Supplier Invoice' | 'Proof of Payment' | 'Reservation Payment' | 'Other';
   paymentMethod?: string;
   reference?: string;
@@ -508,6 +511,8 @@ const initialSystemUsers: SystemUser[] = [
       { module: 'Accountancy', section: 'Revenues', access: 'edit' },
       { module: 'Accountancy', section: 'Expenses', access: 'edit' },
       { module: 'Accountancy', section: 'Profit & Loss (P&L)', access: 'edit' },
+      { module: 'Accountancy', section: 'Assets', access: 'edit' },
+      { module: 'Accountancy', section: 'Liabilities', access: 'edit' },
       { module: 'Accountancy', section: 'Balance', access: 'edit' },
       { module: 'Accountancy', section: 'GenAI Assistant', access: 'edit' },
       { module: 'Accountancy', section: 'Notifications', access: 'edit' },
@@ -643,6 +648,8 @@ const editAllPermissions: PermissionRule[] = [
   { module: 'Accountancy', section: 'Revenues', access: 'edit' },
   { module: 'Accountancy', section: 'Expenses', access: 'edit' },
   { module: 'Accountancy', section: 'Profit & Loss (P&L)', access: 'edit' },
+  { module: 'Accountancy', section: 'Assets', access: 'edit' },
+  { module: 'Accountancy', section: 'Liabilities', access: 'edit' },
   { module: 'Accountancy', section: 'Balance', access: 'edit' },
   { module: 'Accountancy', section: 'GenAI Assistant', access: 'edit' },
   { module: 'Accountancy', section: 'Notifications', access: 'edit' },
@@ -693,7 +700,7 @@ const profileDefinitions: ProfileDefinition[] = [
   },
   {
     name: 'Accountancy',
-    description: 'Can manage revenue, expenses, balance, finance exports, and finance notifications.',
+    description: 'Can manage revenues, expenses, assets, liabilities, balance, finance exports, and finance notifications.',
     permissions: editAllPermissions.filter(rule => rule.module === 'Accountancy'),
   },
   {
@@ -866,6 +873,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
       );
       return [rootOwner, ...usersWithoutRootDuplicates];
     });
+  }, [setSystemUsers]);
+
+  useEffect(() => {
+    setSystemUsers(current => current.map(user => {
+      const accountancyAccess = user.permissions.find(permission => permission.module === 'Accountancy' && permission.access !== 'none')?.access;
+      if (!accountancyAccess) return user;
+
+      const additions: PermissionRule[] = ['Assets', 'Liabilities']
+        .filter(section => !user.permissions.some(permission => permission.module === 'Accountancy' && permission.section === section))
+        .map(section => ({ module: 'Accountancy', section, access: accountancyAccess }));
+
+      return additions.length ? { ...user, permissions: [...user.permissions, ...additions] } : user;
+    }));
   }, [setSystemUsers]);
 
   useEffect(() => {

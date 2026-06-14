@@ -62,6 +62,8 @@ const ACCOUNTANCY_ITEMS = [
   { path: "/app/accountancy/revenues", label: "Revenues", icon: TrendingUp },
   { path: "/app/accountancy/expenses", label: "Expenses", icon: TrendingDown },
   { path: "/app/accountancy/profit-loss", label: "Profit & Loss (P&L)", icon: BarChart },
+  { path: "/app/accountancy/assets", label: "Assets", icon: Wallet },
+  { path: "/app/accountancy/liabilities", label: "Liabilities", icon: DollarSign },
   { path: "/app/accountancy/balance", label: "Balance", icon: Scale },
   { path: "/app/accountancy/genai-assistant", label: "GenAI Assistant", icon: Bot },
   { path: "/app/accountancy/notifications", label: "Notifications", icon: Bell },

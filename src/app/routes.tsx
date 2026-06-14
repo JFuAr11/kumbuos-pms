@@ -14,6 +14,8 @@ import { AccountancyOverview as Overview } from "./pages/accountancy/Overview";
 import { AccountancyRevenues as Revenues } from "./pages/accountancy/Revenues";
 import { AccountancyExpenses as Expenses } from "./pages/accountancy/Expenses";
 import { AccountancyProfitLoss as ProfitLoss } from "./pages/accountancy/ProfitLoss";
+import { AccountancyAssets as Assets } from "./pages/accountancy/Assets";
+import { AccountancyLiabilities as Liabilities } from "./pages/accountancy/Liabilities";
 import { AccountancyBalance as Balance } from "./pages/accountancy/Balance";
 import { AccountancyGenAIAssistant as GenAIAssistant } from "./pages/accountancy/GenAIAssistant";
 
@@ -75,6 +77,8 @@ export const router = createBrowserRouter([
       { path: "revenues", Component: Revenues },
       { path: "expenses", Component: Expenses },
       { path: "profit-loss", Component: ProfitLoss },
+      { path: "assets", Component: Assets },
+      { path: "liabilities", Component: Liabilities },
       { path: "balance", Component: Balance },
       { path: "genai-assistant", Component: GenAIAssistant },
       { path: "notifications", Component: Notifications },

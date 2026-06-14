@@ -15,6 +15,8 @@ export function AccountancyRevenues() {
     Date: entry.date,
     Category: entry.category,
     Subcategories: entry.subcategories?.join(", ") || "",
+    ReservationID: entry.reservationId || "",
+    CustomerInvoiceID: entry.customerInvoiceId || "",
     Counterparty: entry.counterparty,
     Reference: entry.reference || "",
     Amount: entry.amount,
@@ -50,12 +52,14 @@ export function AccountancyRevenues() {
 
       <div className="overflow-hidden rounded-xl border border-border bg-card shadow-sm">
         <div className="overflow-auto">
-          <table className="w-full min-w-[820px] border-collapse text-left">
+          <table className="w-full min-w-[980px] border-collapse text-left">
             <thead>
               <tr className="border-b border-border bg-muted/50 text-sm uppercase tracking-wider text-muted-foreground">
                 <th className="p-4 font-medium">Date</th>
                 <th className="p-4 font-medium">Category</th>
                 <th className="p-4 font-medium">Subcategories</th>
+                <th className="p-4 font-medium">Reservation ID</th>
+                <th className="p-4 font-medium">Customer Invoice ID</th>
                 <th className="p-4 font-medium">Counterparty</th>
                 <th className="p-4 font-medium">Reference</th>
                 <th className="p-4 font-medium">Source</th>
@@ -68,6 +72,8 @@ export function AccountancyRevenues() {
                   <td className="p-4 text-muted-foreground">{row.Date}</td>
                   <td className="p-4 font-medium">{row.Category}</td>
                   <td className="p-4 text-xs text-muted-foreground">{row.Subcategories || "Unassigned"}</td>
+                  <td className="p-4 text-muted-foreground">{row.ReservationID || "-"}</td>
+                  <td className="p-4 text-muted-foreground">{row.CustomerInvoiceID || "-"}</td>
                   <td className="p-4">{row.Counterparty}</td>
                   <td className="p-4 text-muted-foreground">{row.Reference || "-"}</td>
                   <td className="p-4 text-muted-foreground">{row.Source}</td>
@@ -76,11 +82,11 @@ export function AccountancyRevenues() {
               ))}
               {!rows.length && (
                 <tr>
-                  <td colSpan={7} className="p-8 text-center text-muted-foreground">No revenue lines found.</td>
+                  <td colSpan={9} className="p-8 text-center text-muted-foreground">No revenue lines found.</td>
                 </tr>
               )}
               <tr className="border-t border-border bg-muted/30">
-                <td className="p-4 text-right font-bold" colSpan={6}>TOTAL REVENUE</td>
+                <td className="p-4 text-right font-bold" colSpan={8}>TOTAL REVENUE</td>
                 <td className="p-4 text-right font-bold text-green-600">{formatMoney(summary.totalRevenue)}</td>
               </tr>
             </tbody>

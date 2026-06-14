@@ -2,7 +2,6 @@ import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { useAppContext } from "../../context/AppContext";
 import { Button } from "../../components/ui/button";
-import { AccountancyLedgerManager } from "../../components/accountancy/AccountancyLedgerManager";
 import { exportToCSV, exportToExcel, exportToJSON } from "../../utils/export";
 import {
   CategoryGroup,
@@ -57,7 +56,9 @@ export function AccountancyBalance() {
         </div>
       </div>
 
-      <AccountancyLedgerManager title="Manage Balance Source Entries" filter="All" />
+      <div className="rounded-xl border border-border bg-card p-5 text-sm text-muted-foreground shadow-sm">
+        Balance is read-only here and is calculated exclusively from confirmed entries managed in Assets and Liabilities.
+      </div>
     </div>
   );
 }

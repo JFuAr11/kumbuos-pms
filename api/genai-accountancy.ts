@@ -14,7 +14,7 @@ type GeminiHttpError = Error & {
 
 const safeHelpResponse = {
   reply:
-    "I can help only with Accountancy: read supplier invoices and proof-of-payment documents, prepare revenue or expense entries, and propose updates or deletions to existing accounting entries. I will always ask for confirmation before posting, editing, or deleting anything.",
+    "I can help only with Accountancy: read supplier invoices and proof-of-payment documents, prepare revenue, expense, asset, or liability entries, and propose updates or deletions to existing accounting entries. I will always ask for confirmation before posting, editing, or deleting anything.",
   extraction: {
     action: "none",
     targetEntryId: "",
@@ -28,6 +28,9 @@ const safeHelpResponse = {
     description: "",
     amount: 0,
     currency: "USD",
+    reservationId: "",
+    customerInvoiceId: "",
+    supplierInvoiceId: "",
     documentType: "Other",
     paymentMethod: "",
     reference: "",
@@ -38,7 +41,7 @@ const safeHelpResponse = {
 
 const safeUnableToExtractResponse = {
   reply:
-    "I could not extract a reliable accounting entry from that request. Please attach the invoice or proof of payment, or specify the date, counterparty, amount, currency, category, and whether it is revenue or expense.",
+    "I could not extract a reliable accounting entry from that request. Please attach the invoice or proof of payment, or specify the date, counterparty, amount, currency, category, subcategories, traceability IDs, and whether it is revenue, expense, asset, or liability.",
   extraction: {
     action: "none",
     targetEntryId: "",
@@ -52,6 +55,9 @@ const safeUnableToExtractResponse = {
     description: "",
     amount: 0,
     currency: "USD",
+    reservationId: "",
+    customerInvoiceId: "",
+    supplierInvoiceId: "",
     documentType: "Other",
     paymentMethod: "",
     reference: "",
@@ -97,6 +103,8 @@ Category and subcategory guidance:
 - Liability categories include Accounts Payable, Customer Deposits, Taxes Payable, Loans, Accruals.
 - Always identify subcategories when visible. For food invoices, use ingredients or line items as subcategories, for example Carrot, Chicken, Leek.
 - A category can have one or many subcategories. If subcategories are not visible or cannot be inferred safely, return an empty subcategories array and ask the user to add them.
+- For Revenue linked to a booking, extract the reservation ID when visible, for example RR_000001, and extract the customer invoice ID when visible.
+- For Expense linked to a supplier bill, extract the supplier invoice ID when visible.
 
 Return strict JSON only:
 {
@@ -114,6 +122,9 @@ Return strict JSON only:
     "description": "one-line accounting description",
     "amount": 0,
     "currency": "USD",
+    "reservationId": "reservation or booking ID for revenue when visible, otherwise empty",
+    "customerInvoiceId": "customer/reservation invoice ID for revenue when visible, otherwise empty",
+    "supplierInvoiceId": "supplier invoice ID for expenses when visible, otherwise empty",
     "documentType": "Supplier Invoice|Proof of Payment|Reservation Payment|Other",
     "paymentMethod": "bank transfer, card, cash, mobile money, or empty",
     "reference": "invoice number, POP reference, reservation ID, transaction ID, or empty",
@@ -238,6 +249,9 @@ function normalizeAssistantPayload(payload: any, propertyCurrency = "USD") {
       description: String(extraction.description || ""),
       amount: Number.isFinite(Number(extraction.amount)) ? Number(extraction.amount) : 0,
       currency: String(extraction.currency || propertyCurrency || "USD").toUpperCase(),
+      reservationId: String(extraction.reservationId || ""),
+      customerInvoiceId: String(extraction.customerInvoiceId || ""),
+      supplierInvoiceId: String(extraction.supplierInvoiceId || ""),
       documentType,
       paymentMethod: String(extraction.paymentMethod || ""),
       reference: String(extraction.reference || ""),

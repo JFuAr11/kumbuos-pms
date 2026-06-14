@@ -57,6 +57,9 @@ const blankEntry = (propertyId: string, type: AccountancyEntry["type"]): Account
   description: "",
   amount: 0,
   currency: "USD",
+  reservationId: "",
+  customerInvoiceId: "",
+  supplierInvoiceId: "",
   documentType: "Other",
   paymentMethod: "",
   reference: "",
@@ -69,9 +72,11 @@ const blankEntry = (propertyId: string, type: AccountancyEntry["type"]): Account
 export function AccountancyLedgerManager({
   title = "Manual Accountancy Ledger",
   filter = "All",
+  allowedTypes,
 }: {
   title?: string;
   filter?: LedgerFilter;
+  allowedTypes?: AccountancyEntry["type"][];
 }) {
   const {
     selectedPropertyId,
@@ -80,18 +85,28 @@ export function AccountancyLedgerManager({
     updateAccountancyEntry,
     deleteAccountancyEntry,
   } = useAppContext();
-  const defaultType: AccountancyEntry["type"] = filter === "All" ? "Revenue" : filter;
+  const availableTypes = allowedTypes?.length
+    ? allowedTypes
+    : filter === "All"
+      ? (["Revenue", "Expense", "Asset", "Liability"] as AccountancyEntry["type"][])
+      : [filter];
+  const defaultType: AccountancyEntry["type"] = availableTypes[0] || "Revenue";
   const [editing, setEditing] = useState<AccountancyEntry | null>(null);
 
   const entries = accountancyEntries
     .filter(entry => entry.propertyId === selectedPropertyId)
-    .filter(entry => filter === "All" || entry.type === filter)
+    .filter(entry => availableTypes.includes(entry.type))
     .sort((a, b) => b.date.localeCompare(a.date));
 
   const currentCategoryOptions = useMemo(
     () => categoryOptions[(editing?.type || defaultType) as AccountancyEntry["type"]],
     [editing?.type, defaultType],
   );
+  const scopeDescription = availableTypes.every(type => type === "Revenue" || type === "Expense")
+    ? "Manual entries are scoped only to the active property and feed Revenues, Expenses, and Profit & Loss."
+    : availableTypes.every(type => type === "Asset" || type === "Liability")
+      ? "Manual entries are scoped only to the active property and feed Assets, Liabilities, and Balance."
+      : "Manual entries are scoped only to the active property and feed the relevant Accountancy statements.";
 
   const startNew = () => setEditing(blankEntry(selectedPropertyId, defaultType));
 
@@ -152,7 +167,7 @@ export function AccountancyLedgerManager({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-5">
         <div>
           <h2 className="text-lg font-semibold">{title}</h2>
-          <p className="text-sm text-muted-foreground">Manual entries are scoped only to the active property and feed Revenues, Expenses, P&L, and Balance.</p>
+          <p className="text-sm text-muted-foreground">{scopeDescription}</p>
         </div>
         <Button onClick={startNew}>
           <Plus className="mr-2 h-4 w-4" />
@@ -175,12 +190,11 @@ export function AccountancyLedgerManager({
                 className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                 value={editing.type}
                 onChange={event => setEditing({ ...editing, type: event.target.value as AccountancyEntry["type"], category: "" })}
-                disabled={filter !== "All"}
+                disabled={availableTypes.length === 1}
               >
-                <option value="Revenue">Revenue</option>
-                <option value="Expense">Expense</option>
-                <option value="Asset">Asset</option>
-                <option value="Liability">Liability</option>
+                {availableTypes.map(type => (
+                  <option key={type} value={type}>{type}</option>
+                ))}
               </select>
             </label>
             <InputField label="Date" type="date" value={editing.date} onChange={value => setEditing({ ...editing, date: value })} />
@@ -189,6 +203,15 @@ export function AccountancyLedgerManager({
             <InputField label="Reference" value={editing.reference || ""} onChange={value => setEditing({ ...editing, reference: value })} />
             <InputField label="Amount" type="number" value={String(editing.amount || 0)} onChange={value => setEditing({ ...editing, amount: Number(value) })} />
             <InputField label="Currency" value={editing.currency || "USD"} onChange={value => setEditing({ ...editing, currency: value.toUpperCase() })} />
+            {editing.type === "Revenue" && (
+              <>
+                <InputField label="Reservation ID" value={editing.reservationId || ""} onChange={value => setEditing({ ...editing, reservationId: value })} />
+                <InputField label="Customer Invoice ID" value={editing.customerInvoiceId || ""} onChange={value => setEditing({ ...editing, customerInvoiceId: value })} />
+              </>
+            )}
+            {editing.type === "Expense" && (
+              <InputField label="Supplier Invoice ID" value={editing.supplierInvoiceId || ""} onChange={value => setEditing({ ...editing, supplierInvoiceId: value })} />
+            )}
             <InputField label="Tax Amount" type="number" value={String(editing.taxAmount || 0)} onChange={value => setEditing({ ...editing, taxAmount: Number(value) })} />
             <label className="block text-sm font-medium">
               Document Type
@@ -252,6 +275,7 @@ export function AccountancyLedgerManager({
               <th className="p-4 font-medium">Type</th>
               <th className="p-4 font-medium">Category</th>
               <th className="p-4 font-medium">Subcategories</th>
+              <th className="p-4 font-medium">Traceability</th>
               <th className="p-4 font-medium">Counterparty</th>
               <th className="p-4 font-medium">Source</th>
               <th className="p-4 text-right font-medium">Amount</th>
@@ -269,7 +293,8 @@ export function AccountancyLedgerManager({
                   <td className="p-4 text-xs text-muted-foreground">
                     {(entry.subcategories || []).length ? entry.subcategories?.join(", ") : "Unassigned"}
                   </td>
-                  <td className="p-4 text-muted-foreground">{entry.counterparty}</td>
+                <td className="p-4 text-xs text-muted-foreground">{formatTraceability(entry)}</td>
+                <td className="p-4 text-muted-foreground">{entry.counterparty}</td>
                   <td className="p-4 text-muted-foreground">{entry.source}</td>
                   <td className={`p-4 text-right font-semibold ${positive ? "text-green-600" : "text-destructive"}`}>
                     {positive ? "" : "-"}{formatMoney(entry.amount, entry.currency)}
@@ -285,7 +310,7 @@ export function AccountancyLedgerManager({
             })}
             {!entries.length && (
               <tr>
-                <td colSpan={8} className="p-8 text-center text-muted-foreground">No manual or AI ledger entries for this scope yet.</td>
+                <td colSpan={9} className="p-8 text-center text-muted-foreground">No manual or AI ledger entries for this scope yet.</td>
               </tr>
             )}
           </tbody>
@@ -293,6 +318,17 @@ export function AccountancyLedgerManager({
       </div>
     </div>
   );
+}
+
+function formatTraceability(entry: AccountancyEntry) {
+  const items = [
+    entry.reservationId ? `Reservation: ${entry.reservationId}` : "",
+    entry.customerInvoiceId ? `Customer invoice: ${entry.customerInvoiceId}` : "",
+    entry.supplierInvoiceId ? `Supplier invoice: ${entry.supplierInvoiceId}` : "",
+    entry.reference ? `Reference: ${entry.reference}` : "",
+  ].filter(Boolean);
+
+  return items.length ? items.join(" | ") : "-";
 }
 
 function InputField({

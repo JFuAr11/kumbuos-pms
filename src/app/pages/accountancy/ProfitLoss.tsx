@@ -63,7 +63,7 @@ export function AccountancyProfitLoss() {
         </div>
       </div>
 
-      <AccountancyLedgerManager title="Manage P&L Source Entries" filter="All" />
+      <AccountancyLedgerManager title="Manage P&L Source Entries" filter="All" allowedTypes={["Revenue", "Expense"]} />
     </div>
   );
 }
