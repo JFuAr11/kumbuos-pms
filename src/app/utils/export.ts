@@ -38,104 +38,110 @@ export function exportToExcel(data: any[], filename: string) {
   a.click();
 }
 
-export function exportToPDF(data: any[], filename: string, title = filename) {
-  const headers = data.length ? Object.keys(data[0]) : [];
-  const lines = [
-    title,
-    `Generated: ${new Date().toLocaleString()}`,
-    "",
-    ...(data.length
-      ? data.flatMap((row, index) => [
-        `Record ${index + 1}`,
-        ...headers.flatMap(header => wrapLine(`${header}: ${String(row[header] ?? "")}`, 96)),
-        "",
-      ])
-      : ["No data available."]),
-  ];
+export function exportToPDF(_data: any[], filename: string, title = filename) {
+  const exportRoot = document.querySelector("[data-pdf-export-root]");
+  const main = document.querySelector("main");
+  const source = (exportRoot || main || document.body) as HTMLElement;
+  const clone = source.cloneNode(true) as HTMLElement;
+  syncFormState(source, clone);
 
-  const pageLines = chunk(lines, 54);
-  const pageWidth = 595;
-  const pageHeight = 842;
-  const marginX = 40;
-  const topY = 800;
-  const lineHeight = 14;
+  const styles = Array.from(document.querySelectorAll('link[rel="stylesheet"], style'))
+    .map(node => node.outerHTML)
+    .join("\n");
+  const printWindow = window.open("", "_blank", "width=1440,height=1000");
 
-  const objects: string[] = [];
-  const pageObjectIds: number[] = [];
-  const fontObjectId = 3;
-  objects[0] = "<< /Type /Catalog /Pages 2 0 R >>";
-  objects[1] = "<< /Type /Pages /Kids [] /Count 0 >>";
-  objects[2] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
-
-  pageLines.forEach((page, pageIndex) => {
-    const pageObjectId = objects.length + 1;
-    const contentObjectId = pageObjectId + 1;
-    pageObjectIds.push(pageObjectId);
-
-    const content = page.map((line, lineIndex) => {
-      const fontSize = pageIndex === 0 && lineIndex === 0 ? 16 : 9;
-      const y = topY - (lineIndex * lineHeight);
-      return `BT /F1 ${fontSize} Tf ${marginX} ${y} Td (${escapePdfText(line)}) Tj ET`;
-    }).join("\n");
-
-    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${fontObjectId} 0 R >> >> /Contents ${contentObjectId} 0 R >>`);
-    objects.push(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`);
-  });
-
-  objects[1] = `<< /Type /Pages /Kids [${pageObjectIds.map(id => `${id} 0 R`).join(" ")}] /Count ${pageObjectIds.length} >>`;
-
-  let body = "%PDF-1.4\n";
-  const offsets = [0];
-  objects.forEach((object, index) => {
-    offsets.push(body.length);
-    body += `${index + 1} 0 obj\n${object}\nendobj\n`;
-  });
-
-  const xrefStart = body.length;
-  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  offsets.slice(1).forEach(offset => {
-    body += `${String(offset).padStart(10, "0")} 00000 n \n`;
-  });
-  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
-
-  const blob = new Blob([body], { type: "application/pdf" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${filename}.pdf`;
-  a.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function chunk<T>(items: T[], size: number) {
-  const chunks: T[][] = [];
-  for (let index = 0; index < items.length; index += size) {
-    chunks.push(items.slice(index, index + size));
+  if (!printWindow) {
+    document.title = filename;
+    window.print();
+    return;
   }
-  return chunks.length ? chunks : [[]];
+
+  printWindow.document.write(`<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(filename)}</title>
+    ${styles}
+    <style>
+      @page { size: A4 landscape; margin: 10mm; }
+      * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+      html, body { min-height: 100%; background: hsl(var(--background)); color: hsl(var(--foreground)); }
+      body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .pdf-document { min-height: 100vh; background: hsl(var(--background)); padding: 24px; }
+      .pdf-document [data-pdf-export-root] { height: auto !important; min-height: auto !important; overflow: visible !important; }
+      .pdf-document .h-screen, .pdf-document .h-full, .pdf-document .max-h-\\[90vh\\], .pdf-document .h-\\[520px\\] { height: auto !important; max-height: none !important; }
+      .pdf-document .overflow-auto, .pdf-document .overflow-y-auto, .pdf-document .overflow-x-auto { overflow: visible !important; }
+      .pdf-document .sticky { position: static !important; }
+      .pdf-document table { page-break-inside: auto; }
+      .pdf-document tr, .pdf-document .rounded-xl, .pdf-document .rounded-lg { break-inside: avoid; page-break-inside: avoid; }
+      .pdf-title { margin: 0 0 16px; color: hsl(var(--foreground)); font-size: 20px; font-weight: 700; }
+      @media print {
+        body { width: 100%; }
+        .pdf-document { padding: 0; }
+        button, [role="button"] { box-shadow: none !important; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="pdf-document">
+      <h1 class="pdf-title">${escapeHtml(title)}</h1>
+      ${clone.outerHTML}
+    </main>
+    <script>
+      window.addEventListener("load", () => {
+        setTimeout(() => {
+          window.focus();
+          window.print();
+        }, 450);
+      });
+    </script>
+  </body>
+</html>`);
+  printWindow.document.close();
 }
 
-function wrapLine(line: string, maxLength: number) {
-  const clean = line.replace(/\s+/g, " ").trim();
-  if (clean.length <= maxLength) return [clean];
+function syncFormState(sourceRoot: Element, cloneRoot: Element) {
+  const sourceFields = sourceRoot.querySelectorAll("input, textarea, select");
+  const cloneFields = cloneRoot.querySelectorAll("input, textarea, select");
 
-  const parts: string[] = [];
-  let remaining = clean;
-  while (remaining.length > maxLength) {
-    const cut = remaining.lastIndexOf(" ", maxLength);
-    const sliceAt = cut > 40 ? cut : maxLength;
-    parts.push(remaining.slice(0, sliceAt));
-    remaining = remaining.slice(sliceAt).trim();
-  }
-  if (remaining) parts.push(remaining);
-  return parts;
+  sourceFields.forEach((field, index) => {
+    const clone = cloneFields[index];
+    if (!clone) return;
+
+    if (field instanceof HTMLInputElement && clone instanceof HTMLInputElement) {
+      if (field.type === "checkbox" || field.type === "radio") {
+        clone.checked = field.checked;
+        if (field.checked) clone.setAttribute("checked", "checked");
+        else clone.removeAttribute("checked");
+      } else {
+        clone.value = field.value;
+        clone.setAttribute("value", field.value);
+      }
+      return;
+    }
+
+    if (field instanceof HTMLTextAreaElement && clone instanceof HTMLTextAreaElement) {
+      clone.value = field.value;
+      clone.textContent = field.value;
+      return;
+    }
+
+    if (field instanceof HTMLSelectElement && clone instanceof HTMLSelectElement) {
+      clone.value = field.value;
+      Array.from(clone.options).forEach(option => {
+        option.selected = option.value === field.value;
+        if (option.selected) option.setAttribute("selected", "selected");
+        else option.removeAttribute("selected");
+      });
+    }
+  });
 }
 
-function escapePdfText(text: string) {
-  return text
-    .normalize("NFKD")
-    .replace(/[^\x20-\x7E]/g, "")
-    .replace(/\\/g, "\\\\")
-    .replace(/\(/g, "\\(")
-    .replace(/\)/g, "\\)");
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }

@@ -1,12 +1,12 @@
 import { useAppContext } from "../../context/AppContext";
 import { Button } from "../../components/ui/button";
-import { exportToCSV, exportToExcel, exportToJSON } from "../../utils/export";
+import { exportToCSV, exportToExcel, exportToJSON, exportToPDF } from "../../utils/export";
 import { Download } from "lucide-react";
 
 export function CheckInDatabase() {
   const { clients } = useAppContext();
 
-  const handleExport = (type: 'csv' | 'excel' | 'json') => {
+  const handleExport = (type: 'csv' | 'excel' | 'json' | 'pdf') => {
     const data = clients.map(c => ({
       ID: c.id,
       Name: c.name,
@@ -18,6 +18,7 @@ export function CheckInDatabase() {
     if (type === 'csv') exportToCSV(data, 'ClientsDatabase');
     if (type === 'excel') exportToExcel(data, 'ClientsDatabase');
     if (type === 'json') exportToJSON(data, 'ClientsDatabase');
+    if (type === 'pdf') exportToPDF(data, 'ClientsDatabase', 'Check-in Database');
   };
 
   return (
@@ -28,6 +29,7 @@ export function CheckInDatabase() {
           <Button variant="outline" size="sm" onClick={() => handleExport('csv')}>CSV</Button>
           <Button variant="outline" size="sm" onClick={() => handleExport('excel')}>Excel</Button>
           <Button variant="outline" size="sm" onClick={() => handleExport('json')}>JSON</Button>
+          <Button variant="outline" size="sm" onClick={() => handleExport('pdf')}>PDF</Button>
         </div>
       </div>
 

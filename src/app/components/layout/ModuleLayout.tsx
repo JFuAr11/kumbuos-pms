@@ -32,6 +32,7 @@ import {
   Users,
   Crown,
   ChevronDown,
+  Download,
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
@@ -41,6 +42,7 @@ import { Avatar, AvatarFallback } from "../ui/avatar";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { useAppContext } from "../../context/AppContext";
+import { exportToPDF } from "../../utils/export";
 
 type NavItem = {
   path: string;
@@ -153,6 +155,11 @@ export function ModuleLayout() {
     currentUser.permissions.some(permission => permission.module === moduleTitle && permission.section === section && permission.access !== "none");
 
   const visibleNavItems = navItems.filter(item => hasSectionAccess(item.label));
+  const exportCurrentViewPdf = () => {
+    const currentSection = visibleNavItems.find(item => location.pathname.startsWith(item.path))?.label || moduleTitle;
+    const filename = `${moduleTitle}-${currentSection}`.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
+    exportToPDF([], filename || "KumbuOS-Export", `${moduleTitle} - ${currentSection}`);
+  };
 
   const quickLinks = [
     { label: "Home", path: "/app", module: "Module" },
@@ -272,6 +279,10 @@ export function ModuleLayout() {
               <Bell size={20} />
               <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-destructive" />
             </Button>
+            <Button variant="ghost" size="sm" className="gap-2" onClick={exportCurrentViewPdf} title="Export current view to PDF">
+              <Download size={18} />
+              <span className="hidden md:inline">PDF</span>
+            </Button>
             <Button variant="ghost" size="icon" className="hidden sm:inline-flex">
               <MessageSquare size={20} />
             </Button>
@@ -330,7 +341,7 @@ export function ModuleLayout() {
           </div>
         </header>
 
-        <div className="relative flex-1 overflow-auto bg-background/50">
+        <div className="relative flex-1 overflow-auto bg-background/50" data-pdf-export-root>
           <Outlet />
         </div>
       </main>

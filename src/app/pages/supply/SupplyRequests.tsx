@@ -1,7 +1,7 @@
 import { useParams } from "react-router";
 import { useState } from "react";
 import { useAppContext, SupplyRequest } from "../../context/AppContext";
-import { exportToCSV, exportToJSON, exportToExcel } from "../../utils/export";
+import { exportToCSV, exportToJSON, exportToExcel, exportToPDF } from "../../utils/export";
 import { Button } from "../../components/ui/button";
 import { Edit, Trash2, Download } from "lucide-react";
 import { Input } from "../../components/ui/input";
@@ -24,7 +24,7 @@ export function SupplyRequests() {
     s.category.toLowerCase() === formattedCategory.toLowerCase()
   );
 
-  const handleExport = (type: 'csv' | 'json' | 'excel') => {
+  const handleExport = (type: 'csv' | 'json' | 'excel' | 'pdf') => {
     const data = currentRequests.map(r => ({
       ID: r.id,
       Date: r.date,
@@ -34,6 +34,7 @@ export function SupplyRequests() {
     if (type === 'csv') exportToCSV(data, `${formattedCategory}_Supplies`);
     if (type === 'json') exportToJSON(data, `${formattedCategory}_Supplies`);
     if (type === 'excel') exportToExcel(data, `${formattedCategory}_Supplies`);
+    if (type === 'pdf') exportToPDF(data, `${formattedCategory}_Supplies`, `${formattedCategory} Supplies`);
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -80,6 +81,7 @@ export function SupplyRequests() {
           <Button variant="outline" size="sm" onClick={() => handleExport('csv')}>CSV</Button>
           <Button variant="outline" size="sm" onClick={() => handleExport('excel')}>Excel</Button>
           <Button variant="outline" size="sm" onClick={() => handleExport('json')}>JSON</Button>
+          <Button variant="outline" size="sm" onClick={() => handleExport('pdf')}>PDF</Button>
           <Button onClick={() => { setShowForm(!showForm); setEditingId(null); setAmount(""); setDesc(""); }}>
             {showForm ? "Cancel" : "New Request"}
           </Button>

@@ -18,7 +18,7 @@ import {
 import { enUS } from "date-fns/locale";
 import { Button } from "../components/ui/button";
 import { useAppContext } from "../context/AppContext";
-import { exportToCSV, exportToExcel, exportToJSON } from "../utils/export";
+import { exportToCSV, exportToExcel, exportToJSON, exportToPDF } from "../utils/export";
 
 const getStatusColor = (status: string) => {
   switch (status) {
@@ -48,7 +48,7 @@ export function Calendar() {
   const propertyRooms = rooms.filter(room => room.propertyId === selectedPropertyId);
   const propertyReservations = reservations.filter(reservation => reservation.propertyId === selectedPropertyId);
 
-  const handleExport = (type: "csv" | "json" | "excel") => {
+  const handleExport = (type: "csv" | "json" | "excel" | "pdf") => {
     const data = propertyReservations.map(reservation => ({
       ID: reservation.id,
       Client: clients.find(client => client.id === reservation.clientId)?.name || "Unknown",
@@ -62,6 +62,7 @@ export function Calendar() {
     if (type === "csv") exportToCSV(data, "CalendarReservations");
     if (type === "json") exportToJSON(data, "CalendarReservations");
     if (type === "excel") exportToExcel(data, "CalendarReservations");
+    if (type === "pdf") exportToPDF(data, "CalendarReservations", "Reservations Calendar");
   };
 
   const selectedRes = propertyReservations.find(reservation => reservation.id === selectedResId);
@@ -100,6 +101,9 @@ export function Calendar() {
           </Button>
           <Button variant="outline" size="sm" onClick={() => handleExport("excel")} className="gap-2">
             <Download size={16} /> Excel
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => handleExport("pdf")} className="gap-2">
+            <Download size={16} /> PDF
           </Button>
         </div>
       </div>

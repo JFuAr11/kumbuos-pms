@@ -3,7 +3,7 @@ import { Download, Edit, Search, Trash2 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Reservation, useAppContext } from "../context/AppContext";
-import { exportToCSV, exportToExcel, exportToJSON } from "../utils/export";
+import { exportToCSV, exportToExcel, exportToJSON, exportToPDF } from "../utils/export";
 
 const overlaps = (aStart: string, aEnd: string, bStart: string, bEnd: string) =>
   new Date(aStart) < new Date(bEnd) && new Date(aEnd) > new Date(bStart);
@@ -75,7 +75,7 @@ export function Reservations() {
     return `${reservation.id} ${client?.name || ""}`.toLowerCase().includes(searchTerm.toLowerCase());
   });
 
-  const handleExport = (type: "csv" | "json" | "excel") => {
+  const handleExport = (type: "csv" | "json" | "excel" | "pdf") => {
     const data = filtered.map(reservation => ({
       ID: reservation.id,
       Client: clients.find(client => client.id === reservation.clientId)?.name || "Unknown",
@@ -88,6 +88,7 @@ export function Reservations() {
     if (type === "csv") exportToCSV(data, "Reservations");
     if (type === "json") exportToJSON(data, "Reservations");
     if (type === "excel") exportToExcel(data, "Reservations");
+    if (type === "pdf") exportToPDF(data, "Reservations", "Reservations");
   };
 
   const openInvoice = (reservationId: string) => {
@@ -197,6 +198,7 @@ export function Reservations() {
             <Button variant="outline" size="sm" onClick={() => handleExport("csv")}>CSV</Button>
             <Button variant="outline" size="sm" onClick={() => handleExport("excel")}>Excel</Button>
             <Button variant="outline" size="sm" onClick={() => handleExport("json")}>JSON</Button>
+            <Button variant="outline" size="sm" onClick={() => handleExport("pdf")}>PDF</Button>
           </div>
         </div>
 
