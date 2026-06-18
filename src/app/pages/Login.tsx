@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
-import { Eye, EyeOff, Mail, Phone } from "lucide-react";
+import { Eye, EyeOff, Mail } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { useAppContext } from "../context/AppContext";
@@ -28,7 +28,6 @@ export function Login() {
   const [notice, setNotice] = useState("");
 
   const [resetContact, setResetContact] = useState("");
-  const [deliveryMethod, setDeliveryMethod] = useState<"Email" | "Phone">("Email");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
@@ -63,10 +62,10 @@ export function Login() {
     resetFeedback();
     setIsLoading(true);
 
-    const request = await requestPasswordReset(resetContact, deliveryMethod);
+    const request = await requestPasswordReset(resetContact);
     setIsLoading(false);
     if (!request) {
-      setError("No active user was found for that email or phone number.");
+      setError("No active user was found for that email address.");
       return;
     }
 
@@ -213,33 +212,23 @@ export function Login() {
 
           {mode === "forgot" && (
             <form className="space-y-5" onSubmit={handleForgotPassword}>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  className={`flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm ${deliveryMethod === "Email" ? "border-[#f4c27d] bg-[#c98736]/25 text-white" : "border-[#f4c27d]/25 text-[#f7ead8]"}`}
-                  onClick={() => setDeliveryMethod("Email")}
-                >
+              <div className="rounded-md border border-[#f4c27d]/25 bg-[#c98736]/10 p-3 text-sm text-[#f7ead8]">
+                <div className="flex items-center gap-2 font-medium text-white">
                   <Mail size={16} />
-                  Email
-                </button>
-                <button
-                  type="button"
-                  className={`flex items-center justify-center gap-2 rounded-md border px-3 py-2 text-sm ${deliveryMethod === "Phone" ? "border-[#f4c27d] bg-[#c98736]/25 text-white" : "border-[#f4c27d]/25 text-[#f7ead8]"}`}
-                  onClick={() => setDeliveryMethod("Phone")}
-                >
-                  <Phone size={16} />
-                  Phone
-                </button>
+                  Password recovery is sent by email only.
+                </div>
+                <p className="mt-1 text-[#b8aa96]">You will receive a secure reset link from info@luxurytentedcamp.com.</p>
               </div>
 
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-[#f7ead8]">
-                  Email or phone number
+                  Email
                 </label>
                 <Input
                   value={resetContact}
                   onChange={event => setResetContact(event.target.value)}
-                  placeholder={deliveryMethod === "Email" ? "name@company.com" : "+255 700 000 000"}
+                  placeholder="name@company.com"
+                  type="email"
                   className="h-11 border-[#f4c27d]/25 bg-[#2d2924] text-white placeholder:text-[#b8aa96]"
                   required
                 />

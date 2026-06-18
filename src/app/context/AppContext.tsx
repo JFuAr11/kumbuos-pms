@@ -91,7 +91,7 @@ export type PasswordResetRequest = {
   id: string;
   userId: string;
   contact: string;
-  deliveryMethod: 'Email' | 'Phone';
+  deliveryMethod: 'Email';
   token: string;
   resetUrl: string;
   fromEmail?: string;
@@ -320,7 +320,8 @@ type AppContextType = {
   profileDefinitions: ProfileDefinition[];
   passwordResetRequests: PasswordResetRequest[];
   credentialSyncStatus: string;
-  requestPasswordReset: (contact: string, deliveryMethod: 'Email' | 'Phone') => Promise<PasswordResetRequest | null>;
+  pmsDataSyncStatus: string;
+  requestPasswordReset: (contact: string) => Promise<PasswordResetRequest | null>;
   resetPassword: (token: string, newPassword: string) => Promise<{ ok: boolean; error?: string }>;
   canAccessOwnerConsole: (user?: SystemUser | null) => boolean;
   isRootOwner: (user?: SystemUser | null) => boolean;
@@ -478,7 +479,7 @@ const editAllPermissions: PermissionRule[] = [
   { module: 'Supply Requests', section: 'Mechanical', access: 'edit' },
   { module: 'Supply Requests', section: 'Fuel & Petrol', access: 'edit' },
   { module: 'Supply Requests', section: 'Notifications', access: 'edit' },
-  { module: 'Check-in', section: 'Guest Form', access: 'edit' },
+  { module: 'Check-in', section: 'Check-in Form', access: 'edit' },
   { module: 'Check-in', section: 'Database', access: 'edit' },
   { module: 'Check-in', section: 'Dashboard', access: 'edit' },
   { module: 'Check-in', section: 'Notifications', access: 'edit' },
@@ -868,14 +869,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     setSystemUsers(current => current.map(user => {
-      const accountancyAccess = user.permissions.find(permission => permission.module === 'Accountancy' && permission.access !== 'none')?.access;
-      if (!accountancyAccess) return user;
+      let permissions = user.permissions;
+      if (user.profile === 'Admin') {
+        permissions = editAllPermissions.reduce((rules, requiredRule) => {
+          const existingRule = rules.find(rule => rule.module === requiredRule.module && rule.section === requiredRule.section);
+          if (!existingRule) return [...rules, requiredRule];
+          if (existingRule.access === 'edit') return rules;
+          return rules.map(rule =>
+            rule.module === requiredRule.module && rule.section === requiredRule.section
+              ? { ...rule, access: 'edit' as PermissionAccess }
+              : rule
+          );
+        }, permissions);
+      }
+
+      const accountancyAccess = permissions.find(permission => permission.module === 'Accountancy' && permission.access !== 'none')?.access;
+      const legacyCheckInAccess = permissions.find(permission => permission.module === 'Check-in' && permission.section === 'Guest Form' && permission.access !== 'none')?.access;
 
       const additions: PermissionRule[] = ['Assets', 'Liabilities']
-        .filter(section => !user.permissions.some(permission => permission.module === 'Accountancy' && permission.section === section))
-        .map(section => ({ module: 'Accountancy', section, access: accountancyAccess }));
+        .filter(() => Boolean(accountancyAccess))
+        .filter(section => !permissions.some(permission => permission.module === 'Accountancy' && permission.section === section))
+        .map(section => ({ module: 'Accountancy', section, access: accountancyAccess || 'none' }));
 
-      return additions.length ? { ...user, permissions: [...user.permissions, ...additions] } : user;
+      if (legacyCheckInAccess && !permissions.some(permission => permission.module === 'Check-in' && permission.section === 'Check-in Form')) {
+        additions.push({ module: 'Check-in', section: 'Check-in Form', access: legacyCheckInAccess });
+      }
+
+      const nextPermissions = additions.length ? [...permissions, ...additions] : permissions;
+      return nextPermissions !== user.permissions ? { ...user, permissions: nextPermissions } : user;
     }));
   }, [setSystemUsers]);
 
@@ -983,11 +1004,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const requestPasswordReset = async (contact: string, deliveryMethod: 'Email' | 'Phone') => {
+  const requestPasswordReset = async (contact: string) => {
     const normalizedContact = contact.trim().toLowerCase();
     const user = systemUsers.find(item =>
-      item.email.toLowerCase() === normalizedContact ||
-      item.phone?.replace(/\s+/g, '') === contact.replace(/\s+/g, '')
+      item.email.toLowerCase() === normalizedContact
     );
 
     if (!user) return null;
@@ -998,7 +1018,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       id: `pr-${Date.now()}`,
       userId: user.id,
       contact,
-      deliveryMethod,
+      deliveryMethod: 'Email',
       token,
       resetUrl,
       fromEmail: 'info@luxurytentedcamp.com',
@@ -1354,7 +1374,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <AppContext.Provider value={{
       currentUser, login, logout,
       profileDefinitions,
-      passwordResetRequests, credentialSyncStatus, requestPasswordReset, resetPassword,
+      passwordResetRequests, credentialSyncStatus, pmsDataSyncStatus, requestPasswordReset, resetPassword,
       canAccessOwnerConsole, isRootOwner, canManageOwnerUsers,
       companies, addCompany, updateCompany, deleteCompany,
       properties, selectedCompanyId, setSelectedCompanyId, selectedPropertyId, setSelectedPropertyId, addProperty, updateProperty, deleteProperty,

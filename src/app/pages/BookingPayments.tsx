@@ -15,19 +15,20 @@ export function BookingPayments() {
   } = useAppContext();
 
   const [filters, setFilters] = useState({ id: "", client: "", category: "", checkIn: "", checkOut: "" });
+  const [appliedFilters, setAppliedFilters] = useState(filters);
   const [selectedReservationId, setSelectedReservationId] = useState("");
   const [paymentForm, setPaymentForm] = useState<Partial<BookingPayment>>({ date: new Date().toISOString().split("T")[0], method: "Bank Transfer" });
 
   const propertyReservations = reservations.filter(reservation => reservation.propertyId === selectedPropertyId);
   const filtered = useMemo(() => propertyReservations.filter(reservation => {
     const client = clients.find(item => item.id === reservation.clientId);
-    if (filters.id && !reservation.id.toLowerCase().includes(filters.id.toLowerCase())) return false;
-    if (filters.client && !client?.name.toLowerCase().includes(filters.client.toLowerCase())) return false;
-    if (filters.category && client?.category !== filters.category) return false;
-    if (filters.checkIn && reservation.checkIn < filters.checkIn) return false;
-    if (filters.checkOut && reservation.checkOut > filters.checkOut) return false;
+    if (appliedFilters.id && !reservation.id.toLowerCase().includes(appliedFilters.id.toLowerCase())) return false;
+    if (appliedFilters.client && !client?.name.toLowerCase().includes(appliedFilters.client.toLowerCase())) return false;
+    if (appliedFilters.category && client?.category !== appliedFilters.category) return false;
+    if (appliedFilters.checkIn && reservation.checkIn < appliedFilters.checkIn) return false;
+    if (appliedFilters.checkOut && reservation.checkOut > appliedFilters.checkOut) return false;
     return true;
-  }), [propertyReservations, clients, filters]);
+  }), [propertyReservations, clients, appliedFilters]);
 
   const selectedReservation = reservations.find(item => item.id === selectedReservationId);
   const selectedPaid = bookingPayments.filter(item => item.reservationId === selectedReservationId).reduce((sum, item) => sum + item.amount, 0);
@@ -56,12 +57,16 @@ export function BookingPayments() {
 
       <section className="rounded-lg border border-border bg-card p-5 shadow-sm">
         <div className="mb-4 flex items-center gap-2 text-sm font-medium"><Search size={16} /> Filters</div>
-        <div className="grid gap-3 md:grid-cols-5">
+        <div className="grid gap-3 md:grid-cols-[repeat(5,minmax(0,1fr))_auto] md:items-end">
           <Field label="Reservation ID" value={filters.id} onChange={value => setFilters({ ...filters, id: value })} />
           <Field label="Client Name" value={filters.client} onChange={value => setFilters({ ...filters, client: value })} />
           <Select label="Client Type" value={filters.category} onChange={value => setFilters({ ...filters, category: value })} options={["", "Tour Operator", "Agency", "Direct Client", "Corporate", "Other"]} />
           <Field label="Check-in From" type="date" value={filters.checkIn} onChange={value => setFilters({ ...filters, checkIn: value })} />
           <Field label="Check-out To" type="date" value={filters.checkOut} onChange={value => setFilters({ ...filters, checkOut: value })} />
+          <Button className="h-10 gap-2" onClick={() => setAppliedFilters(filters)}>
+            <Search size={16} />
+            Search
+          </Button>
         </div>
       </section>
 

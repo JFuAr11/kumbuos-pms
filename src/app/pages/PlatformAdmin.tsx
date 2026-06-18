@@ -47,6 +47,7 @@ const createEmptyPermissions = (): PermissionRule[] =>
   })));
 
 const accessOptions: PermissionAccess[] = ["none", "view", "edit"];
+const moduleAccessOptions: PermissionAccess[] = ["none", "edit"];
 const departments = ["Reservations", "Accountancy", "Supplies", "Check-in", "Admin"];
 const roleTitleOptions = ["Tenant Admin", "General Director", "Reservations Agent", "Accountancy Manager", "Supplies Manager", "Check-in Manager", "Property Manager", "Read-only Viewer"];
 const senderProviderDefaults: Record<NotificationEmailConfig["provider"], { host: string; port: number; secure: boolean; guide: string }> = {
@@ -118,10 +119,16 @@ export function PlatformAdmin() {
   const [selectedCompanyId, setSelectedCompanyId] = useState(visibleCompanies[0]?.id || tenantCompanyId);
   const activeCompany = visibleCompanies.find(company => company.id === selectedCompanyId) || visibleCompanies[0];
   const companyProperties = properties.filter(property => property.companyId === activeCompany?.id);
+  const manageableProperties = ownerMode || !currentUser
+    ? companyProperties
+    : companyProperties.filter(property => currentUser.propertyIds.includes(property.id));
+  const manageablePropertyIds = new Set(manageableProperties.map(property => property.id));
+  const canManageNotificationSender = ownerMode || currentUser?.profile === "Admin" || currentUser?.role === "System Owner";
   const companyUsers = systemUsers.filter(user =>
     user.companyId === activeCompany?.id &&
     user.profile !== "Owner" &&
-    !user.ownerConsoleAccess
+    !user.ownerConsoleAccess &&
+    (ownerMode || user.id === currentUser?.id || user.propertyIds.some(propertyId => manageablePropertyIds.has(propertyId)))
   );
 
   const [selectedPropertyForUsers, setSelectedPropertyForUsers] = useState<string>("");
@@ -149,11 +156,20 @@ export function PlatformAdmin() {
 
   useEffect(() => {
     if (!activeCompany) return;
-    const propertyId = companyProperties[0]?.id || "";
+    const propertyId = manageableProperties[0]?.id || "";
     const existing = notificationEmailConfigs.find(config => config.propertyId === propertyId);
     setSenderForm(existing || blankSenderConfig(activeCompany.id, propertyId));
     setSenderError("");
-  }, [activeCompany?.id]);
+  }, [activeCompany?.id, manageableProperties[0]?.id]);
+
+  useEffect(() => {
+    if (userSection !== "permissions" || !selectedUser) return;
+    if (editingUserId === selectedUser.id) return;
+    setEditingUserId(selectedUser.id);
+    setUserForm({ ...selectedUser, password: "" });
+    setUserPropertyIds(selectedUser.propertyIds.filter(propertyId => ownerMode || manageablePropertyIds.has(propertyId)));
+    setPermissionDraft(selectedUser.permissions.length ? selectedUser.permissions : createEmptyPermissions());
+  }, [userSection, selectedUser?.id, editingUserId]);
 
   const setProfile = (profile: UserProfile) => {
     if (profile === "Owner") return;
@@ -172,15 +188,15 @@ export function PlatformAdmin() {
   const openNewUser = () => {
     setEditingUserId(null);
     setUserForm({ profile: "Reservations", role: "Reservations Agent", status: "Active", departments: ["Reservations"], ownerConsoleAccess: false });
-    setUserPropertyIds(companyProperties.map(property => property.id));
+    setUserPropertyIds(manageableProperties.map(property => property.id));
     setPermissionDraft(profileDefinitions.find(item => item.name === "Reservations")?.permissions || createEmptyPermissions());
     setUserSection("users");
   };
 
   const editUser = (user: SystemUser) => {
     setEditingUserId(user.id);
-    setUserForm(user);
-    setUserPropertyIds(user.propertyIds);
+    setUserForm({ ...user, password: "" });
+    setUserPropertyIds(user.propertyIds.filter(propertyId => ownerMode || manageablePropertyIds.has(propertyId)));
     setPermissionDraft(user.permissions.length ? user.permissions : createEmptyPermissions());
     setUserSection("users");
   };
@@ -199,8 +215,9 @@ export function PlatformAdmin() {
       setFormError("Use a valid international phone number before saving.");
       return;
     }
-    if (!editingUserId || userForm.password) {
-      const passwordPolicy = validatePasswordPolicy(userForm.password || "");
+    const explicitPassword = (userForm.password || "").trim();
+    if (!editingUserId || explicitPassword) {
+      const passwordPolicy = validatePasswordPolicy(explicitPassword);
       if (!passwordPolicy.valid) {
         setFormError(passwordPolicy.errors.join(" "));
         return;
@@ -221,7 +238,7 @@ export function PlatformAdmin() {
       profile: userForm.profile || "Reservations",
       departments: userForm.departments || [],
       phone: userForm.phone || "",
-      password: userForm.password || "",
+      password: explicitPassword,
       status: userForm.status || "Active",
       ownerConsoleAccess: false,
       permissions: permissionDraft,
@@ -233,6 +250,23 @@ export function PlatformAdmin() {
       addSystemUser(payload);
     }
     setEditingUserId(payload.id);
+    setUserForm(current => ({ ...current, password: "" }));
+  };
+
+  const savePermissions = () => {
+    setFormError("");
+    const target = selectedUser;
+    if (!target) {
+      setFormError("Select a user before saving permissions.");
+      return;
+    }
+
+    const scopedPropertyIds = userPropertyIds.filter(propertyId => ownerMode || manageablePropertyIds.has(propertyId));
+    updateSystemUser(target.id, {
+      propertyIds: scopedPropertyIds,
+      permissions: permissionDraft,
+    });
+    setEditingUserId(target.id);
   };
 
   const toggleUserProperty = (propertyId: string) => {
@@ -258,6 +292,17 @@ export function PlatformAdmin() {
       const exists = current.some(rule => rule.module === module && rule.section === section);
       if (!exists) return [...current, { module, section, access }];
       return current.map(rule => rule.module === module && rule.section === section ? { ...rule, access } : rule);
+    });
+  };
+
+  const updateModulePermission = (module: string, access: PermissionAccess) => {
+    const group = modules.find(item => item.module === module);
+    if (!group) return;
+
+    setPermissionDraft(current => {
+      const withoutModule = current.filter(rule => rule.module !== module);
+      const moduleRules = group.sections.map(section => ({ module, section, access }));
+      return [...withoutModule, ...moduleRules];
     });
   };
 
@@ -398,7 +443,7 @@ export function PlatformAdmin() {
 
       <div className="grid gap-4 md:grid-cols-3">
         <Metric icon={Building2} label="Visible Companies" value={visibleCompanies.length} />
-        <Metric icon={Building} label="Visible Properties" value={visibleCompanies.flatMap(company => properties.filter(property => property.companyId === company.id)).length} />
+        <Metric icon={Building} label="Visible Properties" value={visibleCompanies.flatMap(company => properties.filter(property => property.companyId === company.id && (ownerMode || currentUser?.propertyIds.includes(property.id)))).length} />
         <Metric icon={Users} label="Visible Users" value={visibleCompanies.flatMap(company => systemUsers.filter(user => user.companyId === company.id)).length} />
       </div>
 
@@ -451,7 +496,7 @@ export function PlatformAdmin() {
               </div>
 
               <div className="space-y-3">
-                {companyProperties.map(property => (
+                {manageableProperties.map(property => (
                   <div key={property.id} className="rounded-md border border-border p-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <button className="text-left" onClick={() => setSelectedPropertyForUsers(property.id)}>
@@ -491,20 +536,22 @@ export function PlatformAdmin() {
                 </div>
               )}
             </Panel>
-            <NotificationSenderPanel
-              properties={companyProperties}
-              configs={companySenderConfigs}
-              form={senderForm}
-              error={senderError}
-              testStatus={senderTestStatus}
-              activeConfig={activeSenderConfig}
-              onSelectProperty={loadSenderConfigForProperty}
-              onSetProvider={setSenderProvider}
-              onChange={updates => setSenderForm(current => ({ ...current, ...updates }))}
-              onSave={saveSenderConfig}
-              onDelete={removeSenderConfig}
-              onSendTest={sendSenderTest}
-            />
+            {canManageNotificationSender && (
+              <NotificationSenderPanel
+                properties={manageableProperties}
+                configs={companySenderConfigs.filter(config => ownerMode || manageablePropertyIds.has(config.propertyId))}
+                form={senderForm}
+                error={senderError}
+                testStatus={senderTestStatus}
+                activeConfig={activeSenderConfig}
+                onSelectProperty={loadSenderConfigForProperty}
+                onSetProvider={setSenderProvider}
+                onChange={updates => setSenderForm(current => ({ ...current, ...updates }))}
+                onSave={saveSenderConfig}
+                onDelete={removeSenderConfig}
+                onSendTest={sendSenderTest}
+              />
+            )}
           </section>
         ) : (
           <section className="space-y-5">
@@ -526,7 +573,7 @@ export function PlatformAdmin() {
                   toggleDepartment={toggleDepartment}
                 />
                 {formError && <FormError message={formError} />}
-                <PropertyAccess properties={companyProperties} selected={userPropertyIds} toggle={toggleUserProperty} />
+                <PropertyAccess properties={manageableProperties} selected={userPropertyIds} toggle={toggleUserProperty} />
                 <div className="mt-5 flex justify-between gap-2">
                   <Button variant="outline" onClick={openNewUser}>New Blank User</Button>
                   <Button className="gap-2" onClick={saveUser}><Save size={16} /> Save User</Button>
@@ -549,11 +596,11 @@ export function PlatformAdmin() {
                   </select>
                   <p className="text-sm text-muted-foreground">Permissions apply only inside the assigned company and selected properties.</p>
                 </div>
-                <PropertyAccess properties={companyProperties} selected={userPropertyIds} toggle={toggleUserProperty} />
-                <PermissionEditor permissions={permissionDraft} update={updatePermission} />
+                <PropertyAccess properties={manageableProperties} selected={userPropertyIds} toggle={toggleUserProperty} />
+                <PermissionEditor permissions={permissionDraft} update={updatePermission} updateModule={updateModulePermission} />
                 {formError && <FormError message={formError} />}
                 <div className="mt-5 flex justify-end">
-                  <Button className="gap-2" onClick={saveUser}><Save size={16} /> Save Permissions</Button>
+                  <Button className="gap-2" onClick={savePermissions}><Save size={16} /> Save Permissions</Button>
                 </div>
               </Panel>
             )}
@@ -601,6 +648,22 @@ export function PlatformAdmin() {
                 ))}
               </div>
             </Panel>
+            {canManageNotificationSender && (
+              <NotificationSenderPanel
+                properties={manageableProperties}
+                configs={companySenderConfigs.filter(config => ownerMode || manageablePropertyIds.has(config.propertyId))}
+                form={senderForm}
+                error={senderError}
+                testStatus={senderTestStatus}
+                activeConfig={activeSenderConfig}
+                onSelectProperty={loadSenderConfigForProperty}
+                onSetProvider={setSenderProvider}
+                onChange={updates => setSenderForm(current => ({ ...current, ...updates }))}
+                onSave={saveSenderConfig}
+                onDelete={removeSenderConfig}
+                onSendTest={sendSenderTest}
+              />
+            )}
           </section>
         )}
       </div>
@@ -910,9 +973,25 @@ function PropertyAccess({ properties, selected, toggle }: { properties: Property
   );
 }
 
-function PermissionEditor({ permissions, update }: { permissions: PermissionRule[]; update: (module: string, section: string, access: PermissionAccess) => void }) {
+function PermissionEditor({
+  permissions,
+  update,
+  updateModule,
+}: {
+  permissions: PermissionRule[];
+  update: (module: string, section: string, access: PermissionAccess) => void;
+  updateModule: (module: string, access: PermissionAccess) => void;
+}) {
   const accessFor = (module: string, section: string) =>
     permissions.find(rule => rule.module === module && rule.section === section)?.access || "none";
+  const moduleAccessFor = (module: string): PermissionAccess | "mixed" => {
+    const group = modules.find(item => item.module === module);
+    if (!group) return "none";
+    const values = group.sections.map(section => accessFor(module, section));
+    if (values.every(value => value === "edit")) return "edit";
+    if (values.every(value => value === "none")) return "none";
+    return "mixed";
+  };
 
   return (
     <div className="mt-5 overflow-hidden rounded-md border border-border">
@@ -925,17 +1004,40 @@ function PermissionEditor({ permissions, update }: { permissions: PermissionRule
           </tr>
         </thead>
         <tbody>
-          {modules.flatMap(group => group.sections.map(section => (
-            <tr key={`${group.module}-${section}`} className="border-t border-border">
-              <td className="px-4 py-3 font-medium">{group.module}</td>
-              <td className="px-4 py-3 text-muted-foreground">{section}</td>
+          {modules.flatMap(group => [
+            <tr key={`${group.module}-module`} className="border-t border-border bg-muted/20">
+              <td className="px-4 py-3 font-semibold">{group.module}</td>
+              <td className="px-4 py-3 text-muted-foreground">Grant module access</td>
               <td className="px-4 py-3">
-                <select className="h-9 rounded-md border border-input bg-background px-3 text-sm" value={accessFor(group.module, section)} onChange={event => update(group.module, section, event.target.value as PermissionAccess)}>
-                  {accessOptions.map(access => <option key={access} value={access}>{access}</option>)}
+                <select
+                  className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+                  value={moduleAccessFor(group.module)}
+                  onChange={event => {
+                    const value = event.target.value as PermissionAccess;
+                    updateModule(group.module, value);
+                  }}
+                >
+                  <option value="mixed" disabled>Mixed section access</option>
+                  {moduleAccessOptions.map(access => (
+                    <option key={access} value={access}>
+                      {access === "edit" ? "Full edit access" : "No access"}
+                    </option>
+                  ))}
                 </select>
               </td>
-            </tr>
-          )))}
+            </tr>,
+            ...group.sections.map(section => (
+              <tr key={`${group.module}-${section}`} className="border-t border-border">
+                <td className="px-4 py-3 font-medium text-muted-foreground">{group.module}</td>
+                <td className="px-4 py-3 text-muted-foreground">{section}</td>
+                <td className="px-4 py-3">
+                  <select className="h-9 rounded-md border border-input bg-background px-3 text-sm" value={accessFor(group.module, section)} onChange={event => update(group.module, section, event.target.value as PermissionAccess)}>
+                    {accessOptions.map(access => <option key={access} value={access}>{access}</option>)}
+                  </select>
+                </td>
+              </tr>
+            )),
+          ])}
         </tbody>
       </table>
     </div>

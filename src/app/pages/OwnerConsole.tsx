@@ -45,6 +45,7 @@ export function OwnerConsole() {
     deleteSystemUser,
     requestPasswordReset,
     credentialSyncStatus,
+    pmsDataSyncStatus,
     profileDefinitions,
   } = useAppContext();
 
@@ -354,7 +355,10 @@ export function OwnerConsole() {
               All accounts are synced to the internal credential store. Passwords are stored as secure hashes with the last five password hashes retained for reuse prevention.
             </p>
           </div>
-          <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">{credentialSyncStatus}</span>
+          <div className="flex flex-col gap-2 text-xs">
+            <span className="rounded-full bg-primary/10 px-3 py-1 font-medium text-primary">{credentialSyncStatus}</span>
+            <span className="rounded-full bg-primary/10 px-3 py-1 font-medium text-primary">{pmsDataSyncStatus}</span>
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
@@ -398,7 +402,7 @@ export function OwnerConsole() {
                           size="sm"
                           disabled={!canControlCredential}
                           onClick={async () => {
-                            const request = await requestPasswordReset(user.email, "Email");
+                            const request = await requestPasswordReset(user.email);
                             window.alert(request?.deliveryStatus === "Sent"
                               ? "Reset email sent from info@luxurytentedcamp.com."
                               : "Reset request created, but Zoho SMTP could not send the email.");
