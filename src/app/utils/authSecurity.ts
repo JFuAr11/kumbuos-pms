@@ -26,7 +26,7 @@ export function validatePasswordPolicy(password: string): PasswordValidationResu
 
 export async function verifyUserPassword(user: SystemUser, password: string) {
   if (user.passwordSalt && user.passwordHash) {
-    return hashPassword(password, user.passwordSalt) === user.passwordHash;
+    return await hashPassword(password, user.passwordSalt) === user.passwordHash;
   }
 
   return Boolean(user.password && user.password === password);
