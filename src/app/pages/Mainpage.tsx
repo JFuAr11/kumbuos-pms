@@ -36,7 +36,9 @@ export function Mainpage() {
     ? properties.filter(property => property.companyId === selectedCompanyId)
     : properties.filter(property => property.companyId === selectedCompanyId && currentUser.propertyIds.includes(property.id));
   const hasModuleAccess = (moduleName: string) =>
-    ownerAllowed || Boolean(currentUser?.permissions.some(permission => permission.module === moduleName && permission.access !== "none"));
+    moduleName === "Owner Console"
+      ? ownerAllowed
+      : Boolean(currentUser?.permissions.some(permission => permission.module === moduleName && permission.access !== "none"));
 
   useEffect(() => {
     if (!currentUser) navigate("/login");
@@ -174,8 +176,10 @@ export function Mainpage() {
                   <select
                     className="mt-3 h-11 w-full rounded-md border border-white/20 bg-[#2d2924] px-3 text-sm font-medium text-white shadow-sm"
                     value={selectedCompanyId}
+                    disabled={!visibleCompanies.length}
                     onChange={event => setSelectedCompanyId(event.target.value)}
                   >
+                    {!visibleCompanies.length && <option value="">No company created yet</option>}
                     {visibleCompanies.map(company => (
                       <option key={company.id} value={company.id}>{company.name}</option>
                     ))}
@@ -189,13 +193,20 @@ export function Mainpage() {
                   <select
                     className="mt-3 h-11 w-full rounded-md border border-white/20 bg-[#2d2924] px-3 text-sm font-medium text-white shadow-sm"
                     value={selectedPropertyId}
+                    disabled={!visibleProperties.length}
                     onChange={event => setSelectedPropertyId(event.target.value)}
                   >
+                    {!visibleProperties.length && <option value="">No property selected</option>}
                     {visibleProperties.map(property => (
                       <option key={property.id} value={property.id}>{property.name}</option>
                     ))}
                   </select>
                 </div>
+                {!visibleCompanies.length && ownerAllowed && (
+                  <p className="text-xs leading-5 text-white/75">
+                    Start by creating the first tenant company and property in Owner Console.
+                  </p>
+                )}
               </div>
             </div>
           </section>

@@ -24,8 +24,25 @@
   - `GOOGLE_SHEETS_API_KEY`: optional, for reading a shared/public Google Sheet through the Google Sheets API.
   - `GOOGLE_SERVICE_ACCOUNT_EMAIL`: optional, recommended for a private Google Sheet.
   - `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`: optional, recommended for a private Google Sheet. Keep the `\n` line breaks escaped in Vercel.
+  - `VITE_FIREBASE_API_KEY`: Firebase web API key for the credential store.
+  - `VITE_FIREBASE_AUTH_DOMAIN`: Firebase auth domain.
+  - `VITE_FIREBASE_PROJECT_ID`: Firebase project ID.
+  - `VITE_FIREBASE_STORAGE_BUCKET`: Firebase storage bucket.
+  - `VITE_FIREBASE_MESSAGING_SENDER_ID`: Firebase messaging sender ID.
+  - `VITE_FIREBASE_APP_ID`: Firebase web app ID.
+  - `VITE_FIREBASE_CREDENTIAL_STORE_ID`: optional Firestore document ID for credentials. Default: `production-v1-clean`.
+  - `VITE_FIREBASE_PMS_STORE_ID`: optional Firestore document ID for PMS operating data. Default: `test-v1-clean`.
+  - `ZOHO_SMTP_USER`: Zoho sender email. Default: `info@luxurytentedcamp.com`.
+  - `ZOHO_SMTP_PASSWORD`: Zoho app password for password reset emails.
+  - `ZOHO_SMTP_HOST`: optional SMTP host. Default: `smtp.zoho.eu`.
+  - `ZOHO_SMTP_PORT`: optional SMTP port. Default: `465`.
 
   FX rates are read from columns `Date`, `TZS_per_USD`, and `USD_per_TZS`. For private sheets, share the Google Sheet with the service account email as Viewer.
+
+  Firebase stores:
+
+  - Credentials and password reset requests: `kumbuosCredentialStore/<VITE_FIREBASE_CREDENTIAL_STORE_ID>`.
+  - PMS operating data: `kumbuosPmsDataStore/<VITE_FIREBASE_PMS_STORE_ID>`.
 
   Do not commit `.env.local` or real API keys. Use Vercel Project Settings > Environment Variables.
   

@@ -105,12 +105,12 @@ const OWNER_ITEMS = [
 export function ModuleLayout() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { properties, selectedPropertyId, currentUser, logout } = useAppContext();
+  const { properties, selectedPropertyId, currentUser, logout, canAccessOwnerConsole } = useAppContext();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  const activeProperty = properties.find(p => p.id === selectedPropertyId) || properties[0];
+  const activeProperty = properties.find(p => p.id === selectedPropertyId);
 
   useEffect(() => {
     if (!currentUser) navigate("/login");
@@ -143,18 +143,27 @@ export function ModuleLayout() {
     moduleTitle = "Owner Console";
   }
 
+  const ownerConsoleAllowed = canAccessOwnerConsole(currentUser);
+  const isOwnerConsoleModule = moduleTitle === "Owner Console";
+  const hasModulePermission = (moduleName: string) =>
+    moduleName === "Module" ||
+    Boolean(currentUser?.permissions.some(permission => permission.module === moduleName && permission.access !== "none")) ||
+    (moduleName === "Owner Console" && ownerConsoleAllowed);
+
   const hasCurrentModuleAccess =
     !currentUser ||
     moduleTitle === "Module" ||
-    currentUser.ownerConsoleAccess ||
-    currentUser.permissions.some(permission => permission.module === moduleTitle && permission.access !== "none");
+    hasModulePermission(moduleTitle);
 
   const hasSectionAccess = (section: string) =>
     !currentUser ||
-    currentUser.ownerConsoleAccess ||
+    (isOwnerConsoleModule && ownerConsoleAllowed) ||
     currentUser.permissions.some(permission => permission.module === moduleTitle && permission.section === section && permission.access !== "none");
 
   const visibleNavItems = navItems.filter(item => hasSectionAccess(item.label));
+  const currentNavItem = navItems.find(item => location.pathname.startsWith(item.path));
+  const hasCurrentSectionAccess = !currentNavItem || visibleNavItems.some(item => item.path === currentNavItem.path);
+  const requiresActiveProperty = ["Reservations", "Accountancy", "Supply Requests", "Check-in"].includes(moduleTitle);
   const exportCurrentViewPdf = () => {
     const currentSection = visibleNavItems.find(item => location.pathname.startsWith(item.path))?.label || moduleTitle;
     const filename = `${moduleTitle}-${currentSection}`.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
@@ -169,15 +178,17 @@ export function ModuleLayout() {
     { label: "Check-in", path: "/app/check-in/form", module: "Check-in" },
     { label: "Admin Platform", path: "/app/admin/companies", module: "Admin Platform" },
     { label: "Owner Console", path: "/app/owner/tenants", module: "Owner Console" },
-  ].filter(item =>
-    item.module === "Module" ||
-    currentUser?.ownerConsoleAccess ||
-    currentUser?.permissions.some(permission => permission.module === item.module && permission.access !== "none")
-  );
+  ].filter(item => !currentUser || hasModulePermission(item.module));
 
   useEffect(() => {
     if (currentUser && !hasCurrentModuleAccess) navigate("/app");
   }, [currentUser, hasCurrentModuleAccess, navigate]);
+
+  useEffect(() => {
+    if (currentUser && hasCurrentModuleAccess && !hasCurrentSectionAccess) {
+      navigate(visibleNavItems[0]?.path || "/app");
+    }
+  }, [currentUser, hasCurrentModuleAccess, hasCurrentSectionAccess, navigate, visibleNavItems]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-background font-sans text-foreground">
@@ -342,9 +353,47 @@ export function ModuleLayout() {
         </header>
 
         <div className="relative flex-1 overflow-auto bg-background/50" data-pdf-export-root>
-          <Outlet />
+          {requiresActiveProperty && !activeProperty ? (
+            <NoActiveProperty
+              moduleTitle={moduleTitle}
+              canOpenOwnerConsole={ownerConsoleAllowed}
+              onOpenOwnerConsole={() => navigate("/app/owner/tenants")}
+            />
+          ) : (
+            <Outlet />
+          )}
         </div>
       </main>
+    </div>
+  );
+}
+
+function NoActiveProperty({
+  moduleTitle,
+  canOpenOwnerConsole,
+  onOpenOwnerConsole,
+}: {
+  moduleTitle: string;
+  canOpenOwnerConsole: boolean;
+  onOpenOwnerConsole: () => void;
+}) {
+  return (
+    <div className="flex min-h-full items-center justify-center p-6">
+      <div className="w-full max-w-xl rounded-lg border border-border bg-card p-6 text-center shadow-sm">
+        <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-md bg-secondary text-secondary-foreground">
+          <Building2 className="h-6 w-6" />
+        </div>
+        <h2 className="mt-4 text-xl font-semibold">No active property yet</h2>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          {moduleTitle} needs an active company and property before records can be created. This keeps reservations,
+          accountancy, supply requests, and check-in data correctly scoped from the first test.
+        </p>
+        {canOpenOwnerConsole && (
+          <Button className="mt-5" onClick={onOpenOwnerConsole}>
+            Open Owner Console
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

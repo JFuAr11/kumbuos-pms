@@ -5,6 +5,7 @@ import {
   verifyUserPassword,
 } from '../utils/authSecurity';
 import { firebaseCredentialsEnabled, publishCredentials, subscribeCredentials } from '../utils/firebaseCredentials';
+import { firebasePmsDataEnabled, publishPmsData, subscribePmsData } from '../utils/firebasePmsData';
 
 export type Company = {
   id: string;
@@ -101,17 +102,38 @@ export type PasswordResetRequest = {
 
 export type NotificationAutomation = {
   id: string;
+  companyId?: string;
+  propertyId?: string;
   moduleKey: string;
   moduleName: string;
   name: string;
   channel: 'Email' | 'WhatsApp' | 'SMS' | 'In-app';
   recipientGroup: string;
+  explicitRecipientEmails?: string[];
+  senderConfigId?: string;
   subject: string;
   message: string;
   trigger: string;
   timing: string;
   enabled: boolean;
   lastUpdated: string;
+};
+
+export type NotificationEmailConfig = {
+  id: string;
+  companyId: string;
+  propertyId: string;
+  provider: 'Zoho' | 'Gmail' | 'Microsoft 365' | 'Custom SMTP';
+  fromName: string;
+  fromEmail: string;
+  smtpHost: string;
+  smtpPort: number;
+  smtpUsername: string;
+  smtpPassword?: string;
+  secure: boolean;
+  status: 'Not configured' | 'Configured' | 'Needs review';
+  notes?: string;
+  updatedAt: string;
 };
 
 export type Client = {
@@ -327,6 +349,10 @@ type AppContextType = {
   addNotification: (notification: NotificationAutomation) => void;
   updateNotification: (id: string, notification: Partial<NotificationAutomation>) => void;
   deleteNotification: (id: string) => void;
+  notificationEmailConfigs: NotificationEmailConfig[];
+  addNotificationEmailConfig: (config: NotificationEmailConfig) => void;
+  updateNotificationEmailConfig: (id: string, config: Partial<NotificationEmailConfig>) => void;
+  deleteNotificationEmailConfig: (id: string) => void;
 
   clients: Client[];
   addClient: (c: Client) => void;
@@ -396,101 +422,9 @@ const ROOT_OWNER_EMAIL = 'jorge@luxurytentedcamp.com';
 const ROOT_OWNER_PASSWORD = 'Owner2026!';
 const OWNER_CONSOLE_COMPANY_ID = 'owner-console';
 
-const initialCompanies: Company[] = [
-  {
-    id: 'co-1',
-    name: 'Kumbukumbu Ltd.',
-    website: 'https://kumbukumbu.com',
-    businessSector: 'Luxury Hospitality',
-    legalName: 'Kumbukumbu Luxury Tented Camp Ltd.',
-    taxId: 'TZ-184-772-901',
-    registrationNumber: 'REG-2025-KUM-001',
-    officialAddress: 'Moshi Road, Arusha, Tanzania',
-    invoiceEmail: 'finance@kumbukumbu.com',
-    plan: 'Enterprise',
-    status: 'Active',
-    joinedAt: '2025-01-12',
-  },
-  {
-    id: 'co-2',
-    name: 'Serengeti Safaris',
-    website: 'https://serengetisafaris.example',
-    businessSector: 'Safari Operator',
-    legalName: 'Serengeti Safaris Company Limited',
-    taxId: 'TZ-445-118-220',
-    registrationNumber: 'REG-2026-SER-014',
-    officialAddress: 'Nyerere Road, Arusha, Tanzania',
-    invoiceEmail: 'accounts@serengetisafaris.example',
-    plan: 'Pro',
-    status: 'Active',
-    joinedAt: '2026-03-03',
-  },
-  {
-    id: 'co-3',
-    name: 'Maasai Mara Camps',
-    website: 'https://maasaimaracamps.example',
-    businessSector: 'Luxury Camps',
-    legalName: 'Maasai Mara Camps Holdings',
-    taxId: 'KE-991-430-211',
-    registrationNumber: 'REG-2025-MMC-097',
-    officialAddress: 'Narok County, Kenya',
-    invoiceEmail: 'billing@maasaimaracamps.example',
-    plan: 'Enterprise',
-    status: 'Suspended',
-    joinedAt: '2025-11-14',
-  },
-];
+const initialCompanies: Company[] = [];
 
-const initialProperties: Property[] = [
-  {
-    id: '1',
-    companyId: 'co-1',
-    name: 'Kumbukumbu Main Camp',
-    website: 'https://kumbukumbu.com/main-camp',
-    businessSector: 'Luxury Tented Camp',
-    legalName: 'Kumbukumbu Main Camp Ltd.',
-    taxId: 'TZ-184-772-901',
-    registrationNumber: 'PROP-KUM-MAIN',
-    officialAddress: 'Main Conservancy Road, Arusha, Tanzania',
-    invoiceEmail: 'finance@kumbukumbu.com',
-  },
-  {
-    id: '2',
-    companyId: 'co-1',
-    name: 'Kumbukumbu Serengeti',
-    website: 'https://kumbukumbu.com/serengeti',
-    businessSector: 'Luxury Tented Camp',
-    legalName: 'Kumbukumbu Serengeti Camp Ltd.',
-    taxId: 'TZ-184-772-902',
-    registrationNumber: 'PROP-KUM-SER',
-    officialAddress: 'Serengeti National Park, Tanzania',
-    invoiceEmail: 'finance@kumbukumbu.com',
-  },
-  {
-    id: '3',
-    companyId: 'co-1',
-    name: 'Kumbukumbu Tarangire',
-    website: 'https://kumbukumbu.com/tarangire',
-    businessSector: 'Luxury Lodge',
-    legalName: 'Kumbukumbu Tarangire Lodge Ltd.',
-    taxId: 'TZ-184-772-903',
-    registrationNumber: 'PROP-KUM-TAR',
-    officialAddress: 'Tarangire Road, Tanzania',
-    invoiceEmail: 'finance@kumbukumbu.com',
-  },
-  {
-    id: '4',
-    companyId: 'co-2',
-    name: 'Serengeti Safari House',
-    website: 'https://serengetisafaris.example/house',
-    businessSector: 'Safari Lodge',
-    legalName: 'Serengeti Safari House Ltd.',
-    taxId: 'TZ-445-118-220',
-    registrationNumber: 'PROP-SER-HOUSE',
-    officialAddress: 'Central Serengeti, Tanzania',
-    invoiceEmail: 'accounts@serengetisafaris.example',
-  },
-];
+const initialProperties: Property[] = [];
 
 const initialSystemUsers: SystemUser[] = [
   {
@@ -515,152 +449,9 @@ const initialSystemUsers: SystemUser[] = [
       { module: 'Admin Platform', section: 'Assign Permissions', access: 'edit' },
     ],
   },
-  {
-    id: 'usr-super',
-    companyId: 'co-1',
-    propertyIds: ['1', '2', '3'],
-    name: 'Platform Admin',
-    email: 'admin@kumbukumbu.com',
-    role: 'Super Admin',
-    profile: 'Admin',
-    departments: ['Admin', 'Reservations', 'Accountancy', 'Supplies', 'Check-in'],
-    phone: '+255 700 000 001',
-    password: 'KumbuAdmin2026!',
-    status: 'Active',
-    ownerConsoleAccess: false,
-    permissions: [
-      { module: 'Reservations', section: 'Calendar', access: 'edit' },
-      { module: 'Reservations', section: 'Bookings', access: 'edit' },
-      { module: 'Reservations', section: 'Configuration', access: 'edit' },
-      { module: 'Reservations', section: 'Notifications', access: 'edit' },
-      { module: 'Accountancy', section: 'Overview', access: 'edit' },
-      { module: 'Accountancy', section: 'Revenues', access: 'edit' },
-      { module: 'Accountancy', section: 'Expenses', access: 'edit' },
-      { module: 'Accountancy', section: 'Profit & Loss (P&L)', access: 'edit' },
-      { module: 'Accountancy', section: 'Assets', access: 'edit' },
-      { module: 'Accountancy', section: 'Liabilities', access: 'edit' },
-      { module: 'Accountancy', section: 'Balance', access: 'edit' },
-      { module: 'Accountancy', section: 'GenAI Assistant', access: 'edit' },
-      { module: 'Accountancy', section: 'Notifications', access: 'edit' },
-      { module: 'Supply Requests', section: 'All Categories', access: 'edit' },
-      { module: 'Supply Requests', section: 'Notifications', access: 'edit' },
-      { module: 'Check-in', section: 'Guest Form', access: 'edit' },
-      { module: 'Check-in', section: 'Database', access: 'edit' },
-      { module: 'Check-in', section: 'Dashboard', access: 'edit' },
-      { module: 'Check-in', section: 'Notifications', access: 'edit' },
-      { module: 'Admin Platform', section: 'Companies & Access', access: 'edit' },
-      { module: 'Admin Platform', section: 'Notifications', access: 'edit' },
-    ],
-  },
-  {
-    id: 'usr-1',
-    companyId: 'co-1',
-    propertyIds: ['1', '2', '3'],
-    name: 'Jane Doe',
-    email: 'manager@kumbukumbu.com',
-    role: 'General Manager',
-    profile: 'General Director',
-    departments: ['Reservations', 'Accountancy', 'Supplies', 'Check-in'],
-    phone: '+255 700 000 002',
-    password: 'Kumbu2026!',
-    status: 'Active',
-    ownerConsoleAccess: false,
-    permissions: [
-      { module: 'Reservations', section: 'Calendar', access: 'edit' },
-      { module: 'Reservations', section: 'Bookings', access: 'edit' },
-      { module: 'Accountancy', section: 'Overview', access: 'view' },
-      { module: 'Supply Requests', section: 'Beverage', access: 'edit' },
-      { module: 'Check-in', section: 'Guest Form', access: 'edit' },
-    ],
-  },
 ];
 
-const initialNotifications: NotificationAutomation[] = [
-  {
-    id: 'ntf-1',
-    moduleKey: 'reservations',
-    moduleName: 'Reservations',
-    name: 'Pre-arrival confirmation',
-    channel: 'Email',
-    recipientGroup: 'Guests with confirmed bookings',
-    subject: 'Your Kumbukumbu stay is confirmed',
-    message: 'Send arrival details, transfer information, and camp expectations.',
-    trigger: 'Reservation confirmed',
-    timing: 'Immediately after confirmation',
-    enabled: true,
-    lastUpdated: '2026-06-08',
-  },
-  {
-    id: 'ntf-2',
-    moduleKey: 'check-in',
-    moduleName: 'Check-in',
-    name: 'Digital registration reminder',
-    channel: 'WhatsApp',
-    recipientGroup: 'Guests arriving within 48 hours',
-    subject: 'Complete your guest details',
-    message: 'Invite guests to complete their pre-check-in form before arrival.',
-    trigger: '48 hours before check-in',
-    timing: 'Daily at 09:00 local time',
-    enabled: true,
-    lastUpdated: '2026-06-08',
-  },
-  {
-    id: 'ntf-3',
-    moduleKey: 'accountancy',
-    moduleName: 'Accountancy',
-    name: 'Monthly finance pack',
-    channel: 'Email',
-    recipientGroup: 'Company directors',
-    subject: 'Monthly finance pack is ready',
-    message: 'Send revenue, expenses, balance, and invoice summary to ownership.',
-    trigger: 'Monthly statement ready',
-    timing: 'First day of each month at 08:00',
-    enabled: true,
-    lastUpdated: '2026-06-09',
-  },
-  {
-    id: 'ntf-4',
-    moduleKey: 'supply-requests',
-    moduleName: 'Supply Requests',
-    name: 'Budget threshold alert',
-    channel: 'In-app',
-    recipientGroup: 'Property manager',
-    subject: 'Supply budget threshold reached',
-    message: 'Notify management when department requests exceed the configured threshold.',
-    trigger: 'Budget threshold reached',
-    timing: 'Immediately',
-    enabled: true,
-    lastUpdated: '2026-06-09',
-  },
-  {
-    id: 'ntf-5',
-    moduleKey: 'admin',
-    moduleName: 'Admin Platform',
-    name: 'Permission change notice',
-    channel: 'Email',
-    recipientGroup: 'Super admins',
-    subject: 'User permissions were updated',
-    message: 'Inform platform administrators when a support user changes access rules.',
-    trigger: 'Permissions changed',
-    timing: 'Immediately',
-    enabled: true,
-    lastUpdated: '2026-06-09',
-  },
-  {
-    id: 'ntf-6',
-    moduleKey: 'owner',
-    moduleName: 'Owner Console',
-    name: 'New tenant sale handoff',
-    channel: 'Email',
-    recipientGroup: 'System owner',
-    subject: 'A new KumbuOS tenant was created',
-    message: 'Send the tenant creation summary, first admin credentials, and implementation checklist to the owner.',
-    trigger: 'New tenant created',
-    timing: 'Immediately',
-    enabled: true,
-    lastUpdated: '2026-06-09',
-  },
-];
+const initialNotifications: NotificationAutomation[] = [];
 
 const editAllPermissions: PermissionRule[] = [
   { module: 'Reservations', section: 'Calendar', access: 'edit' },
@@ -766,11 +557,14 @@ const getRootOwnerUser = (existing?: Partial<SystemUser>): SystemUser => {
   };
 };
 
+const STORAGE_NAMESPACE = 'kumbuos-clean-v1';
+
 function usePersistentState<T>(key: string, initialValue: T) {
+  const storageKey = `${STORAGE_NAMESPACE}:${key}`;
   const [value, setValue] = useState<T>(() => {
     if (typeof window === 'undefined') return initialValue;
     try {
-      const stored = window.localStorage.getItem(key);
+      const stored = window.localStorage.getItem(storageKey);
       return stored ? JSON.parse(stored) as T : initialValue;
     } catch {
       return initialValue;
@@ -779,11 +573,11 @@ function usePersistentState<T>(key: string, initialValue: T) {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(key, JSON.stringify(value));
+      window.localStorage.setItem(storageKey, JSON.stringify(value));
     } catch {
       // Local storage can be unavailable in private or restricted browser contexts.
     }
-  }, [key, value]);
+  }, [storageKey, value]);
 
   return [value, setValue] as const;
 }
@@ -792,10 +586,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [currentUserId, setCurrentUserId] = usePersistentState<string | null>('pms-current-user-id', null);
   const [companies, setCompanies] = usePersistentState<Company[]>('pms-companies', initialCompanies);
   const [properties, setProperties] = usePersistentState<Property[]>('pms-properties', initialProperties);
-  const [selectedCompanyId, persistSelectedCompanyId] = usePersistentState<string>('pms-selected-company', initialCompanies[0].id);
-  const [selectedPropertyId, persistSelectedPropertyId] = usePersistentState<string>('pms-selected-property', initialProperties[0].id);
+  const [selectedCompanyId, persistSelectedCompanyId] = usePersistentState<string>('pms-selected-company', initialCompanies[0]?.id || '');
+  const [selectedPropertyId, persistSelectedPropertyId] = usePersistentState<string>('pms-selected-property', initialProperties[0]?.id || '');
   const [systemUsers, setSystemUsers] = usePersistentState<SystemUser[]>('pms-system-users', initialSystemUsers);
   const [notifications, setNotifications] = usePersistentState<NotificationAutomation[]>('pms-notifications', initialNotifications);
+  const [notificationEmailConfigs, setNotificationEmailConfigs] = usePersistentState<NotificationEmailConfig[]>('pms-notification-email-configs', []);
   const [passwordResetRequests, setPasswordResetRequests] = usePersistentState<PasswordResetRequest[]>('pms-password-reset-requests', []);
   const [credentialSyncStatus, setCredentialSyncStatus] = useState(
     firebaseCredentialsEnabled()
@@ -805,65 +600,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [credentialSyncReady, setCredentialSyncReady] = useState(!firebaseCredentialsEnabled());
   const latestCredentialSnapshot = useRef('');
   const applyingRemoteCredentials = useRef(false);
+  const [pmsDataSyncStatus, setPmsDataSyncStatus] = useState(
+    firebasePmsDataEnabled()
+      ? 'Firebase PMS data sync is starting...'
+      : 'Firebase PMS data sync is not configured. Using local PMS data store.'
+  );
+  const [pmsDataSyncReady, setPmsDataSyncReady] = useState(!firebasePmsDataEnabled());
+  const latestPmsDataSnapshot = useRef('');
+  const applyingRemotePmsData = useRef(false);
 
-  const [clients, setClients] = usePersistentState<Client[]>('pms-clients', [
-    { id: 'c1', name: 'John Doe', email: 'john@example.com', emails: ['john@example.com'], phone: '123456789', nationality: 'USA', category: 'Direct Client', marketingOptIn: true },
-    { id: 'c2', name: 'Alice Smith', email: 'alice@example.com', emails: ['alice@example.com'], phone: '987654321', nationality: 'UK', category: 'Agency', marketingOptIn: false },
-  ]);
+  const [clients, setClients] = usePersistentState<Client[]>('pms-clients', []);
 
-  const [rooms, setRooms] = usePersistentState<Room[]>('pms-rooms', [
-    { id: 'rm1', propertyId: '1', name: 'Tent 1', type: 'Luxury', capacity: 2, minOccupancy: 1, maxOccupancy: 2 },
-    { id: 'rm2', propertyId: '1', name: 'Tent 2', type: 'Standard', capacity: 2, minOccupancy: 1, maxOccupancy: 2 },
-    { id: 'rm3', propertyId: '1', name: 'Family Tent', type: 'Family', capacity: 4, minOccupancy: 2, maxOccupancy: 6 },
-  ]);
+  const [rooms, setRooms] = usePersistentState<Room[]>('pms-rooms', []);
 
-  const [rates, setRates] = usePersistentState<Rate[]>('pms-rates', [
-    { id: 'rt1', propertyId: '1', name: 'Standard Rate', amount: 500, startDate: '2026-01-01', endDate: '2026-12-31', roomType: 'Luxury', residency: 'Both', active: true },
-    { id: 'rt2', propertyId: '1', name: 'High Season', amount: 800, startDate: '2026-06-01', endDate: '2026-09-30', roomType: 'Luxury', residency: 'Non Resident', active: true },
-  ]);
+  const [rates, setRates] = usePersistentState<Rate[]>('pms-rates', []);
 
-  const [rateAdjustments, setRateAdjustments] = usePersistentState<RateAdjustment[]>('pms-rate-adjustments', [
-    { id: 'disc-early', propertyId: '1', name: 'Early booking discount', kind: 'Discount', valueType: 'Percentage', value: 10, appliesTo: 'Manual Selection', active: true },
-    { id: 'tax-tdl', propertyId: '1', name: 'TDL 1%', kind: 'Tax', valueType: 'Percentage', value: 1, appliesTo: 'All Reservations', taxMode: 'Added', active: true },
-  ]);
+  const [rateAdjustments, setRateAdjustments] = usePersistentState<RateAdjustment[]>('pms-rate-adjustments', []);
 
-  const [paymentPlans, setPaymentPlans] = usePersistentState<PaymentPlan[]>('pms-payment-plans', [
-    {
-      id: 'pp-standard',
-      propertyId: '1',
-      name: 'Standard 30/70',
-      clientCategory: 'All',
-      active: true,
-      steps: [
-        { id: 'pps-1', label: 'Deposit', timingType: 'After Booking', days: 7, amountType: 'Percentage', amount: 30 },
-        { id: 'pps-2', label: 'Final balance', timingType: 'Before Check-in', days: 30, amountType: 'Remaining Balance', amount: 0 },
-      ],
-    },
-  ]);
+  const [paymentPlans, setPaymentPlans] = usePersistentState<PaymentPlan[]>('pms-payment-plans', []);
 
-  const [reservations, setReservations] = usePersistentState<Reservation[]>('pms-reservations', [
-    { id: 'RR_000001', propertyId: '1', clientId: 'c1', roomId: 'rm1', checkIn: '2026-06-10', checkOut: '2026-06-15', price: 1500, status: 'Confirmed', guests: 2, rateId: 'rt1', taxIds: ['tax-tdl'], source: 'Direct', residency: 'Non Resident' },
-    { id: 'RR_000002', propertyId: '1', clientId: 'c2', roomId: 'rm2', checkIn: '2026-06-12', checkOut: '2026-06-14', price: 800, status: 'Confirmed', guests: 2, rateId: 'rt1', source: 'Direct', residency: 'Non Resident' },
-  ]);
+  const [reservations, setReservations] = usePersistentState<Reservation[]>('pms-reservations', []);
 
   const [bookingPayments, setBookingPayments] = usePersistentState<BookingPayment[]>('pms-booking-payments', []);
   const [invoices, setInvoices] = usePersistentState<ReservationInvoice[]>('pms-reservation-invoices', []);
-  const [otaConnections, setOtaConnections] = usePersistentState<OtaConnection[]>('pms-ota-connections', [
-    { id: 'ota-booking', propertyId: '1', provider: 'Booking.com', status: 'Needs Attention', notes: 'Connect API credentials or channel manager webhook.' },
-    { id: 'ota-expedia', propertyId: '1', provider: 'Expedia', status: 'Needs Attention', notes: 'Connect API credentials or channel manager webhook.' },
-  ]);
-  const [reservationPolicies, setReservationPolicies] = usePersistentState<ReservationPolicy[]>('pms-reservation-policies', [
-    { id: 'pol-pay', propertyId: '1', section: 'Payment and Booking Policies', title: 'Booking confirmation', content: 'Reservations remain provisional until the first payment is received.' },
-    { id: 'pol-cancel', propertyId: '1', section: 'Cancellation Policies', title: 'Standard cancellation', content: 'Cancellation terms depend on the signed agreement and arrival date.' },
-    { id: 'pol-child', propertyId: '1', section: 'Child Policies', title: 'Children', content: 'Child rates and age policies must be confirmed before arrival.' },
-    { id: 'pol-amenities', propertyId: '1', section: 'Room Amenities Included', title: 'Included amenities', content: 'Accommodation, selected meals, and configured room amenities are included as per the selected rate.' },
-    { id: 'pol-notes', propertyId: '1', section: 'Important Notes', title: 'Important notes', content: 'Family rooms are an interconnection of two or three separate rooms and will be charged as two or three rooms depending on the configuration.\nRates do not include government taxes. TDL applies a 1% charge on all rates.\nAny government-mandated changes in taxes/fees will be implemented immediately as indicated.' },
-  ]);
+  const [otaConnections, setOtaConnections] = usePersistentState<OtaConnection[]>('pms-ota-connections', []);
+  const [reservationPolicies, setReservationPolicies] = usePersistentState<ReservationPolicy[]>('pms-reservation-policies', []);
 
-  const [supplyRequests, setSupplyRequests] = usePersistentState<SupplyRequest[]>('pms-supply-requests', [
-    { id: 's1', propertyId: '1', category: 'Beverage', amount: 300, date: '2026-06-01', description: 'Wine & spirits restocking' },
-    { id: 's2', propertyId: '1', category: 'Housekeeping', amount: 150, date: '2026-06-05', description: 'Cleaning supplies' },
-  ]);
+  const [supplyRequests, setSupplyRequests] = usePersistentState<SupplyRequest[]>('pms-supply-requests', []);
 
   const [accountancyEntries, setAccountancyEntries] = usePersistentState<AccountancyEntry[]>('pms-accountancy-entries-v2', []);
   const [accountancyDisplayCurrency, setAccountancyDisplayCurrency] = usePersistentState<AccountancyDisplayCurrency>('pms-accountancy-display-currency', 'USD');
@@ -890,6 +653,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const visibleCompanyProperties = properties
       .filter(property => property.companyId === id)
       .filter(property => !currentUser || canAccessOwnerConsole(currentUser) || currentUser.propertyIds.includes(property.id));
+    if (!visibleCompanyProperties.length) {
+      persistSelectedPropertyId('');
+      return;
+    }
     if (visibleCompanyProperties.length && !visibleCompanyProperties.some(property => property.id === selectedPropertyId)) {
       persistSelectedPropertyId(visibleCompanyProperties[0].id);
     }
@@ -974,6 +741,106 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [credentialSyncReady, systemUsers, passwordResetRequests]);
 
   useEffect(() => {
+    return subscribePmsData(payload => {
+      setPmsDataSyncReady(true);
+      const snapshot = JSON.stringify(payload);
+
+      applyingRemotePmsData.current = true;
+      latestPmsDataSnapshot.current = snapshot;
+      setCompanies(payload.companies);
+      setProperties(payload.properties);
+      setNotifications(payload.notifications);
+      setNotificationEmailConfigs(payload.notificationEmailConfigs);
+      setClients(payload.clients);
+      setRooms(payload.rooms);
+      setRates(payload.rates);
+      setRateAdjustments(payload.rateAdjustments);
+      setPaymentPlans(payload.paymentPlans);
+      setReservations(payload.reservations);
+      setBookingPayments(payload.bookingPayments);
+      setInvoices(payload.invoices);
+      setOtaConnections(payload.otaConnections);
+      setReservationPolicies(payload.reservationPolicies);
+      setSupplyRequests(payload.supplyRequests);
+      setAccountancyEntries(payload.accountancyEntries);
+      window.setTimeout(() => {
+        applyingRemotePmsData.current = false;
+      }, 0);
+    }, status => {
+      setPmsDataSyncStatus(status);
+      if (status.includes('no remote PMS data')) setPmsDataSyncReady(true);
+      if (status.includes('not configured')) setPmsDataSyncReady(true);
+    });
+  }, [
+    setCompanies,
+    setProperties,
+    setNotifications,
+    setNotificationEmailConfigs,
+    setClients,
+    setRooms,
+    setRates,
+    setRateAdjustments,
+    setPaymentPlans,
+    setReservations,
+    setBookingPayments,
+    setInvoices,
+    setOtaConnections,
+    setReservationPolicies,
+    setSupplyRequests,
+    setAccountancyEntries,
+  ]);
+
+  useEffect(() => {
+    if (!pmsDataSyncReady || applyingRemotePmsData.current) return;
+
+    const payload = {
+      companies,
+      properties,
+      notifications,
+      notificationEmailConfigs,
+      clients,
+      rooms,
+      rates,
+      rateAdjustments,
+      paymentPlans,
+      reservations,
+      bookingPayments,
+      invoices,
+      otaConnections,
+      reservationPolicies,
+      supplyRequests,
+      accountancyEntries,
+    };
+    const snapshot = JSON.stringify(payload);
+    if (snapshot === latestPmsDataSnapshot.current) return;
+
+    latestPmsDataSnapshot.current = snapshot;
+    publishPmsData(payload)
+      .then(() => {
+        if (firebasePmsDataEnabled()) setPmsDataSyncStatus('Firebase PMS data store is synced in real time.');
+      })
+      .catch(error => setPmsDataSyncStatus(`Firebase PMS data publish failed: ${error.message}`));
+  }, [
+    pmsDataSyncReady,
+    companies,
+    properties,
+    notifications,
+    notificationEmailConfigs,
+    clients,
+    rooms,
+    rates,
+    rateAdjustments,
+    paymentPlans,
+    reservations,
+    bookingPayments,
+    invoices,
+    otaConnections,
+    reservationPolicies,
+    supplyRequests,
+    accountancyEntries,
+  ]);
+
+  useEffect(() => {
     setSystemUsers(current => current.map(user => {
       const accountancyAccess = user.permissions.find(permission => permission.module === 'Accountancy' && permission.access !== 'none')?.access;
       if (!accountancyAccess) return user;
@@ -991,6 +858,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       ? properties.filter(property => currentUser.propertyIds.includes(property.id))
       : properties;
 
+    if (!visibleProperties.length && selectedPropertyId) {
+      persistSelectedPropertyId('');
+      return;
+    }
+
     if (!visibleProperties.some(property => property.id === selectedPropertyId) && visibleProperties[0]) {
       setSelectedPropertyId(visibleProperties[0].id);
     }
@@ -1000,6 +872,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const visibleCompanies = currentUser && !canAccessOwnerConsole(currentUser)
       ? companies.filter(company => company.id === currentUser.companyId)
       : companies;
+
+    if (!visibleCompanies.length && selectedCompanyId) {
+      persistSelectedCompanyId('');
+      return;
+    }
 
     if (!visibleCompanies.some(company => company.id === selectedCompanyId) && visibleCompanies[0]) {
       setSelectedCompanyId(visibleCompanies[0].id);
@@ -1011,6 +888,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const visibleCompanyProperties = currentUser && !canAccessOwnerConsole(currentUser)
       ? companyProperties.filter(property => currentUser.propertyIds.includes(property.id))
       : companyProperties;
+
+    if (!visibleCompanyProperties.length && selectedPropertyId) {
+      persistSelectedPropertyId('');
+      return;
+    }
 
     if (visibleCompanyProperties.length && !visibleCompanyProperties.some(property => property.id === selectedPropertyId)) {
       setSelectedPropertyId(visibleCompanyProperties[0].id);
@@ -1124,7 +1006,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return { ok: true };
   };
 
-  const addCompany = (company: Company) => setCompanies(current => [...current, company]);
+  const addCompany = (company: Company) => {
+    setCompanies(current => [...current, company]);
+    if (!selectedCompanyId) persistSelectedCompanyId(company.id);
+  };
   const updateCompany = (id: string, updates: Partial<Company>) =>
     setCompanies(current => current.map(company => company.id === id ? { ...company, ...updates } : company));
   const deleteCompany = (id: string) => {
@@ -1135,6 +1020,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const addProperty = (property: Property) => {
     setProperties(current => [...current, property]);
+    persistSelectedCompanyId(property.companyId);
+    if (!selectedPropertyId) persistSelectedPropertyId(property.id);
     setSystemUsers(current => current.map(user => {
       if (user.companyId !== property.companyId) return user;
       if (user.profile !== 'Admin' && user.profile !== 'General Director') return user;
@@ -1230,6 +1117,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setNotifications(current => current.map(notification => notification.id === id ? { ...notification, ...updates } : notification));
   const deleteNotification = (id: string) =>
     setNotifications(current => current.filter(notification => notification.id !== id));
+
+  const addNotificationEmailConfig = (config: NotificationEmailConfig) =>
+    setNotificationEmailConfigs(current => [...current, config]);
+  const updateNotificationEmailConfig = (id: string, updates: Partial<NotificationEmailConfig>) =>
+    setNotificationEmailConfigs(current => current.map(config => config.id === id ? { ...config, ...updates } : config));
+  const deleteNotificationEmailConfig = (id: string) => {
+    setNotificationEmailConfigs(current => current.filter(config => config.id !== id));
+    setNotifications(current => current.map(notification =>
+      notification.senderConfigId === id ? { ...notification, senderConfigId: undefined } : notification
+    ));
+  };
 
   const addClient = (c: Client) => setClients(current => [...current, c]);
   const updateClient = (id: string, updates: Partial<Client>) =>
@@ -1436,6 +1334,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       properties, selectedCompanyId, setSelectedCompanyId, selectedPropertyId, setSelectedPropertyId, addProperty, updateProperty, deleteProperty,
       systemUsers, addSystemUser, updateSystemUser, deleteSystemUser,
       notifications, addNotification, updateNotification, deleteNotification,
+      notificationEmailConfigs, addNotificationEmailConfig, updateNotificationEmailConfig, deleteNotificationEmailConfig,
       clients, addClient, updateClient, deleteClient,
       rooms, addRoom, updateRoom, deleteRoom,
       rates, addRate, updateRate, deleteRate,

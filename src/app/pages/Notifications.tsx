@@ -64,38 +64,77 @@ export function Notifications() {
   const location = useLocation();
   const moduleKey = getModuleKey(location.pathname);
   const moduleDetails = MODULE_DETAILS[moduleKey];
-  const { notifications, addNotification, updateNotification, deleteNotification } = useAppContext();
+  const {
+    notifications,
+    addNotification,
+    updateNotification,
+    deleteNotification,
+    notificationEmailConfigs,
+    selectedCompanyId,
+    selectedPropertyId,
+  } = useAppContext();
   const [isCreating, setIsCreating] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<Partial<NotificationAutomation>>(emptyForm(moduleKey, moduleDetails.name));
+  const [form, setForm] = useState<Partial<NotificationAutomation> & { explicitRecipientEmailText?: string }>(emptyForm(moduleKey, moduleDetails.name));
+  const [formError, setFormError] = useState("");
+
+  const senderConfigs = useMemo(
+    () => notificationEmailConfigs.filter(config =>
+      (!selectedCompanyId || config.companyId === selectedCompanyId) &&
+      (!selectedPropertyId || config.propertyId === selectedPropertyId)
+    ),
+    [notificationEmailConfigs, selectedCompanyId, selectedPropertyId]
+  );
 
   const moduleNotifications = useMemo(
-    () => notifications.filter(notification => notification.moduleKey === moduleKey),
-    [notifications, moduleKey]
+    () => notifications.filter(notification =>
+      notification.moduleKey === moduleKey &&
+      (!selectedCompanyId || !notification.companyId || notification.companyId === selectedCompanyId) &&
+      (!selectedPropertyId || !notification.propertyId || notification.propertyId === selectedPropertyId)
+    ),
+    [notifications, moduleKey, selectedCompanyId, selectedPropertyId]
   );
 
   const resetForm = () => {
     setForm(emptyForm(moduleKey, moduleDetails.name));
+    setFormError("");
     setEditingId(null);
     setIsCreating(false);
   };
 
   const startEdit = (notification: NotificationAutomation) => {
-    setForm(notification);
+    setForm({
+      ...notification,
+      explicitRecipientEmailText: (notification.explicitRecipientEmails || []).join(", "),
+    });
+    setFormError("");
     setEditingId(notification.id);
     setIsCreating(true);
   };
 
   const saveAutomation = () => {
-    if (!form.name || !form.subject || !form.message || !form.trigger || !form.recipientGroup) return;
+    setFormError("");
+    if (!form.name || !form.subject || !form.message || !form.trigger || !form.recipientGroup) {
+      setFormError("Complete name, trigger, recipient group, subject, and message before saving.");
+      return;
+    }
+    const emailResult = parseEmailList(form.explicitRecipientEmailText || "");
+    if (emailResult.invalid.length) {
+      setFormError(`Check these specific recipient emails: ${emailResult.invalid.join(", ")}`);
+      return;
+    }
 
     const payload: NotificationAutomation = {
       id: editingId || `ntf-${Date.now()}`,
+      companyId: selectedCompanyId || undefined,
+      propertyId: selectedPropertyId || undefined,
       moduleKey,
       moduleName: moduleDetails.name,
       name: form.name,
       channel: form.channel || "Email",
       recipientGroup: form.recipientGroup,
+      explicitRecipientEmails: emailResult.valid,
+      senderConfigId: form.senderConfigId || senderConfigs[0]?.id,
       subject: form.subject,
       message: form.message,
       trigger: form.trigger,
@@ -185,6 +224,31 @@ export function Notifications() {
               <label className="mb-1 block text-sm font-medium">Subject</label>
               <Input value={form.subject || ""} onChange={event => setForm({ ...form, subject: event.target.value })} placeholder="Message subject" />
             </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium">Sender email</label>
+              <select
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                value={form.senderConfigId || ""}
+                onChange={event => setForm({ ...form, senderConfigId: event.target.value })}
+              >
+                <option value="">{senderConfigs.length ? "Use property default sender" : "No sender configured yet"}</option>
+                {senderConfigs.map(config => (
+                  <option key={config.id} value={config.id}>
+                    {config.fromName} - {config.fromEmail}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-muted-foreground">Configure sender emails in Admin Platform before enabling real outgoing notifications.</p>
+            </div>
+            <div>
+              <label className="mb-1 block text-sm font-medium">Specific recipient emails</label>
+              <Input
+                value={form.explicitRecipientEmailText || ""}
+                onChange={event => setForm({ ...form, explicitRecipientEmailText: event.target.value })}
+                placeholder="Optional: director@company.com, finance@company.com"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">Leave blank when the automation should use the recipient group or client/agency emails in their profile.</p>
+            </div>
             <div className="md:col-span-2">
               <label className="mb-1 block text-sm font-medium">Message body</label>
               <textarea
@@ -203,6 +267,7 @@ export function Notifications() {
               Enabled
             </label>
           </div>
+          {formError && <p className="mt-4 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{formError}</p>}
 
           <div className="mt-5 flex justify-end">
             <Button onClick={saveAutomation} className="gap-2">
@@ -251,10 +316,21 @@ export function Notifications() {
               <div>
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Recipients</p>
                 <p className="font-medium">{notification.recipientGroup}</p>
+                {notification.explicitRecipientEmails?.length ? (
+                  <p className="mt-1 text-xs text-muted-foreground">{notification.explicitRecipientEmails.join(", ")}</p>
+                ) : (
+                  <p className="mt-1 text-xs text-muted-foreground">Uses profile/client emails when available.</p>
+                )}
               </div>
               <div>
                 <p className="text-xs uppercase tracking-wide text-muted-foreground">Channel</p>
                 <p className="font-medium">{notification.channel}</p>
+              </div>
+              <div>
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">Sender</p>
+                <p className="font-medium">
+                  {senderConfigs.find(config => config.id === notification.senderConfigId)?.fromEmail || "No sender configured"}
+                </p>
               </div>
             </div>
 
@@ -270,4 +346,20 @@ export function Notifications() {
       )}
     </div>
   );
+}
+
+function parseEmailList(value: string) {
+  const items = value
+    .split(/[,\n;]/)
+    .map(item => item.trim())
+    .filter(Boolean);
+  const valid: string[] = [];
+  const invalid: string[] = [];
+
+  items.forEach(item => {
+    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(item)) valid.push(item);
+    else invalid.push(item);
+  });
+
+  return { valid, invalid };
 }

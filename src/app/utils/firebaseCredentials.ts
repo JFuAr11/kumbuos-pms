@@ -1,4 +1,4 @@
-import { initializeApp, type FirebaseApp } from "firebase/app";
+import { getApp, getApps, initializeApp, type FirebaseApp } from "firebase/app";
 import { doc, getFirestore, onSnapshot, serverTimestamp, setDoc, type Firestore } from "firebase/firestore";
 import type { SystemUser, PasswordResetRequest } from "../context/AppContext";
 import { redactCredentialForStorage } from "./authSecurity";
@@ -11,6 +11,8 @@ type CredentialPayload = {
 
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
+const CREDENTIAL_STORE_COLLECTION = "kumbuosCredentialStore";
+const DEFAULT_CREDENTIAL_STORE_DOCUMENT = "production-v1-clean";
 
 export function firebaseCredentialsEnabled() {
   return Boolean(getFirebaseConfig().apiKey && getFirebaseConfig().projectId);
@@ -28,7 +30,7 @@ export function subscribeCredentials(
 
   onStatus?.("Connecting to Firebase credential store...");
   return onSnapshot(
-    doc(firestore, "kumbuosCredentialStore", "production"),
+    doc(firestore, CREDENTIAL_STORE_COLLECTION, getCredentialStoreDocumentId()),
     snapshot => {
       const data = snapshot.data() as Partial<CredentialPayload> | undefined;
       if (!data) {
@@ -51,7 +53,7 @@ export async function publishCredentials(users: SystemUser[], passwordResetReque
   const firestore = getCredentialFirestore();
   if (!firestore) return;
 
-  await setDoc(doc(firestore, "kumbuosCredentialStore", "production"), {
+  await setDoc(doc(firestore, CREDENTIAL_STORE_COLLECTION, getCredentialStoreDocumentId()), {
     users: users.map(redactCredentialForStorage),
     passwordResetRequests,
     updatedAt: serverTimestamp(),
@@ -62,9 +64,13 @@ function getCredentialFirestore() {
   if (!firebaseCredentialsEnabled()) return null;
   if (db) return db;
 
-  app = app || initializeApp(getFirebaseConfig());
+  app = app || (getApps().length ? getApp() : initializeApp(getFirebaseConfig()));
   db = getFirestore(app);
   return db;
+}
+
+function getCredentialStoreDocumentId() {
+  return import.meta.env.VITE_FIREBASE_CREDENTIAL_STORE_ID || DEFAULT_CREDENTIAL_STORE_DOCUMENT;
 }
 
 function getFirebaseConfig() {

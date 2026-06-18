@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useLocation } from "react-router";
 import {
@@ -6,8 +6,10 @@ import {
   Building2,
   Edit,
   KeyRound,
+  Mail,
   Plus,
   Save,
+  Server,
   ShieldCheck,
   Trash2,
   UserCog,
@@ -19,6 +21,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import {
   Company,
+  NotificationEmailConfig,
   PermissionAccess,
   PermissionRule,
   Property,
@@ -30,7 +33,7 @@ import { validatePasswordPolicy } from "../utils/authSecurity";
 
 const modules = [
   { module: "Reservations", sections: ["Calendar", "Bookings", "Booking Payments", "Configuration", "Policies", "OTA Sync", "Notifications"] },
-  { module: "Accountancy", sections: ["Overview", "Revenues", "Expenses", "Profit & Loss (P&L)", "Balance", "GenAI Assistant", "Notifications"] },
+  { module: "Accountancy", sections: ["Overview", "Profit & Loss (P&L)", "Revenues", "Expenses", "Balance", "Assets", "Liabilities", "GenAI Assistant", "Notifications"] },
   { module: "Supply Requests", sections: ["Beverage", "Client Food", "Staff Food", "Shishas", "Housekeeping", "Mechanical", "Fuel & Petrol", "Notifications"] },
   { module: "Check-in", sections: ["Check-in Form", "Database", "Dashboard", "Notifications"] },
   { module: "Admin Platform", sections: ["Companies", "Manage Users", "Assign Permissions", "Notifications"] },
@@ -46,6 +49,47 @@ const createEmptyPermissions = (): PermissionRule[] =>
 const accessOptions: PermissionAccess[] = ["none", "view", "edit"];
 const departments = ["Reservations", "Accountancy", "Supplies", "Check-in", "Admin"];
 const roleTitleOptions = ["Tenant Admin", "General Director", "Reservations Agent", "Accountancy Manager", "Supplies Manager", "Check-in Manager", "Property Manager", "Read-only Viewer"];
+const senderProviderDefaults: Record<NotificationEmailConfig["provider"], { host: string; port: number; secure: boolean; guide: string }> = {
+  Zoho: {
+    host: "smtp.zoho.eu",
+    port: 465,
+    secure: true,
+    guide: "Zoho Mail: create an app password in Zoho Accounts, use the full mailbox as username, host smtp.zoho.eu, port 465, SSL enabled.",
+  },
+  Gmail: {
+    host: "smtp.gmail.com",
+    port: 465,
+    secure: true,
+    guide: "Gmail / Google Workspace: enable 2-step verification, create an App Password, use smtp.gmail.com, port 465, SSL enabled.",
+  },
+  "Microsoft 365": {
+    host: "smtp.office365.com",
+    port: 587,
+    secure: false,
+    guide: "Microsoft 365 / Outlook: enable authenticated SMTP for the mailbox, use smtp.office365.com, port 587, STARTTLS enabled.",
+  },
+  "Custom SMTP": {
+    host: "",
+    port: 465,
+    secure: true,
+    guide: "Custom SMTP: ask the provider for SMTP host, port, username, password/app password, and whether SSL or STARTTLS is required.",
+  },
+};
+
+const blankSenderConfig = (companyId = "", propertyId = ""): Partial<NotificationEmailConfig> => ({
+  companyId,
+  propertyId,
+  provider: "Zoho",
+  fromName: "KumbuOS",
+  fromEmail: "",
+  smtpHost: senderProviderDefaults.Zoho.host,
+  smtpPort: senderProviderDefaults.Zoho.port,
+  smtpUsername: "",
+  smtpPassword: "",
+  secure: senderProviderDefaults.Zoho.secure,
+  status: "Not configured",
+  notes: "",
+});
 
 export function PlatformAdmin() {
   const location = useLocation();
@@ -60,6 +104,10 @@ export function PlatformAdmin() {
     currentUser,
     profileDefinitions,
     canAccessOwnerConsole,
+    notificationEmailConfigs,
+    addNotificationEmailConfig,
+    updateNotificationEmailConfig,
+    deleteNotificationEmailConfig,
   } = useAppContext();
 
   const ownerMode = canAccessOwnerConsole(currentUser);
@@ -77,6 +125,9 @@ export function PlatformAdmin() {
   );
 
   const [selectedPropertyForUsers, setSelectedPropertyForUsers] = useState<string>("");
+  const [senderForm, setSenderForm] = useState<Partial<NotificationEmailConfig>>(blankSenderConfig(activeCompany?.id || "", companyProperties[0]?.id || ""));
+  const [senderError, setSenderError] = useState("");
+  const [senderTestStatus, setSenderTestStatus] = useState("");
 
   const [userSection, setUserSection] = useState<"users" | "permissions" | "profiles">("users");
   const [userForm, setUserForm] = useState<Partial<SystemUser>>({ profile: "Reservations", role: "Reservations Agent", status: "Active", departments: ["Reservations"] });
@@ -92,6 +143,17 @@ export function PlatformAdmin() {
       : [],
     [companyUsers, selectedPropertyForUsers]
   );
+  const companySenderConfigs = notificationEmailConfigs.filter(config => config.companyId === activeCompany?.id);
+  const activeSenderPropertyId = senderForm.propertyId || companyProperties[0]?.id || "";
+  const activeSenderConfig = notificationEmailConfigs.find(config => config.propertyId === activeSenderPropertyId);
+
+  useEffect(() => {
+    if (!activeCompany) return;
+    const propertyId = companyProperties[0]?.id || "";
+    const existing = notificationEmailConfigs.find(config => config.propertyId === propertyId);
+    setSenderForm(existing || blankSenderConfig(activeCompany.id, propertyId));
+    setSenderError("");
+  }, [activeCompany?.id]);
 
   const setProfile = (profile: UserProfile) => {
     if (profile === "Owner") return;
@@ -197,6 +259,112 @@ export function PlatformAdmin() {
       if (!exists) return [...current, { module, section, access }];
       return current.map(rule => rule.module === module && rule.section === section ? { ...rule, access } : rule);
     });
+  };
+
+  const loadSenderConfigForProperty = (propertyId: string) => {
+    const existing = notificationEmailConfigs.find(config => config.propertyId === propertyId);
+    setSenderForm(existing || blankSenderConfig(activeCompany?.id || "", propertyId));
+    setSenderError("");
+    setSenderTestStatus("");
+  };
+
+  const setSenderProvider = (provider: NotificationEmailConfig["provider"]) => {
+    const defaults = senderProviderDefaults[provider];
+    setSenderForm(current => ({
+      ...current,
+      provider,
+      smtpHost: defaults.host,
+      smtpPort: defaults.port,
+      secure: defaults.secure,
+    }));
+  };
+
+  const saveSenderConfig = () => {
+    setSenderError("");
+    setSenderTestStatus("");
+    if (!activeCompany || !senderForm.propertyId) {
+      setSenderError("Select a property before saving a notification sender.");
+      return;
+    }
+    if (!senderForm.fromName || !senderForm.fromEmail || !senderForm.smtpHost || !senderForm.smtpPort || !senderForm.smtpUsername) {
+      setSenderError("Complete sender name, sender email, SMTP host, port, and username before saving.");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(senderForm.fromEmail)) {
+      setSenderError("Use a valid sender email address.");
+      return;
+    }
+    if (senderForm.smtpUsername && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(senderForm.smtpUsername)) {
+      setSenderError("Use the full mailbox email as SMTP username.");
+      return;
+    }
+
+    const existing = notificationEmailConfigs.find(config => config.propertyId === senderForm.propertyId);
+    const payload: NotificationEmailConfig = {
+      id: existing?.id || `mail-${senderForm.propertyId}-${Date.now()}`,
+      companyId: activeCompany.id,
+      propertyId: senderForm.propertyId,
+      provider: senderForm.provider || "Zoho",
+      fromName: senderForm.fromName,
+      fromEmail: senderForm.fromEmail,
+      smtpHost: senderForm.smtpHost,
+      smtpPort: Number(senderForm.smtpPort),
+      smtpUsername: senderForm.smtpUsername,
+      smtpPassword: senderForm.smtpPassword || existing?.smtpPassword || "",
+      secure: Boolean(senderForm.secure),
+      status: "Configured",
+      notes: senderForm.notes || "",
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (existing) updateNotificationEmailConfig(existing.id, payload);
+    else addNotificationEmailConfig(payload);
+    setSenderForm(payload);
+    setSenderTestStatus("Sender configuration saved in Firebase.");
+  };
+
+  const removeSenderConfig = () => {
+    if (!activeSenderConfig) return;
+    if (confirm("Delete this notification sender configuration?")) {
+      deleteNotificationEmailConfig(activeSenderConfig.id);
+      setSenderForm(blankSenderConfig(activeCompany?.id || "", activeSenderPropertyId));
+      setSenderTestStatus("");
+    }
+  };
+
+  const sendSenderTest = async () => {
+    setSenderError("");
+    setSenderTestStatus("");
+    const config = activeSenderConfig || (senderForm.id ? senderForm as NotificationEmailConfig : null);
+    if (!config?.smtpPassword) {
+      setSenderError("Save a complete sender configuration with SMTP password before sending a test email.");
+      return;
+    }
+    if (!currentUser?.email) {
+      setSenderError("No current user email is available for the test.");
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/send-notification-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          senderConfig: config,
+          to: currentUser.email,
+          subject: "KumbuOS notification sender test",
+          message: `This is a test notification email sent from ${config.fromEmail}.`,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok || !payload?.ok) {
+        setSenderError(payload?.error || "The test email could not be sent.");
+        return;
+      }
+      setSenderTestStatus(`Test email sent to ${currentUser.email}.`);
+    } catch {
+      setSenderError("The test email could not be sent. Check SMTP data and Vercel network access.");
+    }
   };
 
   if (!activeCompany) {
@@ -323,6 +491,20 @@ export function PlatformAdmin() {
                 </div>
               )}
             </Panel>
+            <NotificationSenderPanel
+              properties={companyProperties}
+              configs={companySenderConfigs}
+              form={senderForm}
+              error={senderError}
+              testStatus={senderTestStatus}
+              activeConfig={activeSenderConfig}
+              onSelectProperty={loadSenderConfigForProperty}
+              onSetProvider={setSenderProvider}
+              onChange={updates => setSenderForm(current => ({ ...current, ...updates }))}
+              onSave={saveSenderConfig}
+              onDelete={removeSenderConfig}
+              onSendTest={sendSenderTest}
+            />
           </section>
         ) : (
           <section className="space-y-5">
@@ -339,7 +521,6 @@ export function PlatformAdmin() {
                 <UserFields
                   form={userForm}
                   onChange={setUserForm}
-                  ownerMode={false}
                   setProfile={setProfile}
                   profileDefinitions={profileDefinitions}
                   toggleDepartment={toggleDepartment}
@@ -530,17 +711,140 @@ function PropertyFields({ form, onChange }: { form: Partial<Property>; onChange:
   );
 }
 
+function NotificationSenderPanel({
+  properties,
+  configs,
+  form,
+  error,
+  testStatus,
+  activeConfig,
+  onSelectProperty,
+  onSetProvider,
+  onChange,
+  onSave,
+  onDelete,
+  onSendTest,
+}: {
+  properties: Property[];
+  configs: NotificationEmailConfig[];
+  form: Partial<NotificationEmailConfig>;
+  error: string;
+  testStatus: string;
+  activeConfig?: NotificationEmailConfig;
+  onSelectProperty: (propertyId: string) => void;
+  onSetProvider: (provider: NotificationEmailConfig["provider"]) => void;
+  onChange: (updates: Partial<NotificationEmailConfig>) => void;
+  onSave: () => void;
+  onDelete: () => void;
+  onSendTest: () => void;
+}) {
+  const provider = form.provider || "Zoho";
+  const providerGuide = senderProviderDefaults[provider];
+
+  return (
+    <Panel title="Notification Sender Email" icon={Mail}>
+      <div className="mb-4 rounded-md border border-[#c98736]/30 bg-[#c98736]/10 p-4 text-sm text-foreground">
+        Every notification automation for this property must use a configured sender email. Use app passwords or SMTP-specific credentials from the email provider.
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <div>
+          <label className="mb-1 block text-sm font-medium">Property</label>
+          <select
+            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+            value={form.propertyId || ""}
+            onChange={event => onSelectProperty(event.target.value)}
+            disabled={!properties.length}
+          >
+            {!properties.length && <option value="">No property available</option>}
+            {properties.map(property => <option key={property.id} value={property.id}>{property.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="mb-1 block text-sm font-medium">Email Provider</label>
+          <select
+            className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+            value={provider}
+            onChange={event => onSetProvider(event.target.value as NotificationEmailConfig["provider"])}
+          >
+            {Object.keys(senderProviderDefaults).map(option => <option key={option}>{option}</option>)}
+          </select>
+        </div>
+        <TextField label="Sender Name" value={form.fromName} onChange={value => onChange({ fromName: value })} placeholder="KumbuOS Reservations" />
+        <TextField label="Sender Email" value={form.fromEmail} onChange={value => onChange({ fromEmail: value, smtpUsername: form.smtpUsername || value })} placeholder="info@company.com" />
+        <TextField label="SMTP Username" value={form.smtpUsername} onChange={value => onChange({ smtpUsername: value })} placeholder="info@company.com" />
+        <TextField label="SMTP Password / App Password" value={form.smtpPassword} onChange={value => onChange({ smtpPassword: value })} placeholder="Provider app password" type="password" />
+        <TextField label="SMTP Host" value={form.smtpHost} onChange={value => onChange({ smtpHost: value })} placeholder="smtp.zoho.eu" />
+        <TextField label="SMTP Port" value={form.smtpPort?.toString()} onChange={value => onChange({ smtpPort: Number(value) })} placeholder="465" />
+        <label className="flex items-center gap-2 self-end rounded-md border border-border p-3 text-sm">
+          <input type="checkbox" checked={Boolean(form.secure)} onChange={event => onChange({ secure: event.target.checked })} />
+          SSL / secure SMTP
+        </label>
+        <div className="md:col-span-2 lg:col-span-3">
+          <label className="mb-1 block text-sm font-medium">Internal Notes</label>
+          <textarea
+            className="min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+            value={form.notes || ""}
+            onChange={event => onChange({ notes: event.target.value })}
+            placeholder="Implementation notes, provider requirements, or renewal details."
+          />
+        </div>
+      </div>
+
+      {error && <FormError message={error} />}
+      {testStatus && <p className="mt-4 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">{testStatus}</p>}
+
+      <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_320px]">
+        <div className="rounded-md border border-border bg-muted/30 p-4 text-sm">
+          <div className="mb-2 flex items-center gap-2 font-semibold">
+            <Server className="h-4 w-4 text-primary" />
+            Provider setup guide
+          </div>
+          <p className="leading-6 text-muted-foreground">{providerGuide.guide}</p>
+          <ul className="mt-3 list-disc space-y-1 pl-5 text-muted-foreground">
+            <li>Use an app password, not the normal mailbox password.</li>
+            <li>Confirm SMTP sending is enabled for the mailbox.</li>
+            <li>Keep sender email aligned with the property or company domain.</li>
+          </ul>
+        </div>
+
+        <div className="rounded-md border border-border p-4 text-sm">
+          <p className="mb-2 font-semibold">Configured senders</p>
+          <div className="space-y-2">
+            {configs.map(config => (
+              <button
+                key={config.id}
+                type="button"
+                className={`w-full rounded-md border p-3 text-left ${config.id === activeConfig?.id ? "border-primary bg-primary/10" : "border-border hover:bg-muted/50"}`}
+                onClick={() => onSelectProperty(config.propertyId)}
+              >
+                <p className="font-medium">{config.fromEmail}</p>
+                <p className="text-xs text-muted-foreground">{config.provider} - {config.status}</p>
+              </button>
+            ))}
+            {!configs.length && <p className="text-muted-foreground">No sender configured yet.</p>}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-5 flex flex-wrap justify-end gap-2">
+        {activeConfig && <Button variant="outline" className="gap-2 text-destructive" onClick={onDelete}><Trash2 size={16} /> Delete Sender</Button>}
+        {activeConfig && <Button variant="outline" className="gap-2" onClick={onSendTest}><Mail size={16} /> Send Test</Button>}
+        <Button className="gap-2" onClick={onSave}><Save size={16} /> Save Sender</Button>
+      </div>
+    </Panel>
+  );
+}
+
 function UserFields({
   form,
   onChange,
-  ownerMode,
   setProfile,
   profileDefinitions,
   toggleDepartment,
 }: {
   form: Partial<SystemUser>;
   onChange: (form: Partial<SystemUser>) => void;
-  ownerMode: boolean;
   setProfile: (profile: UserProfile) => void;
   profileDefinitions: { name: UserProfile; description: string; ownerOnly?: boolean }[];
   toggleDepartment: (department: string) => void;
@@ -558,7 +862,7 @@ function UserFields({
         <div>
           <label className="mb-1 block text-sm font-medium">Profile</label>
           <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={form.profile || "Reservations"} onChange={event => setProfile(event.target.value as UserProfile)}>
-            {profileDefinitions.filter(profile => ownerMode || !profile.ownerOnly).map(profile => <option key={profile.name}>{profile.name}</option>)}
+            {profileDefinitions.filter(profile => !profile.ownerOnly).map(profile => <option key={profile.name}>{profile.name}</option>)}
           </select>
         </div>
         <div>
@@ -574,12 +878,6 @@ function UserFields({
             <option>Suspended</option>
           </select>
         </div>
-        {ownerMode && (
-          <label className="flex items-center gap-2 self-end rounded-md border border-border p-3 text-sm">
-            <input type="checkbox" checked={Boolean(form.ownerConsoleAccess)} onChange={event => onChange({ ...form, ownerConsoleAccess: event.target.checked })} />
-            Owner Console Access
-          </label>
-        )}
       </div>
       <div>
         <p className="mb-2 text-sm font-medium">Departments</p>
