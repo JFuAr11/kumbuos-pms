@@ -36,11 +36,11 @@ export function Root() {
 
         <div className="p-4 border-b border-border flex items-center gap-3">
           <div className="w-10 h-10 rounded-md bg-secondary flex items-center justify-center text-secondary-foreground font-bold">
-            MC
+            OS
           </div>
           <div>
-            <p className="text-sm font-medium">Main Camp</p>
-            <p className="text-xs text-muted-foreground">Kumbukumbu Ltd.</p>
+            <p className="text-sm font-medium">No property selected</p>
+            <p className="text-xs text-muted-foreground">KumbuOS</p>
           </div>
         </div>
 
@@ -82,7 +82,7 @@ export function Root() {
             <div className="relative w-full">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search reservation, guest, or unit..."
+                placeholder="Search..."
                 className="pl-9 w-full bg-muted/50 border-transparent focus:bg-background"
               />
             </div>
@@ -98,11 +98,11 @@ export function Root() {
             <div className="h-8 w-px bg-border mx-2" />
             <div className="flex items-center gap-3">
               <div className="text-right hidden sm:block">
-                <p className="text-sm font-medium">J. Doe</p>
-                <p className="text-xs text-muted-foreground">Manager</p>
+                <p className="text-sm font-medium">User</p>
+                <p className="text-xs text-muted-foreground">Team Member</p>
               </div>
               <Avatar>
-                <AvatarFallback>JD</AvatarFallback>
+                <AvatarFallback>US</AvatarFallback>
               </Avatar>
             </div>
           </div>

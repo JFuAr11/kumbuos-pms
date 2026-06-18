@@ -557,7 +557,31 @@ const getRootOwnerUser = (existing?: Partial<SystemUser>): SystemUser => {
   };
 };
 
-const STORAGE_NAMESPACE = 'kumbuos-clean-v1';
+const STORAGE_NAMESPACE = 'kumbuos-root-baseline-v3';
+let legacyStorageCleanupDone = false;
+
+function clearLegacyKumbuOSStorage() {
+  if (legacyStorageCleanupDone || typeof window === 'undefined') return;
+
+  legacyStorageCleanupDone = true;
+  const legacyPrefixes = [
+    'kumbuos-clean-v1:',
+    'kumbuos-empty-v1:',
+    'kumbuos-root-baseline-v1:',
+    'kumbuos-root-baseline-v2:',
+    'pms-',
+  ];
+
+  try {
+    const keysToRemove = Array.from({ length: window.localStorage.length }, (_, index) => window.localStorage.key(index))
+      .filter((key): key is string => Boolean(key))
+      .filter(key => legacyPrefixes.some(prefix => key.startsWith(prefix)));
+
+    keysToRemove.forEach(key => window.localStorage.removeItem(key));
+  } catch {
+    // Local storage can be unavailable in private or restricted browser contexts.
+  }
+}
 
 function usePersistentState<T>(key: string, initialValue: T) {
   const storageKey = `${STORAGE_NAMESPACE}:${key}`;
@@ -583,6 +607,8 @@ function usePersistentState<T>(key: string, initialValue: T) {
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  clearLegacyKumbuOSStorage();
+
   const [currentUserId, setCurrentUserId] = usePersistentState<string | null>('pms-current-user-id', null);
   const [companies, setCompanies] = usePersistentState<Company[]>('pms-companies', initialCompanies);
   const [properties, setProperties] = usePersistentState<Property[]>('pms-properties', initialProperties);
@@ -700,7 +726,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     return subscribeCredentials(payload => {
       setCredentialSyncReady(true);
-      if (!payload.users.length) return;
 
       const existingRoot = payload.users.find(user => user.id === ROOT_OWNER_ID || user.email.toLowerCase() === ROOT_OWNER_EMAIL);
       const rootOwner = getRootOwnerUser(existingRoot);
@@ -708,15 +733,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
         rootOwner,
         ...payload.users.filter(user => user.id !== ROOT_OWNER_ID && user.email.toLowerCase() !== ROOT_OWNER_EMAIL),
       ];
+      const resetRequests = payload.users.length ? payload.passwordResetRequests || [] : [];
       const snapshot = JSON.stringify({
         users: remoteUsers,
-        passwordResetRequests: payload.passwordResetRequests || [],
+        passwordResetRequests: resetRequests,
       });
 
       applyingRemoteCredentials.current = true;
-      latestCredentialSnapshot.current = snapshot;
+      latestCredentialSnapshot.current = payload.users.length ? snapshot : '';
       setSystemUsers(remoteUsers);
-      setPasswordResetRequests(payload.passwordResetRequests || []);
+      setPasswordResetRequests(resetRequests);
       window.setTimeout(() => {
         applyingRemoteCredentials.current = false;
       }, 0);

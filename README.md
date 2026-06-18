@@ -30,8 +30,8 @@
   - `VITE_FIREBASE_STORAGE_BUCKET`: Firebase storage bucket.
   - `VITE_FIREBASE_MESSAGING_SENDER_ID`: Firebase messaging sender ID.
   - `VITE_FIREBASE_APP_ID`: Firebase web app ID.
-  - `VITE_FIREBASE_CREDENTIAL_STORE_ID`: optional Firestore document ID for credentials. Default: `production-v1-clean`.
-  - `VITE_FIREBASE_PMS_STORE_ID`: optional Firestore document ID for PMS operating data. Default: `test-v1-clean`.
+  - `VITE_FIREBASE_CREDENTIAL_STORE_ID`: optional Firestore document ID for credentials. Default: `production-v3-root-baseline`.
+  - `VITE_FIREBASE_PMS_STORE_ID`: optional Firestore document ID for PMS operating data. Default: `test-v3-empty`.
   - `ZOHO_SMTP_USER`: Zoho sender email. Default: `info@luxurytentedcamp.com`.
   - `ZOHO_SMTP_PASSWORD`: Zoho app password for password reset emails.
   - `ZOHO_SMTP_HOST`: optional SMTP host. Default: `smtp.zoho.eu`.

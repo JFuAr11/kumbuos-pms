@@ -1,9 +1,10 @@
 import { getApp, getApps, initializeApp, type FirebaseApp } from "firebase/app";
 import { doc, getFirestore, onSnapshot, serverTimestamp, setDoc, type Firestore } from "firebase/firestore";
 import type { SystemUser, PasswordResetRequest } from "../context/AppContext";
-import { redactCredentialForStorage } from "./authSecurity";
+import { migrateLegacyUserPassword, redactCredentialForStorage } from "./authSecurity";
 
 type CredentialPayload = {
+  schemaVersion?: string;
   users: SystemUser[];
   passwordResetRequests: PasswordResetRequest[];
   updatedAt?: unknown;
@@ -11,8 +12,9 @@ type CredentialPayload = {
 
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
+export const CREDENTIAL_SCHEMA_VERSION = "kumbuos-credentials-root-baseline-v3";
 const CREDENTIAL_STORE_COLLECTION = "kumbuosCredentialStore";
-const DEFAULT_CREDENTIAL_STORE_DOCUMENT = "production-v1-clean";
+const DEFAULT_CREDENTIAL_STORE_DOCUMENT = "production-v3-root-baseline";
 
 export function firebaseCredentialsEnabled() {
   return Boolean(getFirebaseConfig().apiKey && getFirebaseConfig().projectId);
@@ -37,7 +39,19 @@ export function subscribeCredentials(
         onStatus?.("Firebase credential store is ready, but no remote credential data exists yet.");
         return;
       }
+
+      if (data.schemaVersion !== CREDENTIAL_SCHEMA_VERSION) {
+        onStatus?.("Firebase credential store contains legacy users. It will be replaced with the clean root-owner baseline.");
+        onPayload({
+          schemaVersion: CREDENTIAL_SCHEMA_VERSION,
+          users: [],
+          passwordResetRequests: [],
+        });
+        return;
+      }
+
       onPayload({
+        schemaVersion: CREDENTIAL_SCHEMA_VERSION,
         users: data.users || [],
         passwordResetRequests: data.passwordResetRequests || [],
       });
@@ -53,11 +67,14 @@ export async function publishCredentials(users: SystemUser[], passwordResetReque
   const firestore = getCredentialFirestore();
   if (!firestore) return;
 
+  const secureUsers = await Promise.all(users.map(migrateLegacyUserPassword));
+
   await setDoc(doc(firestore, CREDENTIAL_STORE_COLLECTION, getCredentialStoreDocumentId()), {
-    users: users.map(redactCredentialForStorage),
+    schemaVersion: CREDENTIAL_SCHEMA_VERSION,
+    users: secureUsers.map(redactCredentialForStorage),
     passwordResetRequests,
     updatedAt: serverTimestamp(),
-  }, { merge: true });
+  });
 }
 
 function getCredentialFirestore() {

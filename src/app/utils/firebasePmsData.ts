@@ -20,6 +20,7 @@ import type {
 } from "../context/AppContext";
 
 export type PmsDataPayload = {
+  schemaVersion?: string;
   companies: Company[];
   properties: Property[];
   notifications: NotificationAutomation[];
@@ -42,8 +43,9 @@ export type PmsDataPayload = {
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
 
+export const PMS_DATA_SCHEMA_VERSION = "kumbuos-empty-pms-v3";
 const PMS_STORE_COLLECTION = "kumbuosPmsDataStore";
-const DEFAULT_PMS_STORE_DOCUMENT = "test-v1-clean";
+const DEFAULT_PMS_STORE_DOCUMENT = "test-v3-empty";
 
 export function firebasePmsDataEnabled() {
   return Boolean(getFirebaseConfig().apiKey && getFirebaseConfig().projectId);
@@ -69,6 +71,12 @@ export function subscribePmsData(
         return;
       }
 
+      if (data.schemaVersion !== PMS_DATA_SCHEMA_VERSION) {
+        onStatus?.("Firebase PMS data store contains legacy data. It will be replaced with the clean empty KumbuOS baseline.");
+        onPayload(normalizePayload({ schemaVersion: PMS_DATA_SCHEMA_VERSION }));
+        return;
+      }
+
       onPayload(normalizePayload(data));
       onStatus?.("Firebase PMS data store is synced in real time.");
     },
@@ -84,12 +92,14 @@ export async function publishPmsData(payload: PmsDataPayload) {
 
   await setDoc(doc(firestore, PMS_STORE_COLLECTION, getPmsStoreDocumentId()), {
     ...normalizePayload(payload),
+    schemaVersion: PMS_DATA_SCHEMA_VERSION,
     updatedAt: serverTimestamp(),
   });
 }
 
 function normalizePayload(data: Partial<PmsDataPayload>): PmsDataPayload {
   return {
+    schemaVersion: PMS_DATA_SCHEMA_VERSION,
     companies: data.companies || [],
     properties: data.properties || [],
     notifications: data.notifications || [],
