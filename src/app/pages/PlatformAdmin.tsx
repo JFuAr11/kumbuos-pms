@@ -26,6 +26,7 @@ import {
   UserProfile,
   useAppContext,
 } from "../context/AppContext";
+import { validatePasswordPolicy } from "../utils/authSecurity";
 
 const modules = [
   { module: "Reservations", sections: ["Calendar", "Bookings", "Booking Payments", "Configuration", "Policies", "OTA Sync", "Notifications"] },
@@ -136,6 +137,13 @@ export function PlatformAdmin() {
       setFormError("Use a valid international phone number before saving.");
       return;
     }
+    if (!editingUserId || userForm.password) {
+      const passwordPolicy = validatePasswordPolicy(userForm.password || "");
+      if (!passwordPolicy.valid) {
+        setFormError(passwordPolicy.errors.join(" "));
+        return;
+      }
+    }
     if (userForm.profile === "Owner" || userForm.ownerConsoleAccess) {
       setFormError("Owner profiles can only be created, modified, or deleted from Owner Console.");
       return;
@@ -151,7 +159,7 @@ export function PlatformAdmin() {
       profile: userForm.profile || "Reservations",
       departments: userForm.departments || [],
       phone: userForm.phone || "",
-      password: userForm.password || selectedUser?.password || "ChangeMe2026!",
+      password: userForm.password || "",
       status: userForm.status || "Active",
       ownerConsoleAccess: false,
       permissions: permissionDraft,
@@ -543,7 +551,10 @@ function UserFields({
         <TextField label="Full Name" value={form.name} onChange={value => onChange({ ...form, name: value })} placeholder="Full name" />
         <TextField label="Email" value={form.email} onChange={value => onChange({ ...form, email: value })} placeholder="user@company.com" />
         <TextField label="Phone" value={form.phone} onChange={value => onChange({ ...form, phone: value })} placeholder="+255 700 000 000" />
-        <TextField label="Password" value={form.password} onChange={value => onChange({ ...form, password: value })} placeholder="Create or update password" type="password" />
+        <div>
+          <TextField label="Password" value={form.password} onChange={value => onChange({ ...form, password: value })} placeholder="Create or update password" type="password" />
+          <p className="mt-1 text-xs text-muted-foreground">Uppercase, lowercase, number, and special character required.</p>
+        </div>
         <div>
           <label className="mb-1 block text-sm font-medium">Profile</label>
           <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={form.profile || "Reservations"} onChange={event => setProfile(event.target.value as UserProfile)}>

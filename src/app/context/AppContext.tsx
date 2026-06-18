@@ -1,4 +1,10 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
+import {
+  migrateLegacyUserPassword,
+  prepareUserWithPassword,
+  verifyUserPassword,
+} from '../utils/authSecurity';
+import { firebaseCredentialsEnabled, publishCredentials, subscribeCredentials } from '../utils/firebaseCredentials';
 
 export type Company = {
   id: string;
@@ -54,6 +60,11 @@ export type SystemUser = {
   departments?: string[];
   phone?: string;
   password: string;
+  passwordHash?: string;
+  passwordSalt?: string;
+  passwordHistory?: string[];
+  passwordUpdatedAt?: string;
+  mustChangePassword?: boolean;
   status: 'Active' | 'Suspended';
   ownerConsoleAccess?: boolean;
   permissions: PermissionRule[];
@@ -282,12 +293,13 @@ export type AccountancyDisplayCurrency = 'USD' | 'THS';
 
 type AppContextType = {
   currentUser: SystemUser | null;
-  login: (email: string, password: string) => SystemUser | null;
+  login: (email: string, password: string) => Promise<SystemUser | null>;
   logout: () => void;
   profileDefinitions: ProfileDefinition[];
   passwordResetRequests: PasswordResetRequest[];
-  requestPasswordReset: (contact: string, deliveryMethod: 'Email' | 'Phone') => PasswordResetRequest | null;
-  resetPassword: (token: string, newPassword: string) => boolean;
+  credentialSyncStatus: string;
+  requestPasswordReset: (contact: string, deliveryMethod: 'Email' | 'Phone') => Promise<PasswordResetRequest | null>;
+  resetPassword: (token: string, newPassword: string) => Promise<{ ok: boolean; error?: string }>;
   canAccessOwnerConsole: (user?: SystemUser | null) => boolean;
   isRootOwner: (user?: SystemUser | null) => boolean;
   canManageOwnerUsers: (user?: SystemUser | null) => boolean;
@@ -742,7 +754,12 @@ const getRootOwnerUser = (existing?: Partial<SystemUser>): SystemUser => {
     profile: 'Owner',
     departments: ['Owner Console', 'Admin'],
     phone: existing?.phone || '+34 000 000 000',
-    password: existing?.password || ROOT_OWNER_PASSWORD,
+    password: existing?.passwordHash ? '' : existing?.password || ROOT_OWNER_PASSWORD,
+    passwordHash: existing?.passwordHash,
+    passwordSalt: existing?.passwordSalt,
+    passwordHistory: existing?.passwordHistory,
+    passwordUpdatedAt: existing?.passwordUpdatedAt,
+    mustChangePassword: existing?.mustChangePassword,
     status: 'Active',
     ownerConsoleAccess: true,
     permissions: ownerPermissions,
@@ -780,6 +797,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [systemUsers, setSystemUsers] = usePersistentState<SystemUser[]>('pms-system-users', initialSystemUsers);
   const [notifications, setNotifications] = usePersistentState<NotificationAutomation[]>('pms-notifications', initialNotifications);
   const [passwordResetRequests, setPasswordResetRequests] = usePersistentState<PasswordResetRequest[]>('pms-password-reset-requests', []);
+  const [credentialSyncStatus, setCredentialSyncStatus] = useState(
+    firebaseCredentialsEnabled()
+      ? 'Firebase credential sync is starting...'
+      : 'Firebase credential sync is not configured. Using local secure credential store.'
+  );
+  const [credentialSyncReady, setCredentialSyncReady] = useState(!firebaseCredentialsEnabled());
+  const latestCredentialSnapshot = useRef('');
+  const applyingRemoteCredentials = useRef(false);
 
   const [clients, setClients] = usePersistentState<Client[]>('pms-clients', [
     { id: 'c1', name: 'John Doe', email: 'john@example.com', emails: ['john@example.com'], phone: '123456789', nationality: 'USA', category: 'Direct Client', marketingOptIn: true },
@@ -891,6 +916,64 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [setSystemUsers]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    Promise.all(systemUsers.map(migrateLegacyUserPassword)).then(migratedUsers => {
+      if (cancelled) return;
+      if (JSON.stringify(migratedUsers) !== JSON.stringify(systemUsers)) {
+        setSystemUsers(migratedUsers);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [systemUsers, setSystemUsers]);
+
+  useEffect(() => {
+    return subscribeCredentials(payload => {
+      setCredentialSyncReady(true);
+      if (!payload.users.length) return;
+
+      const existingRoot = payload.users.find(user => user.id === ROOT_OWNER_ID || user.email.toLowerCase() === ROOT_OWNER_EMAIL);
+      const rootOwner = getRootOwnerUser(existingRoot);
+      const remoteUsers = [
+        rootOwner,
+        ...payload.users.filter(user => user.id !== ROOT_OWNER_ID && user.email.toLowerCase() !== ROOT_OWNER_EMAIL),
+      ];
+      const snapshot = JSON.stringify({
+        users: remoteUsers,
+        passwordResetRequests: payload.passwordResetRequests || [],
+      });
+
+      applyingRemoteCredentials.current = true;
+      latestCredentialSnapshot.current = snapshot;
+      setSystemUsers(remoteUsers);
+      setPasswordResetRequests(payload.passwordResetRequests || []);
+      window.setTimeout(() => {
+        applyingRemoteCredentials.current = false;
+      }, 0);
+    }, status => {
+      setCredentialSyncStatus(status);
+      if (status.includes('no remote credential data')) setCredentialSyncReady(true);
+      if (status.includes('not configured')) setCredentialSyncReady(true);
+    });
+  }, [setSystemUsers, setPasswordResetRequests]);
+
+  useEffect(() => {
+    if (!credentialSyncReady || applyingRemoteCredentials.current) return;
+    const snapshot = JSON.stringify({ users: systemUsers, passwordResetRequests });
+    if (snapshot === latestCredentialSnapshot.current) return;
+
+    latestCredentialSnapshot.current = snapshot;
+    publishCredentials(systemUsers, passwordResetRequests)
+      .then(() => {
+        if (firebaseCredentialsEnabled()) setCredentialSyncStatus('Firebase credential store is synced in real time.');
+      })
+      .catch(error => setCredentialSyncStatus(`Firebase credential publish failed: ${error.message}`));
+  }, [credentialSyncReady, systemUsers, passwordResetRequests]);
+
+  useEffect(() => {
     setSystemUsers(current => current.map(user => {
       const accountancyAccess = user.permissions.find(permission => permission.module === 'Accountancy' && permission.access !== 'none')?.access;
       if (!accountancyAccess) return user;
@@ -934,9 +1017,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [properties, selectedCompanyId, selectedPropertyId, setSelectedPropertyId, currentUserId]);
 
-  const login = (email: string, password: string) => {
+  const login = async (email: string, password: string) => {
     const existingRoot = systemUsers.find(user => user.id === ROOT_OWNER_ID || user.email.toLowerCase() === ROOT_OWNER_EMAIL);
-    const isRootLogin = email.toLowerCase() === ROOT_OWNER_EMAIL && (password === ROOT_OWNER_PASSWORD || password === existingRoot?.password);
+    const rootPasswordMatches = existingRoot
+      ? await verifyUserPassword(existingRoot, password)
+      : password === ROOT_OWNER_PASSWORD;
+    const rootBootstrapMatches = !existingRoot?.passwordHash && password === ROOT_OWNER_PASSWORD;
+    const isRootLogin = email.toLowerCase() === ROOT_OWNER_EMAIL && (rootBootstrapMatches || rootPasswordMatches);
     if (isRootLogin) {
       const rootOwner = getRootOwnerUser(existingRoot);
       setSystemUsers(current => {
@@ -949,12 +1036,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return rootOwner;
     }
 
-    const user = systemUsers.find(
-      item =>
-        item.email.toLowerCase() === email.toLowerCase() &&
-        item.password === password &&
-        item.status === 'Active'
+    const candidate = systemUsers.find(
+      item => item.email.toLowerCase() === email.toLowerCase() && item.status === 'Active'
     ) || null;
+    const user = candidate && await verifyUserPassword(candidate, password) ? candidate : null;
 
     if (user) {
       setCurrentUserId(user.id);
@@ -971,7 +1056,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const logout = () => setCurrentUserId(null);
 
-  const requestPasswordReset = (contact: string, deliveryMethod: 'Email' | 'Phone') => {
+  const sendPasswordResetEmail = async (user: SystemUser, request: PasswordResetRequest): Promise<PasswordResetRequest['deliveryStatus']> => {
+    try {
+      const response = await fetch('/api/password-reset-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: user.email,
+          userName: user.name,
+          resetUrl: request.resetUrl,
+        }),
+      });
+      const contentType = response.headers.get('content-type') || '';
+      const payload = contentType.includes('application/json') ? await response.json() : null;
+      return response.ok && payload?.ok ? 'Sent' : 'Failed';
+    } catch {
+      return 'Failed';
+    }
+  };
+
+  const requestPasswordReset = async (contact: string, deliveryMethod: 'Email' | 'Phone') => {
     const normalizedContact = contact.trim().toLowerCase();
     const user = systemUsers.find(item =>
       item.email.toLowerCase() === normalizedContact ||
@@ -990,26 +1094,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
       token,
       resetUrl,
       fromEmail: 'info@luxurytentedcamp.com',
-      deliveryStatus: 'Sent',
+      deliveryStatus: 'Queued',
       createdAt: new Date().toISOString(),
       used: false,
     };
 
     setPasswordResetRequests(current => [request, ...current]);
-    return request;
+    const deliveryStatus = await sendPasswordResetEmail(user, request);
+    const updatedRequest = { ...request, deliveryStatus };
+    setPasswordResetRequests(current =>
+      current.map(item => item.id === request.id ? updatedRequest : item)
+    );
+    return updatedRequest;
   };
 
-  const resetPassword = (token: string, newPassword: string) => {
+  const resetPassword = async (token: string, newPassword: string) => {
     const request = passwordResetRequests.find(item => item.token === token && !item.used);
-    if (!request || newPassword.length < 8) return false;
+    if (!request) return { ok: false, error: 'This reset link is invalid or has already been used.' };
+    const user = systemUsers.find(item => item.id === request.userId);
+    if (!user) return { ok: false, error: 'The user linked to this reset request no longer exists.' };
 
-    setSystemUsers(current =>
-      current.map(user => user.id === request.userId ? { ...user, password: newPassword } : user)
-    );
+    const result = await prepareUserWithPassword(user, newPassword);
+    if (!result.ok) return { ok: false, error: result.error };
+
+    setSystemUsers(current => current.map(item => item.id === request.userId ? result.user : item));
     setPasswordResetRequests(current =>
       current.map(item => item.token === token ? { ...item, used: true } : item)
     );
-    return true;
+    return { ok: true };
   };
 
   const addCompany = (company: Company) => setCompanies(current => [...current, company]);
@@ -1047,22 +1159,62 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const addSystemUser = (user: SystemUser) => {
     if ((user.ownerConsoleAccess || user.profile === 'Owner') && !canManageOwnerUsers(currentUser)) return;
-    setSystemUsers(current => [...current, user]);
+    if (systemUsers.some(item => item.email.toLowerCase() === user.email.toLowerCase())) {
+      window.alert('A user with this email already exists.');
+      return;
+    }
+    void prepareUserWithPassword(user, user.password).then(result => {
+      if (!result.ok) {
+        window.alert(result.error);
+        return;
+      }
+      setSystemUsers(current => [...current, result.user]);
+    });
   };
   const updateSystemUser = (id: string, updates: Partial<SystemUser>) =>
-    setSystemUsers(current => current.map(user => {
-      if (user.id !== id) return user;
+    setSystemUsers(current => {
+      const target = current.find(user => user.id === id);
+      if (!target) return current;
 
-      if (isRootOwner(user)) {
-        return getRootOwnerUser({ ...user, ...updates, email: ROOT_OWNER_EMAIL, password: updates.password || user.password });
+      if (updates.email && current.some(user => user.id !== id && user.email.toLowerCase() === updates.email?.toLowerCase())) {
+        window.alert('A user with this email already exists.');
+        return current;
       }
 
-      if ((user.ownerConsoleAccess || user.profile === 'Owner' || updates.ownerConsoleAccess || updates.profile === 'Owner') && !canManageOwnerUsers(currentUser)) {
-        return user;
+      if ((target.ownerConsoleAccess || target.profile === 'Owner' || updates.ownerConsoleAccess || updates.profile === 'Owner') && !canManageOwnerUsers(currentUser)) {
+        return current;
       }
 
-      return { ...user, ...updates };
-    }));
+      const plainPassword = typeof updates.password === 'string' ? updates.password.trim() : '';
+      const sanitizedUpdates = { ...updates };
+      if (!plainPassword) delete sanitizedUpdates.password;
+
+      if (plainPassword) {
+        void prepareUserWithPassword(
+          isRootOwner(target)
+            ? getRootOwnerUser({ ...target, ...sanitizedUpdates, email: ROOT_OWNER_EMAIL })
+            : { ...target, ...sanitizedUpdates, password: plainPassword },
+          plainPassword
+        ).then(result => {
+          if (!result.ok) {
+            window.alert(result.error);
+            return;
+          }
+          setSystemUsers(latest => latest.map(user => user.id === id
+            ? (isRootOwner(user) ? getRootOwnerUser(result.user) : result.user)
+            : user
+          ));
+        });
+        return current;
+      }
+
+      return current.map(user => {
+        if (user.id !== id) return user;
+        return isRootOwner(user)
+          ? getRootOwnerUser({ ...user, ...sanitizedUpdates, email: ROOT_OWNER_EMAIL })
+          : { ...user, ...sanitizedUpdates };
+      });
+    });
   const deleteSystemUser = (id: string) => {
     const target = systemUsers.find(user => user.id === id);
     if (!target || isRootOwner(target)) return;
@@ -1278,7 +1430,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <AppContext.Provider value={{
       currentUser, login, logout,
       profileDefinitions,
-      passwordResetRequests, requestPasswordReset, resetPassword,
+      passwordResetRequests, credentialSyncStatus, requestPasswordReset, resetPassword,
       canAccessOwnerConsole, isRootOwner, canManageOwnerUsers,
       companies, addCompany, updateCompany, deleteCompany,
       properties, selectedCompanyId, setSelectedCompanyId, selectedPropertyId, setSelectedPropertyId, addProperty, updateProperty, deleteProperty,

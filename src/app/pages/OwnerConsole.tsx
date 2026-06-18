@@ -3,6 +3,7 @@ import { Building, Building2, Crown, Edit, KeyRound, Plus, Save, ShieldAlert, Tr
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Company, Property, SystemUser, UserProfile, useAppContext } from "../context/AppContext";
+import { validatePasswordPolicy } from "../utils/authSecurity";
 
 const roleOptions: UserProfile[] = ["Owner", "Admin", "General Director", "Reservations", "Accountancy", "Supplies", "Check-in"];
 const isValidEmail = (value?: string) => Boolean(value && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value));
@@ -42,6 +43,8 @@ export function OwnerConsole() {
     addSystemUser,
     updateSystemUser,
     deleteSystemUser,
+    requestPasswordReset,
+    credentialSyncStatus,
     profileDefinitions,
   } = useAppContext();
 
@@ -65,6 +68,7 @@ export function OwnerConsole() {
     [companies]
   );
   const ownerUsers = systemUsers.filter(user => user.ownerConsoleAccess);
+  const credentialUsers = systemUsers;
   const activeTenant = billableTenants.find(company => company.id === selectedTenantId) || billableTenants[0];
   const tenantProperties = activeTenant ? properties.filter(property => property.companyId === activeTenant.id) : [];
 
@@ -106,6 +110,10 @@ export function OwnerConsole() {
     if (!hasValue(adminForm.name)) errors.push("First Tenant Admin Full Name is required.");
     if (!hasValue(adminForm.email)) errors.push("First Tenant Admin Email is required.");
     if (!hasValue(adminForm.password)) errors.push("First Tenant Admin Password is required.");
+    if (hasValue(adminForm.password)) {
+      const passwordPolicy = validatePasswordPolicy(adminForm.password || "");
+      if (!passwordPolicy.valid) errors.push(...passwordPolicy.errors.map(error => `First Tenant Admin ${error}`));
+    }
     if (hasValue(companyForm.website) && !isValidUrl(companyForm.website)) errors.push("Website must be a valid domain, for example www.luxurytentedcamp.com or https://www.luxurytentedcamp.com.");
     if (hasValue(companyForm.invoiceEmail) && !isValidEmail(companyForm.invoiceEmail)) errors.push("Invoice Email must be a valid email, for example billing@company.com.");
     if (hasValue(adminForm.email) && !isValidEmail(adminForm.email)) errors.push("First Tenant Admin Email must be a valid email, for example admin@company.com.");
@@ -273,6 +281,10 @@ export function OwnerConsole() {
     if (!hasValue(ownerUserForm.name)) errors.push("Owner Full Name is required.");
     if (!hasValue(ownerUserForm.email)) errors.push("Owner Email is required.");
     if (!hasValue(ownerUserForm.password)) errors.push("Owner Password is required.");
+    if (hasValue(ownerUserForm.password)) {
+      const passwordPolicy = validatePasswordPolicy(ownerUserForm.password || "");
+      if (!passwordPolicy.valid) errors.push(...passwordPolicy.errors.map(error => `Owner ${error}`));
+    }
     if (hasValue(ownerUserForm.email) && !isValidEmail(ownerUserForm.email)) errors.push("Owner Email must be a valid email, for example owner@company.com.");
     if (!isValidPhone(ownerUserForm.phone)) errors.push("Owner Phone must be a valid international phone number, for example +34618829981.");
     if (errors.length) {
@@ -333,6 +345,84 @@ export function OwnerConsole() {
           Only this Owner Console can create or modify billable tenant companies and properties. Tenant admins can manage users and permissions only inside owner-provisioned properties, so they can self-manage operations without reselling KumbuOS to unrelated companies.
         </p>
       </div>
+
+      <section className="rounded-lg border border-border bg-card shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border p-4">
+          <div>
+            <h2 className="flex items-center gap-2 font-semibold"><KeyRound className="h-5 w-5 text-primary" /> Credential Security Registry</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              All accounts are synced to the internal credential store. Passwords are stored as secure hashes with the last five password hashes retained for reuse prevention.
+            </p>
+          </div>
+          <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">{credentialSyncStatus}</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+              <tr>
+                <th className="px-5 py-3 font-medium">Account</th>
+                <th className="px-5 py-3 font-medium">Profile</th>
+                <th className="px-5 py-3 font-medium">Company / Properties</th>
+                <th className="px-5 py-3 font-medium">Credential Status</th>
+                <th className="px-5 py-3 font-medium text-right">Controls</th>
+              </tr>
+            </thead>
+            <tbody>
+              {credentialUsers.map(user => {
+                const company = companies.find(item => item.id === user.companyId);
+                const canControlCredential = canManageOwners || (!user.ownerConsoleAccess && user.profile !== "Owner");
+                return (
+                  <tr key={user.id} className="border-t border-border">
+                    <td className="px-5 py-4">
+                      <p className="font-medium">{user.name}</p>
+                      <p className="text-xs text-muted-foreground">{user.email}</p>
+                    </td>
+                    <td className="px-5 py-4">
+                      <p>{user.profile || user.role}</p>
+                      <p className="text-xs text-muted-foreground">{user.status}</p>
+                    </td>
+                    <td className="px-5 py-4">
+                      <p>{company?.name || (user.ownerConsoleAccess ? "Owner Console" : "Unassigned")}</p>
+                      <p className="text-xs text-muted-foreground">{user.propertyIds.length} assigned properties</p>
+                    </td>
+                    <td className="px-5 py-4">
+                      <p>{user.passwordHash ? "Secure hash stored" : "Legacy password pending migration"}</p>
+                      <p className="text-xs text-muted-foreground">
+                        Updated {user.passwordUpdatedAt ? new Date(user.passwordUpdatedAt).toLocaleDateString() : "pending"} - History {user.passwordHistory?.length || 0}/5
+                      </p>
+                    </td>
+                    <td className="px-5 py-4">
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={!canControlCredential}
+                          onClick={async () => {
+                            const request = await requestPasswordReset(user.email, "Email");
+                            window.alert(request?.deliveryStatus === "Sent"
+                              ? "Reset email sent from info@luxurytentedcamp.com."
+                              : "Reset request created, but Zoho SMTP could not send the email.");
+                          }}
+                        >
+                          Send Reset
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={!canControlCredential || user.id === currentUser?.id}
+                          onClick={() => updateSystemUser(user.id, { status: user.status === "Active" ? "Suspended" : "Active" })}
+                        >
+                          {user.status === "Active" ? "Suspend" : "Activate"}
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
 
       {showTenantForm && (
         <section className="rounded-lg border border-border bg-card p-5 shadow-sm">
@@ -583,6 +673,7 @@ function UserFields({ form, onChange }: { form: Partial<SystemUser>; onChange: (
       <TextField label="Email" required value={form.email} onChange={value => onChange({ ...form, email: value })} placeholder="user@company.com" />
       <TextField label="Phone" value={form.phone} onChange={value => onChange({ ...form, phone: value })} placeholder="+255 700 000 000" />
       <TextField label="Password" required value={form.password} onChange={value => onChange({ ...form, password: value })} placeholder="Create password" type="password" />
+      <p className="text-xs text-muted-foreground md:col-span-2">Password must include uppercase, lowercase, number, and special character.</p>
       <div>
         <label className="mb-1 block text-sm font-medium">Role *</label>
         <select

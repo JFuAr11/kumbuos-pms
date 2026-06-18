@@ -47,8 +47,8 @@ export function Login() {
     resetFeedback();
     setIsLoading(true);
 
-    setTimeout(() => {
-      const user = login(email, password);
+    window.setTimeout(async () => {
+      const user = await login(email, password);
       if (user) {
         navigate("/app");
       } else {
@@ -58,20 +58,26 @@ export function Login() {
     }, 400);
   };
 
-  const handleForgotPassword = (event: React.FormEvent) => {
+  const handleForgotPassword = async (event: React.FormEvent) => {
     event.preventDefault();
     resetFeedback();
+    setIsLoading(true);
 
-    const request = requestPasswordReset(resetContact, deliveryMethod);
+    const request = await requestPasswordReset(resetContact, deliveryMethod);
+    setIsLoading(false);
     if (!request) {
       setError("No active user was found for that email or phone number.");
       return;
     }
 
-    setNotice(`Password reset instructions were sent from info@luxurytentedcamp.com by ${deliveryMethod.toLowerCase()}.`);
+    if (request.deliveryStatus === "Sent") {
+      setNotice("Password reset instructions were sent from info@luxurytentedcamp.com.");
+    } else {
+      setError("The reset request was created, but the email could not be sent. Check Zoho SMTP environment variables and try again.");
+    }
   };
 
-  const handleResetPassword = (event: React.FormEvent) => {
+  const handleResetPassword = async (event: React.FormEvent) => {
     event.preventDefault();
     resetFeedback();
 
@@ -79,18 +85,16 @@ export function Login() {
       setError("This reset link is invalid or has already been used.");
       return;
     }
-    if (newPassword.length < 8) {
-      setError("The new password must be at least 8 characters long.");
-      return;
-    }
     if (newPassword !== confirmPassword) {
       setError("The passwords do not match.");
       return;
     }
 
-    const changed = resetPassword(resetToken, newPassword);
-    if (!changed) {
-      setError("The password could not be changed. Generate a new reset link.");
+    setIsLoading(true);
+    const changed = await resetPassword(resetToken, newPassword);
+    setIsLoading(false);
+    if (!changed.ok) {
+      setError(changed.error || "The password could not be changed. Generate a new reset link.");
       return;
     }
 
@@ -246,7 +250,7 @@ export function Login() {
                   Back
                 </Button>
                 <Button type="submit" className="flex-1 bg-[#c98736] text-white hover:bg-[#b67628]">
-                  Generate Link
+                  {isLoading ? "Sending..." : "Send Reset Link"}
                 </Button>
               </div>
             </form>
@@ -262,7 +266,7 @@ export function Login() {
                   type="password"
                   value={newPassword}
                   onChange={event => setNewPassword(event.target.value)}
-                  placeholder="Minimum 8 characters"
+                  placeholder="Uppercase, lowercase, number, and special character"
                   className="h-11 border-[#f4c27d]/25 bg-[#2d2924] text-white placeholder:text-[#b8aa96]"
                   required
                 />
@@ -285,7 +289,7 @@ export function Login() {
                   Cancel
                 </Button>
                 <Button type="submit" className="flex-1 bg-[#c98736] text-white hover:bg-[#b67628]">
-                  Change Password
+                  {isLoading ? "Changing..." : "Change Password"}
                 </Button>
               </div>
             </form>
