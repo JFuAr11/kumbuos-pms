@@ -1,5 +1,3 @@
-import { getApp, getApps, initializeApp, type FirebaseApp } from "firebase/app";
-import { doc, getFirestore, onSnapshot, serverTimestamp, setDoc, type Firestore } from "firebase/firestore";
 import type {
   AccountancyEntry,
   BookingPayment,
@@ -40,61 +38,106 @@ export type PmsDataPayload = {
   updatedAt?: unknown;
 };
 
-let app: FirebaseApp | null = null;
-let db: Firestore | null = null;
+type StoreResponse = {
+  ok?: boolean;
+  exists?: boolean;
+  data?: Partial<PmsDataPayload> | null;
+  error?: string;
+  detail?: string;
+};
 
 export const PMS_DATA_SCHEMA_VERSION = "kumbuos-empty-pms-v3";
-const PMS_STORE_COLLECTION = "kumbuosPmsDataStore";
-const DEFAULT_PMS_STORE_DOCUMENT = "test-v3-empty";
+const POLL_INTERVAL_MS = 4000;
 
 export function firebasePmsDataEnabled() {
-  return Boolean(getFirebaseConfig().apiKey && getFirebaseConfig().projectId);
+  return Boolean(
+    import.meta.env.VITE_FIREBASE_PROJECT_ID ||
+    import.meta.env.VITE_FIREBASE_PMS_STORE_ID
+  );
 }
 
 export function subscribePmsData(
   onPayload: (payload: PmsDataPayload) => void,
   onStatus?: (status: string) => void,
 ) {
-  const firestore = getPmsFirestore();
-  if (!firestore) {
+  if (!firebasePmsDataEnabled()) {
     onStatus?.("Firebase PMS data sync is not configured. Using local PMS data store.");
     return () => undefined;
   }
 
-  onStatus?.("Connecting to Firebase PMS data store...");
-  return onSnapshot(
-    doc(firestore, PMS_STORE_COLLECTION, getPmsStoreDocumentId()),
-    snapshot => {
-      const data = snapshot.data() as Partial<PmsDataPayload> | undefined;
-      if (!data) {
-        onStatus?.("Firebase PMS data store is ready, but no remote PMS data exists yet.");
+  let active = true;
+  let lastSnapshot = "";
+  let hasReportedMissingRemote = false;
+
+  const load = async () => {
+    try {
+      const response = await fetch("/api/firebase-store?store=pms", { cache: "no-store" });
+      const payload = await response.json().catch(() => null) as StoreResponse | null;
+
+      if (!response.ok || !payload?.ok) {
+        throw new Error(payload?.detail || payload?.error || `${response.status} ${response.statusText}`);
+      }
+
+      if (!payload.exists || !payload.data) {
+        if (!hasReportedMissingRemote) {
+          onStatus?.("Firebase PMS data store is ready, but no remote PMS data exists yet.");
+          hasReportedMissingRemote = true;
+        }
         return;
       }
 
-      if (data.schemaVersion !== PMS_DATA_SCHEMA_VERSION) {
+      if (payload.data.schemaVersion !== PMS_DATA_SCHEMA_VERSION) {
+        const cleanPayload = normalizePayload({ schemaVersion: PMS_DATA_SCHEMA_VERSION });
+        const snapshot = JSON.stringify(cleanPayload);
+        if (snapshot !== lastSnapshot) {
+          lastSnapshot = snapshot;
+          onPayload(cleanPayload);
+        }
         onStatus?.("Firebase PMS data store contains legacy data. It will be replaced with the clean empty KumbuOS baseline.");
-        onPayload(normalizePayload({ schemaVersion: PMS_DATA_SCHEMA_VERSION }));
         return;
       }
 
-      onPayload(normalizePayload(data));
+      const normalized = normalizePayload(payload.data);
+      const snapshot = JSON.stringify(normalized);
+      if (snapshot !== lastSnapshot) {
+        lastSnapshot = snapshot;
+        onPayload(normalized);
+      }
       onStatus?.("Firebase PMS data store is synced in real time.");
-    },
-    error => {
-      onStatus?.(`Firebase PMS data sync failed: ${error.message}`);
-    },
-  );
+    } catch (error) {
+      if (!active) return;
+      onStatus?.(`Firebase PMS data sync failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+
+  onStatus?.("Connecting to Firebase PMS data store through Vercel secure bridge...");
+  void load();
+  const intervalId = window.setInterval(load, POLL_INTERVAL_MS);
+
+  return () => {
+    active = false;
+    window.clearInterval(intervalId);
+  };
 }
 
 export async function publishPmsData(payload: PmsDataPayload) {
-  const firestore = getPmsFirestore();
-  if (!firestore) return;
+  if (!firebasePmsDataEnabled()) return;
 
-  await setDoc(doc(firestore, PMS_STORE_COLLECTION, getPmsStoreDocumentId()), {
-    ...normalizePayload(payload),
-    schemaVersion: PMS_DATA_SCHEMA_VERSION,
-    updatedAt: serverTimestamp(),
+  const response = await fetch("/api/firebase-store?store=pms", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      payload: {
+        ...normalizePayload(payload),
+        schemaVersion: PMS_DATA_SCHEMA_VERSION,
+      },
+    }),
   });
+  const result = await response.json().catch(() => null) as StoreResponse | null;
+
+  if (!response.ok || !result?.ok) {
+    throw new Error(result?.detail || result?.error || `${response.status} ${response.statusText}`);
+  }
 }
 
 function normalizePayload(data: Partial<PmsDataPayload>): PmsDataPayload {
@@ -116,29 +159,5 @@ function normalizePayload(data: Partial<PmsDataPayload>): PmsDataPayload {
     reservationPolicies: data.reservationPolicies || [],
     supplyRequests: data.supplyRequests || [],
     accountancyEntries: data.accountancyEntries || [],
-  };
-}
-
-function getPmsFirestore() {
-  if (!firebasePmsDataEnabled()) return null;
-  if (db) return db;
-
-  app = app || (getApps().length ? getApp() : initializeApp(getFirebaseConfig()));
-  db = getFirestore(app);
-  return db;
-}
-
-function getPmsStoreDocumentId() {
-  return import.meta.env.VITE_FIREBASE_PMS_STORE_ID || DEFAULT_PMS_STORE_DOCUMENT;
-}
-
-function getFirebaseConfig() {
-  return {
-    apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "",
-    authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "",
-    projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "",
-    storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "",
-    messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
-    appId: import.meta.env.VITE_FIREBASE_APP_ID || "",
   };
 }
