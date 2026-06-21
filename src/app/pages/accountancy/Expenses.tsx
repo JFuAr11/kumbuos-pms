@@ -1,17 +1,22 @@
 import { Download, TrendingDown } from "lucide-react";
+import { useState } from "react";
 import { useAppContext } from "../../context/AppContext";
 import { Button } from "../../components/ui/button";
 import { AccountancyLedgerManager } from "../../components/accountancy/AccountancyLedgerManager";
 import { AccountancyCurrencyFilter } from "../../components/accountancy/AccountancyCurrencyFilter";
+import { AccountancyDateRangeFilter } from "../../components/accountancy/AccountancyDateRangeFilter";
 import { exportToCSV, exportToExcel, exportToJSON, exportToPDF } from "../../utils/export";
-import { formatDisplayMoney, formatMoney, getAccountancySummary, getDatedCategoryName, getEntryDisplayAmount, getEntryThsAmount, getEntryUsdAmount, groupAccountancyEntriesByCategory, normalizeAccountancyEntry } from "../../utils/accountancy";
+import { filterEntriesByDateRange, formatDisplayMoney, formatMoney, getAccountancySummary, getDatedCategoryName, getDefaultAccountancyDateRange, getEntryDisplayAmount, getEntryThsAmount, getEntryUsdAmount, groupAccountancyEntriesByCategory, normalizeAccountancyEntry } from "../../utils/accountancy";
 
 export function AccountancyExpenses() {
   const { accountancyEntries, selectedPropertyId, accountancyDisplayCurrency } = useAppContext();
+  const [dateRange, setDateRange] = useState(getDefaultAccountancyDateRange);
 
-  const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries, displayCurrency: accountancyDisplayCurrency });
-  const expenseEntries = accountancyEntries
-    .filter(entry => entry.propertyId === selectedPropertyId && entry.type === "Expense" && entry.status === "Confirmed")
+  const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries, displayCurrency: accountancyDisplayCurrency, dateRange });
+  const expenseEntries = filterEntriesByDateRange(
+    accountancyEntries.filter(entry => entry.propertyId === selectedPropertyId && entry.type === "Expense" && entry.status === "Confirmed"),
+    dateRange,
+  )
     .map(normalizeAccountancyEntry);
   const ledgerExpensesByCategory = groupAccountancyEntriesByCategory(expenseEntries, accountancyDisplayCurrency);
 
@@ -50,6 +55,7 @@ export function AccountancyExpenses() {
           <p className="text-muted-foreground">Confirmed supplier invoices and expense records posted manually or through GenAI Assistant.</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <AccountancyDateRangeFilter compact value={dateRange} onChange={setDateRange} />
           <AccountancyCurrencyFilter compact />
           <Button variant="outline" size="sm" onClick={() => handleExport("csv")}><Download className="mr-2 h-4 w-4" />CSV</Button>
           <Button variant="outline" size="sm" onClick={() => handleExport("excel")}>Excel</Button>

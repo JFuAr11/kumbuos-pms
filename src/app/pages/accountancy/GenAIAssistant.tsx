@@ -1,14 +1,17 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Bot, Download, FileText, LockKeyhole, Paperclip, Plus, Send, Sparkles, X } from "lucide-react";
-import type { AccountancyEntry } from "../../context/AppContext";
+import type { AccountancyAttachment, AccountancyEntry } from "../../context/AppContext";
 import { useAppContext } from "../../context/AppContext";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { AccountancyCurrencyFilter } from "../../components/accountancy/AccountancyCurrencyFilter";
+import { AccountancyDateRangeFilter } from "../../components/accountancy/AccountancyDateRangeFilter";
 import {
   buildDualCurrencyAmounts,
+  filterEntriesByDateRange,
   formatDisplayMoney,
   formatMoney,
+  getDefaultAccountancyDateRange,
   getDatedCategoryName,
   getEntryDisplayAmount,
   getEntryThsAmount,
@@ -17,6 +20,7 @@ import {
   normalizeCurrency,
   roundMoney,
 } from "../../utils/accountancy";
+import { uploadAccountancyAttachments } from "../../utils/accountancyAttachments";
 import { fetchFxRateForDate } from "../../utils/fxRates";
 import { exportToPDF } from "../../utils/export";
 
@@ -124,11 +128,13 @@ export function AccountancyGenAIAssistant() {
   const [files, setFiles] = useState<File[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [dateRange, setDateRange] = useState(getDefaultAccountancyDateRange);
   const [error, setError] = useState("");
 
   const recentAiEntries = useMemo(
-    () => propertyEntries.filter(entry => entry.source === "GenAI Assistant").slice(0, 5),
-    [propertyEntries],
+    () => filterEntriesByDateRange(propertyEntries.filter(entry => entry.source === "GenAI Assistant"), dateRange).slice(0, 5),
+    [propertyEntries, dateRange],
   );
 
   const exportAssistantPdf = () => {
@@ -235,7 +241,7 @@ export function AccountancyGenAIAssistant() {
       setMessages(current => [...current, assistantMessage]);
 
       if (data.extraction) {
-        buildPendingAction(data.extraction, data.reply || "", files.map(file => file.name).join(", "));
+        buildPendingAction(data.extraction, data.reply || "", files.map(file => file.name).join(", "), files);
       }
       setInput("");
       setFiles([]);
@@ -255,10 +261,11 @@ export function AccountancyGenAIAssistant() {
     }
   };
 
-  const buildPendingAction = (extraction: AssistantExtraction, rawSummary: string, attachmentName: string) => {
+  const buildPendingAction = (extraction: AssistantExtraction, rawSummary: string, attachmentName: string, sourceFiles: File[]) => {
     const action = extraction.action || "create";
     if (action === "none" || (action === "create" && extraction.type === "Unknown")) {
       setPendingAction(null);
+      setPendingFiles([]);
       return;
     }
 
@@ -310,9 +317,11 @@ export function AccountancyGenAIAssistant() {
       reference: extraction.reference || base.reference || extraction.targetReference || "",
       taxAmount: Number(extraction.taxAmount ?? base.taxAmount ?? 0),
       attachmentName: attachmentName || base.attachmentName,
+      attachments: base.attachments || [],
       rawSummary,
     });
 
+    setPendingFiles(sourceFiles);
     setPendingAction({
       action,
       targetEntryId: target?.id || extraction.targetEntryId,
@@ -321,7 +330,7 @@ export function AccountancyGenAIAssistant() {
     });
   };
 
-  const confirmPendingAction = () => {
+  const confirmPendingAction = async () => {
     if (!pendingAction) return;
 
     if (pendingAction.action === "delete") {
@@ -332,6 +341,7 @@ export function AccountancyGenAIAssistant() {
       deleteAccountancyEntry(pendingAction.targetEntryId);
       appendPostedMessage(`Deleted ${pendingAction.original.type.toLowerCase()} entry "${getDatedCategoryName(pendingAction.original.category, pendingAction.original.date)}" from Accountancy. ${statementImpact(pendingAction.original.type)} and Overview are now updated.`);
       setPendingAction(null);
+      setPendingFiles([]);
       setError("");
       return;
     }
@@ -347,9 +357,28 @@ export function AccountancyGenAIAssistant() {
       return;
     }
     const normalizedDraft = normalizeForPosting(draft);
+    const entryId = pendingAction.targetEntryId || normalizedDraft.id || `acc-${Date.now()}`;
+    let uploadedAttachments: AccountancyAttachment[] = [];
+    if (pendingFiles.length) {
+      try {
+        uploadedAttachments = await uploadAccountancyAttachments({
+          propertyId: selectedPropertyId,
+          entryId,
+          files: pendingFiles,
+          source: "GenAI Assistant",
+        });
+      } catch (error) {
+        setError(error instanceof Error ? error.message : "Could not upload the source documents. Nothing was posted.");
+        return;
+      }
+    }
+    const attachments = [
+      ...(normalizedDraft.attachments || pendingAction.original?.attachments || []),
+      ...uploadedAttachments,
+    ];
 
     const payload: AccountancyEntry = {
-      id: pendingAction.targetEntryId || `acc-${Date.now()}`,
+      id: entryId,
       propertyId: selectedPropertyId,
       type: normalizedDraft.type,
       date: normalizedDraft.date,
@@ -373,7 +402,8 @@ export function AccountancyGenAIAssistant() {
       taxAmount: Number(normalizedDraft.taxAmount || 0),
       source: pendingAction.action === "update" ? (pendingAction.original?.source || "GenAI Assistant") : "GenAI Assistant",
       status: "Confirmed",
-      attachmentName: normalizedDraft.attachmentName,
+      attachments,
+      attachmentName: attachments.length ? attachments.map(item => item.name).join(", ") : normalizedDraft.attachmentName,
       rawSummary: normalizedDraft.rawSummary,
       createdAt: pendingAction.original?.createdAt || new Date().toISOString(),
     };
@@ -392,6 +422,7 @@ export function AccountancyGenAIAssistant() {
     }
 
     setPendingAction(null);
+    setPendingFiles([]);
     setError("");
   };
 
@@ -415,6 +446,7 @@ export function AccountancyGenAIAssistant() {
           <p className="text-muted-foreground">Create, review, modify, or delete revenues, expenses, assets, and liabilities only after explicit confirmation.</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <AccountancyDateRangeFilter compact value={dateRange} onChange={setDateRange} />
           <AccountancyCurrencyFilter compact />
           <Button variant="outline" size="sm" onClick={exportAssistantPdf}>
             <Download className="mr-2 h-4 w-4" />
@@ -866,6 +898,7 @@ function normalizeForPosting(draft: Partial<AccountancyEntry>): AccountancyEntry
     source: recalculated.source || "GenAI Assistant",
     status: "Confirmed",
     attachmentName: recalculated.attachmentName,
+    attachments: recalculated.attachments || [],
     rawSummary: recalculated.rawSummary,
     createdAt: recalculated.createdAt || new Date().toISOString(),
   });

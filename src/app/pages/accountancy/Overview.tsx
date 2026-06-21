@@ -1,5 +1,6 @@
 import { Bot, Download, Scale, TrendingDown, TrendingUp, Wallet } from "lucide-react";
 import type { ReactNode } from "react";
+import { useState } from "react";
 import {
   Area,
   AreaChart,
@@ -15,11 +16,14 @@ import {
 import type { AccountancyEntry } from "../../context/AppContext";
 import { useAppContext } from "../../context/AppContext";
 import { AccountancyCurrencyFilter } from "../../components/accountancy/AccountancyCurrencyFilter";
+import { AccountancyDateRangeFilter } from "../../components/accountancy/AccountancyDateRangeFilter";
 import { Button } from "../../components/ui/button";
 import {
+  filterEntriesByDateRange,
   formatDisplayMoney,
   getAccountancySummary,
   getConfirmedAccountancyEntries,
+  getDefaultAccountancyDateRange,
   getEntryDisplayAmount,
   groupAccountancyEntriesByCategory,
 } from "../../utils/accountancy";
@@ -29,9 +33,10 @@ type ChartRow = Record<string, string | number>;
 
 export function AccountancyOverview() {
   const { accountancyEntries, selectedPropertyId, accountancyDisplayCurrency } = useAppContext();
-  const confirmedEntries = getConfirmedAccountancyEntries({ propertyId: selectedPropertyId, accountancyEntries });
-  const propertyEntries = accountancyEntries.filter(entry => entry.propertyId === selectedPropertyId);
-  const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries, displayCurrency: accountancyDisplayCurrency });
+  const [dateRange, setDateRange] = useState(getDefaultAccountancyDateRange);
+  const confirmedEntries = getConfirmedAccountancyEntries({ propertyId: selectedPropertyId, accountancyEntries, dateRange });
+  const propertyEntries = filterEntriesByDateRange(accountancyEntries.filter(entry => entry.propertyId === selectedPropertyId), dateRange);
+  const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries, displayCurrency: accountancyDisplayCurrency, dateRange });
   const aiEntries = propertyEntries.filter(entry => entry.source === "GenAI Assistant");
 
   const revenueEntries = confirmedEntries.filter(entry => entry.type === "Revenue");
@@ -89,6 +94,7 @@ export function AccountancyOverview() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <AccountancyDateRangeFilter compact value={dateRange} onChange={setDateRange} />
           <AccountancyCurrencyFilter compact />
           <Button variant="outline" size="sm" onClick={exportOverviewPdf}>
             <Download className="mr-2 h-4 w-4" />

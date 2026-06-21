@@ -3,20 +3,27 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import { useAppContext } from "../../context/AppContext";
 import { Button } from "../../components/ui/button";
 import { AccountancyCurrencyFilter } from "../../components/accountancy/AccountancyCurrencyFilter";
+import { AccountancyDateRangeFilter } from "../../components/accountancy/AccountancyDateRangeFilter";
 import { AccountancyLedgerManager } from "../../components/accountancy/AccountancyLedgerManager";
 import { exportToCSV, exportToExcel, exportToJSON, exportToPDF } from "../../utils/export";
 import {
   CategoryGroup,
+  filterEntriesByDateRange,
   flattenCategoryGroups,
   formatDisplayMoney,
   getAccountancySummary,
+  getDefaultAccountancyDateRange,
   groupAccountancyEntriesByCategory,
 } from "../../utils/accountancy";
 
 export function AccountancyBalance() {
   const { accountancyEntries, selectedPropertyId, accountancyDisplayCurrency } = useAppContext();
-  const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries, displayCurrency: accountancyDisplayCurrency });
-  const confirmedEntries = accountancyEntries.filter(entry => entry.propertyId === selectedPropertyId && entry.status === "Confirmed");
+  const [dateRange, setDateRange] = useState(getDefaultAccountancyDateRange);
+  const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries, displayCurrency: accountancyDisplayCurrency, dateRange });
+  const confirmedEntries = filterEntriesByDateRange(
+    accountancyEntries.filter(entry => entry.propertyId === selectedPropertyId && entry.status === "Confirmed"),
+    dateRange,
+  );
   const assetGroups = groupAccountancyEntriesByCategory(confirmedEntries.filter(entry => entry.type === "Asset"), accountancyDisplayCurrency);
   const liabilityGroups = groupAccountancyEntriesByCategory(confirmedEntries.filter(entry => entry.type === "Liability"), accountancyDisplayCurrency);
 
@@ -41,6 +48,7 @@ export function AccountancyBalance() {
           <p className="text-muted-foreground">Assets and liabilities update automatically from confirmed Accountancy ledger entries.</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <AccountancyDateRangeFilter compact value={dateRange} onChange={setDateRange} />
           <AccountancyCurrencyFilter compact />
           <Button variant="outline" size="sm" onClick={() => handleExport("csv")}>CSV</Button>
           <Button variant="outline" size="sm" onClick={() => handleExport("excel")}>Excel</Button>

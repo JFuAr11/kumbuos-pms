@@ -276,6 +276,17 @@ export type SupplyRequest = {
   description: string;
 };
 
+export type AccountancyAttachment = {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  storagePath?: string;
+  downloadUrl?: string;
+  source?: 'GenAI Assistant' | 'Manual';
+  uploadedAt: string;
+};
+
 export type AccountancyEntry = {
   id: string;
   propertyId: string;
@@ -307,6 +318,7 @@ export type AccountancyEntry = {
   source: 'GenAI Assistant' | 'Manual' | 'Reservations' | 'Supply Requests';
   status: 'Draft' | 'Confirmed';
   attachmentName?: string;
+  attachments?: AccountancyAttachment[];
   rawSummary?: string;
   createdAt: string;
 };
@@ -458,6 +470,7 @@ const editAllPermissions: PermissionRule[] = [
   { module: 'Reservations', section: 'Calendar', access: 'edit' },
   { module: 'Reservations', section: 'Bookings', access: 'edit' },
   { module: 'Reservations', section: 'Booking Payments', access: 'edit' },
+  { module: 'Reservations', section: 'Reports', access: 'edit' },
   { module: 'Reservations', section: 'Configuration', access: 'edit' },
   { module: 'Reservations', section: 'Policies', access: 'edit' },
   { module: 'Reservations', section: 'OTA Sync', access: 'edit' },
@@ -884,12 +897,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
 
       const accountancyAccess = permissions.find(permission => permission.module === 'Accountancy' && permission.access !== 'none')?.access;
+      const reservationsAccess = permissions.find(permission => permission.module === 'Reservations' && permission.access !== 'none')?.access;
       const legacyCheckInAccess = permissions.find(permission => permission.module === 'Check-in' && permission.section === 'Guest Form' && permission.access !== 'none')?.access;
 
       const additions: PermissionRule[] = ['Assets', 'Liabilities']
         .filter(() => Boolean(accountancyAccess))
         .filter(section => !permissions.some(permission => permission.module === 'Accountancy' && permission.section === section))
         .map(section => ({ module: 'Accountancy', section, access: accountancyAccess || 'none' }));
+
+      if (reservationsAccess && !permissions.some(permission => permission.module === 'Reservations' && permission.section === 'Reports')) {
+        additions.push({ module: 'Reservations', section: 'Reports', access: reservationsAccess });
+      }
 
       if (legacyCheckInAccess && !permissions.some(permission => permission.module === 'Check-in' && permission.section === 'Check-in Form')) {
         additions.push({ module: 'Check-in', section: 'Check-in Form', access: legacyCheckInAccess });

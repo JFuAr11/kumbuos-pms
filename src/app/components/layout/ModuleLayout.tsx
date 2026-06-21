@@ -55,6 +55,7 @@ const RESERVATION_ITEMS = [
   { path: "/app/reservations/calendar", label: "Calendar", icon: CalendarDays },
   { path: "/app/reservations/bookings", label: "Bookings", icon: BookOpenCheck },
   { path: "/app/reservations/payments", label: "Booking Payments", icon: Wallet },
+  { path: "/app/reservations/reports", label: "Reports", icon: BarChart },
   { path: "/app/reservations/configuration", label: "Configuration", icon: SettingsIcon },
   { path: "/app/reservations/policies", label: "Policies", icon: ShieldAlert },
   { path: "/app/reservations/ota-sync", label: "OTA Sync", icon: Database },

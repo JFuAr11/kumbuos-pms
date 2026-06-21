@@ -1,17 +1,22 @@
 import { Download, TrendingUp } from "lucide-react";
+import { useState } from "react";
 import { useAppContext } from "../../context/AppContext";
 import { Button } from "../../components/ui/button";
 import { AccountancyLedgerManager } from "../../components/accountancy/AccountancyLedgerManager";
 import { AccountancyCurrencyFilter } from "../../components/accountancy/AccountancyCurrencyFilter";
+import { AccountancyDateRangeFilter } from "../../components/accountancy/AccountancyDateRangeFilter";
 import { exportToCSV, exportToExcel, exportToJSON, exportToPDF } from "../../utils/export";
-import { formatDisplayMoney, formatMoney, getAccountancySummary, getDatedCategoryName, getEntryDisplayAmount, getEntryThsAmount, getEntryUsdAmount, normalizeAccountancyEntry } from "../../utils/accountancy";
+import { filterEntriesByDateRange, formatDisplayMoney, formatMoney, getAccountancySummary, getDatedCategoryName, getDefaultAccountancyDateRange, getEntryDisplayAmount, getEntryThsAmount, getEntryUsdAmount, normalizeAccountancyEntry } from "../../utils/accountancy";
 
 export function AccountancyRevenues() {
   const { accountancyEntries, selectedPropertyId, accountancyDisplayCurrency } = useAppContext();
+  const [dateRange, setDateRange] = useState(getDefaultAccountancyDateRange);
 
-  const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries, displayCurrency: accountancyDisplayCurrency });
-  const revenueEntries = accountancyEntries
-    .filter(entry => entry.propertyId === selectedPropertyId && entry.type === "Revenue" && entry.status === "Confirmed")
+  const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries, displayCurrency: accountancyDisplayCurrency, dateRange });
+  const revenueEntries = filterEntriesByDateRange(
+    accountancyEntries.filter(entry => entry.propertyId === selectedPropertyId && entry.type === "Revenue" && entry.status === "Confirmed"),
+    dateRange,
+  )
     .map(normalizeAccountancyEntry);
 
   const rows = revenueEntries.map(entry => ({
@@ -50,6 +55,7 @@ export function AccountancyRevenues() {
           <p className="text-muted-foreground">Confirmed revenue lines posted manually or through GenAI Assistant.</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <AccountancyDateRangeFilter compact value={dateRange} onChange={setDateRange} />
           <AccountancyCurrencyFilter compact />
           <Button variant="outline" size="sm" onClick={() => handleExport("csv")}><Download className="mr-2 h-4 w-4" />CSV</Button>
           <Button variant="outline" size="sm" onClick={() => handleExport("excel")}>Excel</Button>

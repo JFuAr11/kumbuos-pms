@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
-import { Download, Edit, Plus, Trash2, X } from "lucide-react";
-import type { AccountancyEntry } from "../../context/AppContext";
+import { Download, Edit, FileText, Paperclip, Plus, Trash2, X } from "lucide-react";
+import type { AccountancyAttachment, AccountancyEntry } from "../../context/AppContext";
 import { useAppContext } from "../../context/AppContext";
+import { AccountancyDateRangeFilter } from "./AccountancyDateRangeFilter";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import {
   buildDualCurrencyAmounts,
+  filterEntriesByDateRange,
   formatDisplayMoney,
   formatMoney,
+  getDefaultAccountancyDateRange,
   getDatedCategoryName,
   getEntryDisplayAmount,
   getEntryThsAmount,
@@ -16,6 +19,7 @@ import {
   normalizeCurrency,
   roundMoney,
 } from "../../utils/accountancy";
+import { uploadAccountancyAttachments } from "../../utils/accountancyAttachments";
 import { fetchFxRateForDate } from "../../utils/fxRates";
 import { exportToPDF } from "../../utils/export";
 
@@ -63,7 +67,7 @@ const categoryOptions: Record<AccountancyEntry["type"], string[]> = {
 const blankEntry = (propertyId: string, type: AccountancyEntry["type"]): AccountancyEntry => {
   const fx = buildDualCurrencyAmounts({ amount: 0, currency: "USD" });
   return {
-    id: "",
+    id: `acc-${Date.now()}`,
     propertyId,
     type,
     date: new Date().toISOString().split("T")[0],
@@ -87,6 +91,7 @@ const blankEntry = (propertyId: string, type: AccountancyEntry["type"]): Account
     taxAmount: 0,
     source: "Manual",
     status: "Confirmed",
+    attachments: [],
     createdAt: new Date().toISOString(),
   };
 };
@@ -115,11 +120,16 @@ export function AccountancyLedgerManager({
       : [filter];
   const defaultType: AccountancyEntry["type"] = availableTypes[0] || "Revenue";
   const [editing, setEditing] = useState<AccountancyEntry | null>(null);
+  const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
+  const [dateRange, setDateRange] = useState(getDefaultAccountancyDateRange);
   const [fxStatus, setFxStatus] = useState("");
 
-  const entries = accountancyEntries
-    .filter(entry => entry.propertyId === selectedPropertyId)
-    .filter(entry => availableTypes.includes(entry.type))
+  const entries = filterEntriesByDateRange(
+    accountancyEntries
+      .filter(entry => entry.propertyId === selectedPropertyId)
+      .filter(entry => availableTypes.includes(entry.type)),
+    dateRange,
+  )
     .map(normalizeAccountancyEntry)
     .sort((a, b) => b.date.localeCompare(a.date));
 
@@ -155,7 +165,10 @@ export function AccountancyLedgerManager({
     exportToPDF(rows, title.replace(/[^a-z0-9]+/gi, "-"), `${title} - Accountancy`);
   };
 
-  const startNew = () => setEditing(blankEntry(selectedPropertyId, defaultType));
+  const startNew = () => {
+    setAttachmentFiles([]);
+    setEditing(blankEntry(selectedPropertyId, defaultType));
+  };
 
   useEffect(() => {
     if (!editing?.date) return;
@@ -179,7 +192,7 @@ export function AccountancyLedgerManager({
     };
   }, [editing?.date]);
 
-  const saveEntry = () => {
+  const saveEntry = async () => {
     if (!editing) return;
     if (!editing.date || !editing.category || !editing.counterparty || !editing.description || !Number(editing.amount)) {
       alert("Complete date, category, counterparty, description, and amount.");
@@ -193,11 +206,36 @@ export function AccountancyLedgerManager({
       return;
     }
 
-    if (normalized.id) {
-      updateAccountancyEntry(normalized.id, normalized);
-    } else {
-      addAccountancyEntry({ ...normalized, id: `acc-${Date.now()}` });
+    const entryId = normalized.id || `acc-${Date.now()}`;
+    let uploadedAttachments: AccountancyAttachment[] = [];
+    if (attachmentFiles.length) {
+      try {
+        uploadedAttachments = await uploadAccountancyAttachments({
+          propertyId: selectedPropertyId,
+          entryId,
+          files: attachmentFiles,
+          source: "Manual",
+        });
+      } catch (error) {
+        alert(error instanceof Error ? error.message : "Could not upload accountancy documents.");
+        return;
+      }
     }
+
+    const attachments = [...(normalized.attachments || []), ...uploadedAttachments];
+    const payload = {
+      ...normalized,
+      id: entryId,
+      attachments,
+      attachmentName: attachments.length ? attachments.map(item => item.name).join(", ") : normalized.attachmentName,
+    };
+
+    if (accountancyEntries.some(entry => entry.id === entryId)) {
+      updateAccountancyEntry(entryId, payload);
+    } else {
+      addAccountancyEntry(payload);
+    }
+    setAttachmentFiles([]);
     setEditing(null);
   };
 
@@ -254,13 +292,20 @@ export function AccountancyLedgerManager({
     });
   };
 
+  const removeExistingAttachment = (attachmentId: string) => {
+    if (!editing) return;
+    updateEditing({
+      attachments: (editing.attachments || []).filter(attachment => attachment.id !== attachmentId),
+    });
+  };
+
   const editingUsd = editing ? getEntryUsdAmount(normalizeAccountancyEntry(editing)) : 0;
   const editingThs = editing ? getEntryThsAmount(normalizeAccountancyEntry(editing)) : 0;
   const subcategoryTotal = subcategoryBreakdown.reduce((sum, item) => sum + Number(item.amount || 0), 0);
 
   return (
     <div className="rounded-xl border border-border bg-card shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-5">
         <div>
           <h2 className="text-lg font-semibold">{title}</h2>
           <p className="text-sm text-muted-foreground">{scopeDescription}</p>
@@ -275,6 +320,10 @@ export function AccountancyLedgerManager({
             Add Entry
           </Button>
         </div>
+      </div>
+
+      <div className="border-b border-border bg-muted/10 p-5">
+        <AccountancyDateRangeFilter value={dateRange} onChange={setDateRange} />
       </div>
 
       {editing && (
@@ -345,6 +394,50 @@ export function AccountancyLedgerManager({
               </select>
             </label>
 
+            <div className="rounded-lg border border-border bg-background p-4 md:col-span-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium">Supporting documents</p>
+                  <p className="text-xs text-muted-foreground">Attach supplier invoices, proof of payment, or other supporting files for this ledger entry.</p>
+                </div>
+                <label className="inline-flex cursor-pointer items-center justify-center rounded-md border border-border bg-card px-3 py-2 text-sm font-medium hover:bg-muted">
+                  <Paperclip className="mr-2 h-4 w-4" />
+                  Attach files
+                  <input
+                    className="hidden"
+                    type="file"
+                    multiple
+                    accept="image/*,application/pdf,text/plain,text/csv"
+                    onChange={event => setAttachmentFiles(current => [...current, ...Array.from(event.target.files || [])])}
+                  />
+                </label>
+              </div>
+              <div className="mt-3 grid gap-2 md:grid-cols-2">
+                {(editing.attachments || []).map(attachment => (
+                  <AttachmentPill
+                    key={attachment.id}
+                    attachment={attachment}
+                    onRemove={() => removeExistingAttachment(attachment.id)}
+                  />
+                ))}
+                {attachmentFiles.map((file, index) => (
+                  <div key={`${file.name}-${index}`} className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <FileText className="h-4 w-4 shrink-0 text-primary" />
+                      <span className="truncate">{file.name}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">{formatFileSize(file.size)}</span>
+                    </span>
+                    <Button type="button" variant="ghost" size="icon" onClick={() => setAttachmentFiles(current => current.filter((_, itemIndex) => itemIndex !== index))} aria-label="Remove pending file">
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+                {!editing.attachments?.length && !attachmentFiles.length && (
+                  <p className="text-sm text-muted-foreground">No supporting documents attached yet.</p>
+                )}
+              </div>
+            </div>
+
             <div className="md:col-span-3">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -398,7 +491,7 @@ export function AccountancyLedgerManager({
             </label>
           </div>
           <div className="mt-4 flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
+            <Button variant="outline" onClick={() => { setAttachmentFiles([]); setEditing(null); }}>Cancel</Button>
             <Button onClick={saveEntry}>Save Entry</Button>
           </div>
         </div>
@@ -413,6 +506,7 @@ export function AccountancyLedgerManager({
               <th className="p-4 font-medium">Category</th>
               <th className="p-4 font-medium">Subcategories</th>
               <th className="p-4 font-medium">Traceability</th>
+              <th className="p-4 font-medium">Documents</th>
               <th className="p-4 font-medium">Currency</th>
               <th className="p-4 font-medium">FX_USD_THS</th>
               <th className="p-4 font-medium">FX_THS_USD</th>
@@ -434,6 +528,9 @@ export function AccountancyLedgerManager({
                       : "Unassigned"}
                   </td>
                   <td className="p-4 text-xs text-muted-foreground">{formatTraceability(entry)}</td>
+                  <td className="p-4 text-xs text-muted-foreground">
+                    <AttachmentList entry={entry} />
+                  </td>
                   <td className="p-4 text-muted-foreground">{entry.currency}</td>
                   <td className="p-4 text-muted-foreground">{Number(entry.fxUsdThs || 0).toFixed(6)}</td>
                   <td className="p-4 text-muted-foreground">{Number(entry.fxThsUsd || 0).toFixed(8)}</td>
@@ -442,7 +539,7 @@ export function AccountancyLedgerManager({
                   </td>
                   <td className="p-4">
                     <div className="flex justify-end gap-1">
-                      <Button variant="ghost" size="icon" onClick={() => setEditing(normalizeAccountancyEntry(entry))}><Edit className="h-4 w-4" /></Button>
+                      <Button variant="ghost" size="icon" onClick={() => { setAttachmentFiles([]); setEditing(normalizeAccountancyEntry(entry)); }}><Edit className="h-4 w-4" /></Button>
                       <Button variant="ghost" size="icon" className="text-destructive" onClick={() => removeEntry(entry)}><Trash2 className="h-4 w-4" /></Button>
                     </div>
                   </td>
@@ -451,7 +548,7 @@ export function AccountancyLedgerManager({
             })}
             {!entries.length && (
               <tr>
-                <td colSpan={10} className="p-8 text-center text-muted-foreground">No manual or AI ledger entries for this scope yet.</td>
+                <td colSpan={11} className="p-8 text-center text-muted-foreground">No manual or AI ledger entries for this scope yet.</td>
               </tr>
             )}
           </tbody>
@@ -537,6 +634,62 @@ function formatTraceability(entry: AccountancyEntry) {
   ].filter(Boolean);
 
   return items.length ? items.join(" | ") : "-";
+}
+
+function AttachmentList({ entry }: { entry: AccountancyEntry }) {
+  const attachments = entry.attachments || [];
+  if (!attachments.length && !entry.attachmentName) return <span>-</span>;
+
+  return (
+    <div className="space-y-1">
+      {attachments.map(attachment => (
+        <a
+          key={attachment.id}
+          className="block max-w-[220px] truncate text-primary underline-offset-2 hover:underline"
+          href={attachment.downloadUrl}
+          target="_blank"
+          rel="noreferrer"
+          title={attachment.name}
+        >
+          {attachment.name}
+        </a>
+      ))}
+      {!attachments.length && entry.attachmentName && <span>{entry.attachmentName}</span>}
+    </div>
+  );
+}
+
+function AttachmentPill({
+  attachment,
+  onRemove,
+}: {
+  attachment: AccountancyAttachment;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+      <a
+        className="flex min-w-0 items-center gap-2 text-primary underline-offset-2 hover:underline"
+        href={attachment.downloadUrl}
+        target="_blank"
+        rel="noreferrer"
+      >
+        <FileText className="h-4 w-4 shrink-0" />
+        <span className="truncate">{attachment.name}</span>
+        <span className="shrink-0 text-xs text-muted-foreground">{formatFileSize(attachment.size)}</span>
+      </a>
+      <Button type="button" variant="ghost" size="icon" onClick={onRemove} aria-label="Remove attachment">
+        <X className="h-4 w-4" />
+      </Button>
+    </div>
+  );
+}
+
+function formatFileSize(size: number) {
+  if (!size) return "";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function InputField({

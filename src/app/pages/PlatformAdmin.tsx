@@ -32,7 +32,7 @@ import {
 import { validatePasswordPolicy } from "../utils/authSecurity";
 
 const modules = [
-  { module: "Reservations", sections: ["Calendar", "Bookings", "Booking Payments", "Configuration", "Policies", "OTA Sync", "Notifications"] },
+  { module: "Reservations", sections: ["Calendar", "Bookings", "Booking Payments", "Reports", "Configuration", "Policies", "OTA Sync", "Notifications"] },
   { module: "Accountancy", sections: ["Overview", "Profit & Loss (P&L)", "Revenues", "Expenses", "Balance", "Assets", "Liabilities", "GenAI Assistant", "Notifications"] },
   { module: "Supply Requests", sections: ["Beverage", "Client Food", "Staff Food", "Shishas", "Housekeeping", "Mechanical", "Fuel & Petrol", "Notifications"] },
   { module: "Check-in", sections: ["Check-in Form", "Database", "Dashboard", "Notifications"] },

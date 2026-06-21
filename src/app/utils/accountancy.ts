@@ -21,7 +21,36 @@ export type CategoryGroup = {
   subcategories: Record<string, number>;
 };
 
+export type AccountancyDateRange = {
+  from?: string;
+  to?: string;
+};
+
 export type { AccountancyDisplayCurrency };
+
+export function getTodayIsoDate() {
+  return new Date().toISOString().split("T")[0];
+}
+
+export function getDefaultAccountancyDateRange(): AccountancyDateRange {
+  return {
+    from: "",
+    to: getTodayIsoDate(),
+  };
+}
+
+export function isEntryInDateRange(entry: Pick<AccountancyEntry, "date">, dateRange?: AccountancyDateRange) {
+  if (!dateRange) return true;
+  const date = entry.date || "";
+  if (!date) return false;
+  if (dateRange.from && date < dateRange.from) return false;
+  if (dateRange.to && date > dateRange.to) return false;
+  return true;
+}
+
+export function filterEntriesByDateRange<T extends Pick<AccountancyEntry, "date">>(entries: T[], dateRange?: AccountancyDateRange) {
+  return entries.filter(entry => isEntryInDateRange(entry, dateRange));
+}
 
 export function formatMoney(value: number, currency = "USD") {
   const normalizedCurrency = normalizeCurrency(currency);
@@ -104,9 +133,11 @@ export function normalizeAccountancyEntry(entry: AccountancyEntry): AccountancyE
 export function getConfirmedAccountancyEntries(params: {
   propertyId: string;
   accountancyEntries: AccountancyEntry[];
+  dateRange?: AccountancyDateRange;
 }) {
   return params.accountancyEntries
     .filter(entry => entry.propertyId === params.propertyId && entry.status === "Confirmed")
+    .filter(entry => isEntryInDateRange(entry, params.dateRange))
     .map(normalizeAccountancyEntry);
 }
 
@@ -114,6 +145,7 @@ export function getAccountancySummary(params: {
   propertyId: string;
   accountancyEntries: AccountancyEntry[];
   displayCurrency?: AccountancyDisplayCurrency;
+  dateRange?: AccountancyDateRange;
 }): AccountancySummary {
   const confirmedEntries = getConfirmedAccountancyEntries(params);
   const displayCurrency = params.displayCurrency || "USD";

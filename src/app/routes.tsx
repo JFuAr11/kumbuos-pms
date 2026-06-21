@@ -7,6 +7,7 @@ import { Calendar } from "./pages/Calendar";
 import { Reservations } from "./pages/Reservations";
 import { Settings } from "./pages/Settings";
 import { BookingPayments } from "./pages/BookingPayments";
+import { ReservationReports } from "./pages/ReservationReports";
 import { OtaSync } from "./pages/OtaSync";
 import { ReservationPolicies } from "./pages/ReservationPolicies";
 
@@ -62,6 +63,7 @@ export const router = createBrowserRouter([
       { path: "calendar", Component: Calendar },
       { path: "bookings", Component: Reservations },
       { path: "payments", Component: BookingPayments },
+      { path: "reports", Component: ReservationReports },
       { path: "configuration", Component: Settings },
       { path: "policies", Component: ReservationPolicies },
       { path: "ota-sync", Component: OtaSync },

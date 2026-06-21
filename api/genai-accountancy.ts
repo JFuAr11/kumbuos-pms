@@ -446,9 +446,12 @@ ${message || "Please read the attached document and extract the accounting entry
 
 Existing active-property Accountancy ledger entries available for update/delete:
 ${JSON.stringify(accountancyEntries).slice(0, 12000)}
+
+Attached source documents:
+${files.map((file: any, index: number) => `${index + 1}. ${file.name || "Unnamed document"} (${file.mimeType || "application/octet-stream"})`).join("\n") || "None"}
 `.trim(),
     },
-    ...files.slice(0, 4).map((file: any) => ({
+    ...files.map((file: any) => ({
       inlineData: {
         mimeType: file.mimeType || "application/octet-stream",
         data: file.data,
