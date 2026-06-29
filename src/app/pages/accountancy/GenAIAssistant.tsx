@@ -561,7 +561,7 @@ export function AccountancyGenAIAssistant() {
                       ? entry.subcategoryBreakdown.map(item => `${item.name}: ${formatMoney(item.amount, entry.currency)}`).join(", ")
                       : entry.subcategories?.length ? entry.subcategories.join(", ") : "Unassigned subcategory"}
                   </p>
-                  <p className="mt-1 text-xs text-muted-foreground">{formatMoney(getEntryThsAmount(entry), "THS")} | FX_USD_THS {Number(entry.fxUsdThs || 0).toFixed(4)}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">{formatMoney(getEntryThsAmount(entry), "TZS")} | FX_USD_TZS {Number(entry.fxUsdThs || 0).toFixed(4)}</p>
                   <p className="mt-1 text-xs text-muted-foreground">{entry.counterparty} - {entry.date}</p>
                 </div>
               ))}
@@ -689,7 +689,7 @@ function ActiveReviewPanel({
           </div>
           <div className="mt-3 space-y-2">
             {subcategoryBreakdown.filter(item => item.name.trim()).map(item => {
-              const amount = accountancyDisplayCurrency === "THS" ? Number(item.amountThs || 0) : Number(item.amountUsd || 0);
+              const amount = accountancyDisplayCurrency === "TZS" ? Number(item.amountThs || 0) : Number(item.amountUsd || 0);
               return (
                 <div key={item.name} className="flex items-center justify-between gap-3 rounded-md bg-background/80 px-3 py-2 text-sm">
                   <span className="min-w-0 truncate text-muted-foreground">{item.name}</span>
@@ -723,13 +723,13 @@ function ActiveReviewPanel({
           Invoice Currency
           <select className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={normalizeCurrency(draft.currency)} onChange={event => updateDraft({ currency: event.target.value })} disabled={isDelete}>
             <option value="USD">USD</option>
-            <option value="THS">THS</option>
+            <option value="TZS">TZS</option>
           </select>
         </label>
-        <InputField disabled={isDelete} label="FX_USD_THS" type="number" value={String(draft.fxUsdThs || "")} onChange={value => updateDraft({ fxUsdThs: Number(value), fxThsUsd: Number(value) ? 1 / Number(value) : 0 })} />
-        <InputField disabled={isDelete} label="FX_THS_USD" type="number" value={String(draft.fxThsUsd || "")} onChange={value => updateDraft({ fxThsUsd: Number(value), fxUsdThs: Number(value) ? 1 / Number(value) : 0 })} />
+        <InputField disabled={isDelete} label="FX_USD_TZS" type="number" value={String(draft.fxUsdThs || "")} onChange={value => updateDraft({ fxUsdThs: Number(value), fxThsUsd: Number(value) ? 1 / Number(value) : 0 })} />
+        <InputField disabled={isDelete} label="FX_TZS_USD" type="number" value={String(draft.fxThsUsd || "")} onChange={value => updateDraft({ fxThsUsd: Number(value), fxUsdThs: Number(value) ? 1 / Number(value) : 0 })} />
         <ReadOnlyValue label="Amount USD" value={formatMoney(getEntryUsdAmount(draft as AccountancyEntry), "USD")} />
-        <ReadOnlyValue label="Amount THS" value={formatMoney(getEntryThsAmount(draft as AccountancyEntry), "THS")} />
+        <ReadOnlyValue label="Amount TZS" value={formatMoney(getEntryThsAmount(draft as AccountancyEntry), "TZS")} />
         {fxStatus && <p className="text-xs text-muted-foreground">{fxStatus}</p>}
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-3">
@@ -774,8 +774,8 @@ function ActiveReviewPanel({
                     <span className="font-semibold">{formatMoney(subcategory.amountUsd || 0, "USD")}</span>
                   </div>
                   <div>
-                    <span className="block text-muted-foreground">THS</span>
-                    <span className="font-semibold">{formatMoney(subcategory.amountThs || 0, "THS")}</span>
+                    <span className="block text-muted-foreground">TZS</span>
+                    <span className="font-semibold">{formatMoney(subcategory.amountThs || 0, "TZS")}</span>
                   </div>
                 </div>
                 <Button type="button" variant="outline" size="icon" onClick={() => removeSubcategory(index)} disabled={isDelete} aria-label="Remove subcategory">
@@ -910,8 +910,8 @@ function validateSubcategoryTotals(entry: Partial<AccountancyEntry>) {
 
   const total = breakdown.reduce((sum, item) => sum + Number(item.amount || 0), 0);
   const currency = normalizeCurrency(entry.currency);
-  const tolerance = currency === "THS" ? 1 : 0.01;
-  const difference = roundMoney(total - Number(entry.amount || 0), currency === "THS" ? 0 : 2);
+  const tolerance = currency === "TZS" ? 1 : 0.01;
+  const difference = roundMoney(total - Number(entry.amount || 0), currency === "TZS" ? 0 : 2);
   if (Math.abs(difference) <= tolerance) return "";
 
   return `Subcategory amounts must equal the invoice total. Current subcategory total is ${formatMoney(total, currency)} and invoice total is ${formatMoney(Number(entry.amount || 0), currency)}. Difference: ${formatMoney(difference, currency)}.`;

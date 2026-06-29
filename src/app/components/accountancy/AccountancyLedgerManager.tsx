@@ -158,8 +158,8 @@ export function AccountancyLedgerManager({
         Reference: entry.reference || "",
         Amount: `${negative ? "-" : ""}${formatDisplayMoney(getEntryDisplayAmount(entry, accountancyDisplayCurrency), accountancyDisplayCurrency)}`,
         Currency: entry.currency,
-        FX_USD_THS: Number(entry.fxUsdThs || 0).toFixed(6),
-        FX_THS_USD: Number(entry.fxThsUsd || 0).toFixed(8),
+        FX_USD_TZS: Number(entry.fxUsdThs || 0).toFixed(6),
+        FX_TZS_USD: Number(entry.fxThsUsd || 0).toFixed(8),
       };
     });
     exportToPDF(rows, title.replace(/[^a-z0-9]+/gi, "-"), `${title} - Accountancy`);
@@ -361,13 +361,13 @@ export function AccountancyLedgerManager({
                 onChange={event => updateEditing({ currency: event.target.value })}
               >
                 <option value="USD">USD</option>
-                <option value="THS">THS</option>
+                <option value="TZS">TZS</option>
               </select>
             </label>
-            <InputField label="FX_USD_THS" type="number" value={String(editing.fxUsdThs || "")} onChange={value => updateEditing({ fxUsdThs: Number(value), fxThsUsd: Number(value) ? 1 / Number(value) : 0 })} />
-            <InputField label="FX_THS_USD" type="number" value={String(editing.fxThsUsd || "")} onChange={value => updateEditing({ fxThsUsd: Number(value), fxUsdThs: Number(value) ? 1 / Number(value) : 0 })} />
+            <InputField label="FX_USD_TZS" type="number" value={String(editing.fxUsdThs || "")} onChange={value => updateEditing({ fxUsdThs: Number(value), fxThsUsd: Number(value) ? 1 / Number(value) : 0 })} />
+            <InputField label="FX_TZS_USD" type="number" value={String(editing.fxThsUsd || "")} onChange={value => updateEditing({ fxThsUsd: Number(value), fxUsdThs: Number(value) ? 1 / Number(value) : 0 })} />
             <ReadOnlyValue label="Amount USD" value={formatMoney(editingUsd, "USD")} />
-            <ReadOnlyValue label="Amount THS" value={formatMoney(editingThs, "THS")} />
+            <ReadOnlyValue label="Amount TZS" value={formatMoney(editingThs, "TZS")} />
             {fxStatus && <p className="text-xs text-muted-foreground md:col-span-3">{fxStatus}</p>}
 
             {editing.type === "Revenue" && (
@@ -470,8 +470,8 @@ export function AccountancyLedgerManager({
                       <span className="font-semibold">{formatMoney(subcategory.amountUsd || 0, "USD")}</span>
                     </div>
                     <div className="rounded-md bg-muted px-3 py-2 text-xs">
-                      <span className="block text-muted-foreground">THS</span>
-                      <span className="font-semibold">{formatMoney(subcategory.amountThs || 0, "THS")}</span>
+                      <span className="block text-muted-foreground">TZS</span>
+                      <span className="font-semibold">{formatMoney(subcategory.amountThs || 0, "TZS")}</span>
                     </div>
                     <Button type="button" variant="outline" size="icon" onClick={() => removeSubcategory(index)} aria-label="Remove subcategory">
                       <X className="h-4 w-4" />
@@ -508,8 +508,8 @@ export function AccountancyLedgerManager({
               <th className="p-4 font-medium">Traceability</th>
               <th className="p-4 font-medium">Documents</th>
               <th className="p-4 font-medium">Currency</th>
-              <th className="p-4 font-medium">FX_USD_THS</th>
-              <th className="p-4 font-medium">FX_THS_USD</th>
+              <th className="p-4 font-medium">FX_USD_TZS</th>
+              <th className="p-4 font-medium">FX_TZS_USD</th>
               <th className="p-4 text-right font-medium">{accountancyDisplayCurrency}</th>
               <th className="p-4 text-right font-medium">Actions</th>
             </tr>
@@ -618,8 +618,8 @@ function validateSubcategoryTotals(entry: AccountancyEntry) {
   if (!breakdown.length) return "";
 
   const total = breakdown.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  const tolerance = normalizeCurrency(entry.currency) === "THS" ? 1 : 0.01;
-  const difference = roundMoney(total - Number(entry.amount || 0), normalizeCurrency(entry.currency) === "THS" ? 0 : 2);
+  const tolerance = normalizeCurrency(entry.currency) === "TZS" ? 1 : 0.01;
+  const difference = roundMoney(total - Number(entry.amount || 0), normalizeCurrency(entry.currency) === "TZS" ? 0 : 2);
   if (Math.abs(difference) <= tolerance) return "";
 
   return `Subcategory amounts must equal the invoice total. Current subcategory total is ${formatMoney(total, entry.currency)} and invoice total is ${formatMoney(entry.amount, entry.currency)}. Difference: ${formatMoney(difference, entry.currency)}.`;

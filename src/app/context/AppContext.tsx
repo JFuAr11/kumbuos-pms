@@ -323,7 +323,7 @@ export type AccountancyEntry = {
   createdAt: string;
 };
 
-export type AccountancyDisplayCurrency = 'USD' | 'THS';
+export type AccountancyDisplayCurrency = 'USD' | 'TZS';
 
 type AppContextType = {
   currentUser: SystemUser | null;
@@ -670,6 +670,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const [accountancyEntries, setAccountancyEntries] = usePersistentState<AccountancyEntry[]>('pms-accountancy-entries-v2', []);
   const [accountancyDisplayCurrency, setAccountancyDisplayCurrency] = usePersistentState<AccountancyDisplayCurrency>('pms-accountancy-display-currency', 'USD');
+
+  useEffect(() => {
+    if ((accountancyDisplayCurrency as string) === 'THS') {
+      setAccountancyDisplayCurrency('TZS');
+    }
+  }, [accountancyDisplayCurrency, setAccountancyDisplayCurrency]);
 
   const currentUser = systemUsers.find(user => user.id === currentUserId) || (currentUserId === ROOT_OWNER_ID ? getRootOwnerUser() : null);
 

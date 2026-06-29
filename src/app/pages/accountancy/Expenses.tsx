@@ -31,10 +31,10 @@ export function AccountancyExpenses() {
     Reference: entry.reference || "",
     OriginalAmount: entry.amount,
     Currency: entry.currency,
-    FX_USD_THS: entry.fxUsdThs,
-    FX_THS_USD: entry.fxThsUsd,
+    FX_USD_TZS: entry.fxUsdThs,
+    FX_TZS_USD: entry.fxThsUsd,
     AmountUSD: -getEntryUsdAmount(entry),
-    AmountTHS: -getEntryThsAmount(entry),
+    AmountTZS: -getEntryThsAmount(entry),
     DisplayAmount: -getEntryDisplayAmount(entry, accountancyDisplayCurrency),
     Source: entry.source,
     Details: entry.description,
@@ -87,8 +87,8 @@ export function AccountancyExpenses() {
                 <th className="p-4 font-medium">Reference</th>
                 <th className="p-4 font-medium">Source</th>
                 <th className="p-4 font-medium">Currency</th>
-                <th className="p-4 font-medium">FX_USD_THS</th>
-                <th className="p-4 font-medium">FX_THS_USD</th>
+                <th className="p-4 font-medium">FX_USD_TZS</th>
+                <th className="p-4 font-medium">FX_TZS_USD</th>
                 <th className="p-4 text-right font-medium">{accountancyDisplayCurrency}</th>
               </tr>
             </thead>
@@ -103,8 +103,8 @@ export function AccountancyExpenses() {
                   <td className="p-4 text-muted-foreground">{row.Reference || "-"}</td>
                   <td className="p-4 text-muted-foreground">{row.Source}</td>
                   <td className="p-4 text-muted-foreground">{row.Currency}</td>
-                  <td className="p-4 text-muted-foreground">{Number(row.FX_USD_THS || 0).toFixed(6)}</td>
-                  <td className="p-4 text-muted-foreground">{Number(row.FX_THS_USD || 0).toFixed(8)}</td>
+                  <td className="p-4 text-muted-foreground">{Number(row.FX_USD_TZS || 0).toFixed(6)}</td>
+                  <td className="p-4 text-muted-foreground">{Number(row.FX_TZS_USD || 0).toFixed(8)}</td>
                   <td className="p-4 text-right font-semibold text-destructive">-{formatDisplayMoney(Math.abs(row.DisplayAmount), accountancyDisplayCurrency)}</td>
                 </tr>
               ))}

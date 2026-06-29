@@ -91,7 +91,7 @@ function StatementPanel({
   groups: CategoryGroup[];
   total: number;
   tone: "positive" | "negative";
-  displayCurrency: "USD" | "THS";
+  displayCurrency: "USD" | "TZS";
 }) {
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const toneClass = tone === "positive" ? "text-green-600" : "text-destructive";

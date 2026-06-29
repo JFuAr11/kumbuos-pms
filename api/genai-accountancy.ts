@@ -119,10 +119,10 @@ Category and subcategory guidance:
 - For Expense linked to a supplier bill, extract the supplier invoice ID when visible.
 
 Currency and FX rules:
-- Source invoices and proof-of-payment documents can be in USD or Tanzanian shillings. In KumbuOS use "THS" for Tanzanian shillings; if the document says TZS, normalize it to THS.
+- Source invoices and proof-of-payment documents can be in USD or Tanzanian shillings. In KumbuOS use "TZS" for Tanzanian shillings; if legacy data says THS, normalize it to TZS.
 - Always identify the source document currency when visible and return it in currency.
 - Always return amountUsd and amountThs regardless of the source currency.
-- Always return FX_USD_THS as fxUsdThs and FX_THS_USD as fxThsUsd.
+- Always return FX_USD_TZS as fxUsdThs and FX_TZS_USD as fxThsUsd.
 - Use the invoice issue date for the exchange rate when the document provides enough information. If you cannot verify the exact historical exchange rate from the document, use 2600 for fxUsdThs and 0.0003846154 for fxThsUsd, and ask the user to confirm or adjust the FX fields before posting.
 
 Return strict JSON only:
@@ -143,7 +143,7 @@ Return strict JSON only:
     "counterparty": "customer, agency, OTA, supplier, or vendor name",
     "description": "one-line accounting description",
     "amount": 0,
-    "currency": "USD|THS",
+    "currency": "USD|TZS",
     "amountUsd": 0,
     "amountThs": 0,
     "fxUsdThs": 2600,
@@ -251,8 +251,8 @@ const defaultFxThsUsd = 1 / defaultFxUsdThs;
 
 function normalizeCurrency(currency: string) {
   const value = String(currency || "USD").trim().toUpperCase();
-  if (value === "TZS") return "THS";
-  return value === "THS" ? "THS" : "USD";
+  if (value === "TZS" || value === "THS") return "TZS";
+  return "USD";
 }
 
 function roundMoney(value: number, digits = 2) {
@@ -265,7 +265,7 @@ function buildDualCurrencyAmounts(amount: number, currency: string, fxUsdThs?: n
   const safeFxUsdThs = Number(fxUsdThs || defaultFxUsdThs);
   const safeFxThsUsd = Number(fxThsUsd || (safeFxUsdThs ? 1 / safeFxUsdThs : defaultFxThsUsd));
 
-  if (normalizedCurrency === "THS") {
+  if (normalizedCurrency === "TZS") {
     return {
       amountUsd: roundMoney(Number(amount || 0) * safeFxThsUsd),
       amountThs: roundMoney(Number(amount || 0), 0),

@@ -215,7 +215,7 @@ function ChartCard({ title, description, children }: { title: string; descriptio
   );
 }
 
-function mergeCategoryGroups(series: Array<{ label: string; entries: AccountancyEntry[] }>, displayCurrency: "USD" | "THS") {
+function mergeCategoryGroups(series: Array<{ label: string; entries: AccountancyEntry[] }>, displayCurrency: "USD" | "TZS") {
   const rows = new Map<string, ChartRow>();
 
   series.forEach(({ label, entries }) => {
@@ -239,7 +239,7 @@ function mergeCategoryGroups(series: Array<{ label: string; entries: Accountancy
     });
 }
 
-function buildMonthlyRows(entries: AccountancyEntry[], displayCurrency: "USD" | "THS") {
+function buildMonthlyRows(entries: AccountancyEntry[], displayCurrency: "USD" | "TZS") {
   const rows = entries.reduce((acc, entry) => {
     const month = entry.date?.slice(0, 7) || "Unknown";
     const existing = acc.get(month) || {

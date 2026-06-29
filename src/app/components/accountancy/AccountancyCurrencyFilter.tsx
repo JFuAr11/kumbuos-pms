@@ -4,7 +4,7 @@ import { useAppContext } from "../../context/AppContext";
 export function AccountancyCurrencyFilter({ compact = false }: { compact?: boolean }) {
   const { accountancyDisplayCurrency, setAccountancyDisplayCurrency } = useAppContext();
 
-  const options: AccountancyDisplayCurrency[] = ["USD", "THS"];
+  const options: AccountancyDisplayCurrency[] = ["USD", "TZS"];
 
   return (
     <div className={`flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/10 p-2 shadow-sm ${compact ? "" : "sm:justify-end"}`}>

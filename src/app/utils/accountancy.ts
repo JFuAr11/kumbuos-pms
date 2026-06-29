@@ -54,8 +54,8 @@ export function filterEntriesByDateRange<T extends Pick<AccountancyEntry, "date"
 
 export function formatMoney(value: number, currency = "USD") {
   const normalizedCurrency = normalizeCurrency(currency);
-  if (normalizedCurrency === "THS") {
-    return `THS ${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value || 0)}`;
+  if (normalizedCurrency === "TZS") {
+    return `TZS ${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value || 0)}`;
   }
 
   try {
@@ -71,8 +71,8 @@ export function formatMoney(value: number, currency = "USD") {
 
 export function normalizeCurrency(currency?: string) {
   const value = (currency || "USD").trim().toUpperCase();
-  if (value === "TZS") return "THS";
-  return value === "THS" ? "THS" : "USD";
+  if (value === "TZS" || value === "THS") return "TZS";
+  return "USD";
 }
 
 export function getFxForDate(_date?: string) {
@@ -93,7 +93,7 @@ export function buildDualCurrencyAmounts(params: {
   const fxThsUsd = Number(params.fxThsUsd || (fxUsdThs ? 1 / fxUsdThs : DEFAULT_FX_THS_USD));
   const amount = Number(params.amount || 0);
 
-  if (currency === "THS") {
+  if (currency === "TZS") {
     return {
       amountUsd: roundMoney(amount * fxThsUsd),
       amountThs: roundMoney(amount, 0),
@@ -188,7 +188,7 @@ export function groupAccountancyEntriesByCategory(entries: AccountancyEntry[], d
 
     breakdown.forEach(subcategory => {
       const name = subcategory.name || "Unassigned";
-      const amount = displayCurrency === "THS" ? Number(subcategory.amountThs || 0) : Number(subcategory.amountUsd || 0);
+      const amount = displayCurrency === "TZS" ? Number(subcategory.amountThs || 0) : Number(subcategory.amountUsd || 0);
       acc[key].subcategories[name] = (acc[key].subcategories[name] || 0) + amount;
     });
 
@@ -219,7 +219,7 @@ export function getEntryThsAmount(entry: AccountancyEntry) {
 }
 
 export function getEntryDisplayAmount(entry: AccountancyEntry, displayCurrency: AccountancyDisplayCurrency = "USD") {
-  return displayCurrency === "THS" ? getEntryThsAmount(entry) : getEntryUsdAmount(entry);
+  return displayCurrency === "TZS" ? getEntryThsAmount(entry) : getEntryUsdAmount(entry);
 }
 
 export function formatDisplayMoney(value: number, displayCurrency: AccountancyDisplayCurrency = "USD") {
