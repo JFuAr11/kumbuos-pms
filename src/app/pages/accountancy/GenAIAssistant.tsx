@@ -4,14 +4,10 @@ import type { AccountancyAttachment, AccountancyEntry } from "../../context/AppC
 import { useAppContext } from "../../context/AppContext";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
-import { AccountancyCurrencyFilter } from "../../components/accountancy/AccountancyCurrencyFilter";
-import { AccountancyDateRangeFilter } from "../../components/accountancy/AccountancyDateRangeFilter";
 import {
   buildDualCurrencyAmounts,
-  filterEntriesByDateRange,
   formatDisplayMoney,
   formatMoney,
-  getDefaultAccountancyDateRange,
   getDatedCategoryName,
   getEntryDisplayAmount,
   getEntryThsAmount,
@@ -129,12 +125,11 @@ export function AccountancyGenAIAssistant() {
   const [isLoading, setIsLoading] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
-  const [dateRange, setDateRange] = useState(getDefaultAccountancyDateRange);
   const [error, setError] = useState("");
 
   const recentAiEntries = useMemo(
-    () => filterEntriesByDateRange(propertyEntries.filter(entry => entry.source === "GenAI Assistant"), dateRange).slice(0, 5),
-    [propertyEntries, dateRange],
+    () => propertyEntries.filter(entry => entry.source === "GenAI Assistant").slice(0, 5),
+    [propertyEntries],
   );
 
   const exportAssistantPdf = () => {
@@ -446,8 +441,6 @@ export function AccountancyGenAIAssistant() {
           <p className="text-muted-foreground">Create, review, modify, or delete revenues, expenses, assets, and liabilities only after explicit confirmation.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <AccountancyDateRangeFilter compact value={dateRange} onChange={setDateRange} />
-          <AccountancyCurrencyFilter compact />
           <Button variant="outline" size="sm" onClick={exportAssistantPdf}>
             <Download className="mr-2 h-4 w-4" />
             PDF
