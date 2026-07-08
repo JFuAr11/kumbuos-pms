@@ -14,7 +14,7 @@ type GeminiHttpError = Error & {
 
 const safeHelpResponse = {
   reply:
-    "I can help only with Accountancy: read supplier invoices and proof-of-payment documents, prepare revenue, expense, asset, or liability entries, and propose updates or deletions to existing accounting entries. I will always ask for confirmation before posting, editing, or deleting anything.",
+    "I can help only with Accountancy: read supplier invoices and proof-of-payment documents, import current financial statements as a reviewed financial baseline, prepare revenue, expense, asset, or liability entries, and propose updates or deletions to existing accounting entries. I will always ask for confirmation before posting, editing, or deleting anything.",
   extraction: {
     action: "none",
     targetEntryId: "",
@@ -25,6 +25,11 @@ const safeHelpResponse = {
     category: "",
     subcategories: [],
     subcategoryBreakdown: [],
+    ifrsTreatment: "",
+    capitalizationCandidate: false,
+    assetUsefulLifeMonths: 0,
+    depreciationMethod: "",
+    ifrsNotes: "",
     counterparty: "",
     description: "",
     amount: 0,
@@ -57,6 +62,11 @@ const safeUnableToExtractResponse = {
     category: "",
     subcategories: [],
     subcategoryBreakdown: [],
+    ifrsTreatment: "",
+    capitalizationCandidate: false,
+    assetUsefulLifeMonths: 0,
+    depreciationMethod: "",
+    ifrsNotes: "",
     counterparty: "",
     description: "",
     amount: 0,
@@ -91,13 +101,17 @@ Your job:
 2. Interpret Accountancy-only requests to create, update, or delete ledger entries.
 3. Decide whether the accounting entry is Revenue, Expense, Asset, or Liability.
 4. Extract the exact fields required by the KumbuOS Accountancy ledger, including category and one or many subcategories.
-5. Never post, edit, or delete directly. Return a reviewable JSON candidate so the user can confirm or edit it.
+5. Extract invoice line item details when visible: item name, quantity, unit, unit price, and line total.
+6. Import current financial statements when the user is setting a financial baseline/opening position.
+7. Apply IFRS-oriented classification support for hospitality accounting, while still returning a reviewable candidate for the user.
+8. Never post, edit, or delete directly. Return a reviewable JSON candidate so the user can confirm or edit it.
 
 Hard guardrails:
 - You are strictly limited to the Accountancy module.
 - Never propose or describe actions that modify Reservations, Supply Requests, Check-in, Admin Platform, Owner Console, companies, properties, users, permissions, rates, rooms, or clients.
 - Only work with the active property and the provided active-property ledger entries.
 - For update/delete requests, identify an existing ledger entry from the provided entries. If the target is unclear, return action "none", type "Unknown", and questions.
+- For financial baseline/opening-position requests, read the provided P&L and Balance statements and return a batch of entries in extraction.entries. Each returned entry must be one confirmed-source candidate that the user can review before posting.
 
 Classify:
 - Proof of payment, bank transfer proof, customer receipt, OTA payout, reservation payment: Revenue.
@@ -105,6 +119,15 @@ Classify:
 - Cash, bank deposits, receivables, inventory, equipment, vehicles, fixed assets, prepayments: Asset.
 - Supplier balances payable, customer deposits, taxes payable, loans, accrued costs: Liability.
 - If the document is ambiguous, return type "Unknown" and list questions.
+- IFRS operating logic: ordinary consumables and repairs that maintain an asset are usually Expense; materials/equipment that create future economic benefits or improve a property beyond normal maintenance are Asset/PPE capitalization candidates; goods held for later consumption/resale are Inventory assets; customer payments before service delivery can be Liability/Customer Deposits until earned; depreciation/amortization is an Expense paired with a contra-asset/asset adjustment managed after user confirmation.
+- If a supplier invoice mixes operating expense items and capitalizable PPE/improvement items, prefer type "Unknown" with questions unless the user explicitly asks to post a single treatment. Never silently split into multiple postings.
+- For a financial baseline import, split statement lines into separate ledger candidates:
+  - P&L revenue lines -> Revenue.
+  - P&L expense lines -> Expense.
+  - Balance asset lines -> Asset.
+  - Balance liability lines -> Liability.
+  - Do not create P&L total, Balance total, net profit, retained earnings, or subtotal lines as separate entries unless the statement only provides totals and no detail.
+  - Use category names exactly enough to preserve traceability, and use subcategories for statement line details when available.
 
 Category and subcategory guidance:
 - Revenue categories include Accommodation Revenue, Food & Beverage Revenue, Activities Revenue, OTA Payments, Direct Client Payments, Agency Payments, Tour Operator Payments.
@@ -114,7 +137,8 @@ Category and subcategory guidance:
 - Always identify subcategories when visible. For food invoices, use ingredients or line items as subcategories, for example Carrot, Chicken, Leek.
 - A category can have one or many subcategories. If subcategories are not visible or cannot be inferred safely, return an empty subcategories array and ask the user to add them.
 - When line items or ingredients have values, return subcategoryBreakdown with one row per subcategory and its amount in the source invoice currency.
-- The sum of subcategoryBreakdown[].amount must equal the invoice/category total amount. If the document has multiple subcategory lines, allocate the full invoice total across them exactly.
+- For every visible line item, include quantity, unit, unitPrice, and lineTotal when available. lineTotal should equal quantity * unitPrice when both are visible. These fields are informational and must be saved for audit traceability, but the ledger amount used for accounting is the invoice total amount.
+- subcategoryBreakdown[].amount is the line allocation in the source invoice currency. The sum of subcategoryBreakdown[].amount must equal the invoice/category total amount. If the document has multiple subcategory lines, allocate the full invoice total across them exactly.
 - For Revenue linked to a booking, extract the reservation ID when visible, for example RR_000001, and extract the customer invoice ID when visible.
 - For Expense linked to a supplier bill, extract the supplier invoice ID when visible.
 
@@ -138,7 +162,7 @@ Return strict JSON only:
     "category": "short ledger category",
     "subcategories": ["one or more concrete subcategories when visible"],
     "subcategoryBreakdown": [
-      { "name": "subcategory name", "amount": 0, "amountUsd": 0, "amountThs": 0 }
+      { "name": "subcategory name", "quantity": 0, "unit": "unit label or empty", "unitPrice": 0, "lineTotal": 0, "amount": 0, "amountUsd": 0, "amountThs": 0 }
     ],
     "counterparty": "customer, agency, OTA, supplier, or vendor name",
     "description": "one-line accounting description",
@@ -155,13 +179,42 @@ Return strict JSON only:
     "paymentMethod": "bank transfer, card, cash, mobile money, or empty",
     "reference": "invoice number, POP reference, reservation ID, transaction ID, or empty",
     "taxAmount": 0,
-    "questions": []
+    "ifrsTreatment": "Operating Expense|Inventory|PPE Capitalization|PPE Depreciation|Intangible Amortization|Revenue Recognition|Liability Recognition|Prepayment|Manual Adjustment|empty",
+    "capitalizationCandidate": false,
+    "assetUsefulLifeMonths": 0,
+    "depreciationMethod": "Straight-line|Manual|empty",
+    "ifrsNotes": "short explanation of IFRS reasoning or empty",
+    "questions": [],
+    "entries": [
+      {
+        "action": "create",
+        "type": "Revenue|Expense|Asset|Liability",
+        "date": "YYYY-MM-DD",
+        "category": "statement line category",
+        "subcategories": ["optional details"],
+        "subcategoryBreakdown": [{ "name": "detail", "amount": 0, "amountUsd": 0, "amountThs": 0 }],
+        "counterparty": "Opening Financial Statements or statement source",
+        "description": "Financial baseline line imported from P&L or Balance",
+        "amount": 0,
+        "currency": "USD|TZS",
+        "amountUsd": 0,
+        "amountThs": 0,
+        "fxUsdThs": 2600,
+        "fxThsUsd": 0.0003846154,
+        "reference": "Financial baseline YYYY-MM-DD",
+        "documentType": "Other",
+        "ifrsTreatment": "Revenue Recognition|Operating Expense|PPE Capitalization|Liability Recognition|Manual Adjustment",
+        "ifrsNotes": "short baseline classification note",
+        "questions": []
+      }
+    ]
   }
 }
 
 Rules:
 - Use numbers only for amount and taxAmount.
-- Use numbers only for amountUsd, amountThs, fxUsdThs, fxThsUsd, and subcategoryBreakdown amounts.
+- Use numbers only for amountUsd, amountThs, fxUsdThs, fxThsUsd, quantity, unitPrice, lineTotal, assetUsefulLifeMonths, and subcategoryBreakdown amounts.
+- Keep amount equal to the full invoice total. Do not sum line items into additional ledger entries. Line item quantity/unit/lineTotal are informational audit fields only.
 - Validate internally that the subcategoryBreakdown source-currency amount sum equals amount. If it does not, correct the allocation before returning JSON.
 - For normal invoice or proof-of-payment extraction, action is "create".
 - For a user request to modify/correct/change an existing entry, action is "update".
@@ -171,6 +224,8 @@ Rules:
 - Do not invent invoice numbers, dates, tax, or payment references.
 - If multiple line items exist, use the accounting category for the group and put each meaningful line item into subcategories.
 - Use hotel finance language, concise and operational.
+- For normal single-document extraction, extraction.entries can be omitted or empty.
+- For financial baseline import, set extraction.action to "create", extraction.type to "Unknown" if the batch contains mixed types, and put all proposed ledger lines in extraction.entries.
 `.trim();
 
 function readModelList() {
@@ -290,13 +345,31 @@ function normalizeSubcategoryBreakdown(extraction: any, currency: string, fxUsdT
   if (rows.length) {
     return rows
       .map((item: any) => {
-        const amount = Number.isFinite(Number(item.amount)) ? Number(item.amount) : 0;
+        const quantity = Number.isFinite(Number(item.quantity)) ? Number(item.quantity) : undefined;
+        const unitPrice = Number.isFinite(Number(item.unitPrice)) ? Number(item.unitPrice) : undefined;
+        const computedLineTotal = quantity && unitPrice ? roundMoney(quantity * unitPrice, currency === "TZS" ? 0 : 2) : undefined;
+        const lineTotal = Number.isFinite(Number(item.lineTotal)) ? Number(item.lineTotal) : computedLineTotal;
+        const amount = Number.isFinite(Number(item.amount)) ? Number(item.amount) : Number(lineTotal || 0);
         const fx = buildDualCurrencyAmounts(amount, currency, fxUsdThs, fxThsUsd);
+        const unitFx = unitPrice !== undefined
+          ? buildDualCurrencyAmounts(unitPrice, currency, fxUsdThs, fxThsUsd)
+          : null;
+        const lineFx = Number.isFinite(Number(lineTotal))
+          ? buildDualCurrencyAmounts(Number(lineTotal), currency, fxUsdThs, fxThsUsd)
+          : fx;
         return {
           name: String(item.name || "").trim(),
+          quantity,
+          unit: String(item.unit || "").trim(),
+          unitPrice,
+          lineTotal: Number.isFinite(Number(lineTotal)) ? Number(lineTotal) : amount,
           amount,
           amountUsd: Number.isFinite(Number(item.amountUsd)) ? Number(item.amountUsd) : fx.amountUsd,
           amountThs: Number.isFinite(Number(item.amountThs)) ? Number(item.amountThs) : fx.amountThs,
+          unitPriceUsd: Number.isFinite(Number(item.unitPriceUsd)) ? Number(item.unitPriceUsd) : unitFx?.amountUsd,
+          unitPriceThs: Number.isFinite(Number(item.unitPriceThs)) ? Number(item.unitPriceThs) : unitFx?.amountThs,
+          lineTotalUsd: Number.isFinite(Number(item.lineTotalUsd)) ? Number(item.lineTotalUsd) : lineFx.amountUsd,
+          lineTotalThs: Number.isFinite(Number(item.lineTotalThs)) ? Number(item.lineTotalThs) : lineFx.amountThs,
         };
       })
       .filter((item: any) => item.name);
@@ -316,12 +389,14 @@ function normalizeSubcategoryBreakdown(extraction: any, currency: string, fxUsdT
       amount: splitAmount,
       amountUsd: fx.amountUsd,
       amountThs: fx.amountThs,
+      lineTotal: splitAmount,
+      lineTotalUsd: fx.amountUsd,
+      lineTotalThs: fx.amountThs,
     };
   });
 }
 
-function normalizeAssistantPayload(payload: any, propertyCurrency = "USD") {
-  const extraction = payload?.extraction || {};
+function normalizeSingleExtraction(extraction: any, propertyCurrency = "USD") {
   const action = ["create", "update", "delete", "none"].includes(extraction.action)
     ? extraction.action
     : "none";
@@ -337,39 +412,64 @@ function normalizeAssistantPayload(payload: any, propertyCurrency = "USD") {
   const subcategoryBreakdown = normalizeSubcategoryBreakdown(extraction, currency, fxSeed.fxUsdThs, fxSeed.fxThsUsd);
 
   return {
+    action,
+    targetEntryId: String(extraction.targetEntryId || ""),
+    targetReference: String(extraction.targetReference || ""),
+    type,
+    confidence: Number.isFinite(Number(extraction.confidence)) ? Number(extraction.confidence) : 0,
+    date: String(extraction.date || ""),
+    category: String(extraction.category || ""),
+    subcategories: subcategoryBreakdown.length
+      ? subcategoryBreakdown.map((item: any) => item.name)
+      : Array.isArray(extraction.subcategories)
+        ? extraction.subcategories.map(String).map((item: string) => item.trim()).filter(Boolean)
+        : [],
+    subcategoryBreakdown,
+    counterparty: String(extraction.counterparty || ""),
+    description: String(extraction.description || ""),
+    amount,
+    currency,
+    amountUsd: Number.isFinite(Number(extraction.amountUsd)) ? Number(extraction.amountUsd) : fxSeed.amountUsd,
+    amountThs: Number.isFinite(Number(extraction.amountThs)) ? Number(extraction.amountThs) : fxSeed.amountThs,
+    fxUsdThs: fxSeed.fxUsdThs,
+    fxThsUsd: fxSeed.fxThsUsd,
+    reservationId: String(extraction.reservationId || ""),
+    customerInvoiceId: String(extraction.customerInvoiceId || ""),
+    supplierInvoiceId: String(extraction.supplierInvoiceId || ""),
+    documentType,
+    paymentMethod: String(extraction.paymentMethod || ""),
+    reference: String(extraction.reference || ""),
+    taxAmount: Number.isFinite(Number(extraction.taxAmount)) ? Number(extraction.taxAmount) : 0,
+    ifrsTreatment: String(extraction.ifrsTreatment || ""),
+    capitalizationCandidate: Boolean(extraction.capitalizationCandidate),
+    assetUsefulLifeMonths: Number.isFinite(Number(extraction.assetUsefulLifeMonths)) ? Number(extraction.assetUsefulLifeMonths) : 0,
+    depreciationMethod: String(extraction.depreciationMethod || ""),
+    ifrsNotes: String(extraction.ifrsNotes || ""),
+    questions: Array.isArray(extraction.questions) ? extraction.questions.map(String) : [],
+  };
+}
+
+function normalizeAssistantPayload(payload: any, propertyCurrency = "USD") {
+  const extraction = payload?.extraction || {};
+  const normalizedExtraction = normalizeSingleExtraction(extraction, propertyCurrency);
+  const rawEntries = Array.isArray(extraction.entries)
+    ? extraction.entries
+    : Array.isArray(payload?.entries)
+      ? payload.entries
+      : [];
+  const entries = rawEntries.length
+    ? rawEntries
+      .map((entry: any) => normalizeSingleExtraction({ action: "create", ...entry }, propertyCurrency))
+      .filter((entry: any) => entry.type !== "Unknown" && entry.category && Number(entry.amount))
+    : [];
+
+  return {
     reply: typeof payload?.reply === "string" && payload.reply.trim()
       ? payload.reply.trim()
       : safeUnableToExtractResponse.reply,
     extraction: {
-      action,
-      targetEntryId: String(extraction.targetEntryId || ""),
-      targetReference: String(extraction.targetReference || ""),
-      type,
-      confidence: Number.isFinite(Number(extraction.confidence)) ? Number(extraction.confidence) : 0,
-      date: String(extraction.date || ""),
-      category: String(extraction.category || ""),
-      subcategories: subcategoryBreakdown.length
-        ? subcategoryBreakdown.map((item: any) => item.name)
-        : Array.isArray(extraction.subcategories)
-          ? extraction.subcategories.map(String).map((item: string) => item.trim()).filter(Boolean)
-          : [],
-      subcategoryBreakdown,
-      counterparty: String(extraction.counterparty || ""),
-      description: String(extraction.description || ""),
-      amount,
-      currency,
-      amountUsd: Number.isFinite(Number(extraction.amountUsd)) ? Number(extraction.amountUsd) : fxSeed.amountUsd,
-      amountThs: Number.isFinite(Number(extraction.amountThs)) ? Number(extraction.amountThs) : fxSeed.amountThs,
-      fxUsdThs: fxSeed.fxUsdThs,
-      fxThsUsd: fxSeed.fxThsUsd,
-      reservationId: String(extraction.reservationId || ""),
-      customerInvoiceId: String(extraction.customerInvoiceId || ""),
-      supplierInvoiceId: String(extraction.supplierInvoiceId || ""),
-      documentType,
-      paymentMethod: String(extraction.paymentMethod || ""),
-      reference: String(extraction.reference || ""),
-      taxAmount: Number.isFinite(Number(extraction.taxAmount)) ? Number(extraction.taxAmount) : 0,
-      questions: Array.isArray(extraction.questions) ? extraction.questions.map(String) : [],
+      ...normalizedExtraction,
+      entries,
     },
   };
 }
@@ -420,7 +520,7 @@ export default async function handler(req: any, res: any) {
   }
 
   const requestPayload = typeof req.body === "string" ? JSON.parse(req.body || "{}") : req.body || {};
-  const { message = "", files = [], property = {}, accountancyEntries = [] } = requestPayload;
+  const { message = "", files = [], property = {}, accountancyEntries = [], mode = "transactions" } = requestPayload;
   if (!message.trim() && !files.length) {
     res.status(400).json({ error: "Message or files are required." });
     return;
@@ -443,6 +543,9 @@ Active property:
 
 User request:
 ${message || "Please read the attached document and extract the accounting entry."}
+
+Assistant mode:
+${mode === "financial-baseline" ? "Financial Baseline Setup. The user is providing P&L and Balance statements to create the current/opening accounting position for this property. Return all statement lines as extraction.entries for review." : "Document Chat. Return one reviewable accounting candidate unless the user explicitly asks for a batch."}
 
 Existing active-property Accountancy ledger entries available for update/delete:
 ${JSON.stringify(accountancyEntries).slice(0, 12000)}

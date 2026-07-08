@@ -20,6 +20,7 @@ import { AccountancyDateRangeFilter } from "../../components/accountancy/Account
 import { Button } from "../../components/ui/button";
 import {
   filterEntriesByDateRange,
+  getAccountancySyncDiagnostic,
   formatDisplayMoney,
   getAccountancySummary,
   getConfirmedAccountancyEntries,
@@ -37,6 +38,7 @@ export function AccountancyOverview() {
   const confirmedEntries = getConfirmedAccountancyEntries({ propertyId: selectedPropertyId, accountancyEntries, dateRange });
   const propertyEntries = filterEntriesByDateRange(accountancyEntries.filter(entry => entry.propertyId === selectedPropertyId), dateRange);
   const summary = getAccountancySummary({ propertyId: selectedPropertyId, accountancyEntries, displayCurrency: accountancyDisplayCurrency, dateRange });
+  const syncDiagnostic = getAccountancySyncDiagnostic({ propertyId: selectedPropertyId, accountancyEntries, displayCurrency: accountancyDisplayCurrency, dateRange });
   const aiEntries = propertyEntries.filter(entry => entry.source === "GenAI Assistant");
 
   const revenueEntries = confirmedEntries.filter(entry => entry.type === "Revenue");
@@ -109,6 +111,32 @@ export function AccountancyOverview() {
         <Metric title="P&L Net Profit" value={formatDisplayMoney(summary.netProfit, accountancyDisplayCurrency)} tone={summary.netProfit >= 0 ? "positive" : "negative"} icon={Scale} />
         <Metric title="Balance Net Position" value={formatDisplayMoney(summary.netBalance, accountancyDisplayCurrency)} tone={summary.netBalance >= 0 ? "positive" : "negative"} icon={Wallet} />
         <Metric title="AI Posted Entries" value={String(aiEntries.length)} tone="neutral" icon={Bot} />
+      </div>
+
+      <div className={`rounded-xl border p-5 shadow-sm ${syncDiagnostic.ok ? "border-green-500/30 bg-green-500/10" : "border-amber-500/40 bg-amber-500/10"}`}>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wider text-primary">Accountancy synchronization</p>
+            <h2 className="mt-1 text-xl font-bold">{syncDiagnostic.ok ? "Fully synchronized" : "Needs review"}</h2>
+            <p className="mt-1 text-sm text-muted-foreground">{syncDiagnostic.message}</p>
+          </div>
+          <div className="grid gap-2 text-sm sm:grid-cols-3">
+            <SyncBadge label="Confirmed" value={syncDiagnostic.confirmedCount} />
+            <SyncBadge label="P&L Sources" value={syncDiagnostic.pAndLSourceCount} />
+            <SyncBadge label="Balance Sources" value={syncDiagnostic.balanceSourceCount} />
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          {syncDiagnostic.checks.map(check => (
+            <div key={check.label} className="rounded-lg border border-border bg-card/80 p-3">
+              <p className={`text-xs font-semibold uppercase tracking-wider ${check.status === "ok" ? "text-green-700" : "text-amber-700"}`}>
+                {check.status === "ok" ? "OK" : "Review"}
+              </p>
+              <p className="mt-1 font-medium">{check.label}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{check.detail}</p>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -199,6 +227,15 @@ function Line({ label, value, strong }: { label: string; value: string; strong?:
     <div className={`flex items-center justify-between rounded-md bg-muted/40 px-3 py-2 ${strong ? "font-semibold" : ""}`}>
       <span className="text-sm text-muted-foreground">{label}</span>
       <span className="font-semibold">{value}</span>
+    </div>
+  );
+}
+
+function SyncBadge({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md border border-border bg-card px-3 py-2">
+      <span className="block text-xs uppercase tracking-wider text-muted-foreground">{label}</span>
+      <span className="text-lg font-bold">{value}</span>
     </div>
   );
 }

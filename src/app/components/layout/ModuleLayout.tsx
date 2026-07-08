@@ -23,6 +23,7 @@ import {
   Scale,
   Coffee,
   Calculator,
+  ReceiptText,
   Utensils,
   Wind,
   Wrench,
@@ -70,6 +71,7 @@ const ACCOUNTANCY_ITEMS = [
   { path: "/app/accountancy/balance", label: "Balance", icon: Scale },
   { path: "/app/accountancy/assets", label: "Assets", icon: Wallet, level: 1 },
   { path: "/app/accountancy/liabilities", label: "Liabilities", icon: DollarSign, level: 1 },
+  { path: "/app/accountancy/amortization", label: "Depreciation & Amortization", icon: ReceiptText, level: 1 },
   { path: "/app/accountancy/genai-assistant", label: "GenAI Assistant", icon: Bot },
   { path: "/app/accountancy/notifications", label: "Notifications", icon: Bell },
 ];

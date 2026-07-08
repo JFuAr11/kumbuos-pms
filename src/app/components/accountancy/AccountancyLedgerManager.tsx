@@ -8,6 +8,7 @@ import { Input } from "../ui/input";
 import {
   buildDualCurrencyAmounts,
   filterEntriesByDateRange,
+  formatAccountancyLineItem,
   formatDisplayMoney,
   formatMoney,
   getDefaultAccountancyDateRange,
@@ -47,12 +48,16 @@ const categoryOptions: Record<AccountancyEntry["type"], string[]> = {
     "Marketing",
     "Bank Fees",
     "Taxes",
+    "Depreciation & Amortization",
   ],
   Asset: [
     "Cash and Bank",
     "Accounts Receivable",
     "Inventory",
     "Fixed Assets",
+    "Capital Improvements",
+    "Accumulated Depreciation",
+    "Accumulated Amortization",
     "Prepayments",
   ],
   Liability: [
@@ -73,7 +78,7 @@ const blankEntry = (propertyId: string, type: AccountancyEntry["type"]): Account
     date: new Date().toISOString().split("T")[0],
     category: "",
     subcategories: [""],
-    subcategoryBreakdown: [{ name: "", amount: 0, amountUsd: 0, amountThs: 0 }],
+    subcategoryBreakdown: [{ name: "", amount: 0, amountUsd: 0, amountThs: 0, lineTotal: 0 }],
     counterparty: "",
     description: "",
     amount: 0,
@@ -151,7 +156,7 @@ export function AccountancyLedgerManager({
         Type: entry.type,
         Category: getDatedCategoryName(entry.category, entry.date),
         Subcategories: entry.subcategoryBreakdown?.length
-          ? entry.subcategoryBreakdown.map(item => `${item.name}: ${formatMoney(Number(item.amount || 0), entry.currency)}`).join(", ")
+          ? entry.subcategoryBreakdown.map(item => formatAccountancyLineItem(item, entry.currency)).join(", ")
           : "Unassigned",
         Traceability: formatTraceability(entry),
         Counterparty: entry.counterparty,
@@ -252,12 +257,21 @@ export function AccountancyLedgerManager({
 
   const subcategoryBreakdown = editing?.subcategoryBreakdown?.length
     ? editing.subcategoryBreakdown
-    : [{ name: "", amount: 0, amountUsd: 0, amountThs: 0 }];
+    : [{ name: "", amount: 0, amountUsd: 0, amountThs: 0, lineTotal: 0 }];
 
   const updateSubcategory = (index: number, updates: Partial<SubcategoryLine>) => {
     if (!editing) return;
     const next = [...subcategoryBreakdown];
     const candidate = { ...next[index], ...updates };
+    const quantity = Number(candidate.quantity || 0);
+    const unitPrice = Number(candidate.unitPrice || 0);
+    if ((updates.quantity !== undefined || updates.unitPrice !== undefined) && quantity && unitPrice) {
+      candidate.lineTotal = roundMoney(quantity * unitPrice, normalizeCurrency(editing.currency) === "TZS" ? 0 : 2);
+      candidate.amount = candidate.lineTotal;
+    }
+    if (updates.lineTotal !== undefined && updates.amount === undefined) {
+      candidate.amount = Number(updates.lineTotal || 0);
+    }
     const fx = buildDualCurrencyAmounts({
       amount: Number(candidate.amount || 0),
       currency: editing.currency,
@@ -266,6 +280,10 @@ export function AccountancyLedgerManager({
     });
     next[index] = {
       name: candidate.name || "",
+      quantity: candidate.quantity,
+      unit: candidate.unit || "",
+      unitPrice: candidate.unitPrice,
+      lineTotal: candidate.lineTotal ?? candidate.amount,
       amount: Number(candidate.amount || 0),
       amountUsd: fx.amountUsd,
       amountThs: fx.amountThs,
@@ -279,7 +297,7 @@ export function AccountancyLedgerManager({
   const addSubcategory = () => {
     if (!editing) return;
     updateEditing({
-      subcategoryBreakdown: [...subcategoryBreakdown, { name: "", amount: 0, amountUsd: 0, amountThs: 0 }],
+      subcategoryBreakdown: [...subcategoryBreakdown, { name: "", amount: 0, amountUsd: 0, amountThs: 0, lineTotal: 0 }],
     });
   };
 
@@ -287,7 +305,7 @@ export function AccountancyLedgerManager({
     if (!editing) return;
     const next = subcategoryBreakdown.filter((_, itemIndex) => itemIndex !== index);
     updateEditing({
-      subcategoryBreakdown: next.length ? next : [{ name: "", amount: 0, amountUsd: 0, amountThs: 0 }],
+      subcategoryBreakdown: next.length ? next : [{ name: "", amount: 0, amountUsd: 0, amountThs: 0, lineTotal: 0 }],
       subcategories: next.map(item => item.name).filter(Boolean),
     });
   };
@@ -369,6 +387,35 @@ export function AccountancyLedgerManager({
             <ReadOnlyValue label="Amount USD" value={formatMoney(editingUsd, "USD")} />
             <ReadOnlyValue label="Amount TZS" value={formatMoney(editingThs, "TZS")} />
             {fxStatus && <p className="text-xs text-muted-foreground md:col-span-3">{fxStatus}</p>}
+
+            <label className="block text-sm font-medium">
+              IFRS Treatment
+              <select
+                className="mt-1 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                value={editing.ifrsTreatment || ""}
+                onChange={event => updateEditing({ ifrsTreatment: event.target.value as AccountancyEntry["ifrsTreatment"] })}
+              >
+                <option value="">Select treatment</option>
+                <option value="Operating Expense">Operating Expense</option>
+                <option value="Inventory">Inventory</option>
+                <option value="PPE Capitalization">PPE Capitalization</option>
+                <option value="PPE Depreciation">PPE Depreciation</option>
+                <option value="Intangible Amortization">Intangible Amortization</option>
+                <option value="Revenue Recognition">Revenue Recognition</option>
+                <option value="Liability Recognition">Liability Recognition</option>
+                <option value="Prepayment">Prepayment</option>
+                <option value="Manual Adjustment">Manual Adjustment</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm">
+              <input
+                type="checkbox"
+                checked={Boolean(editing.capitalizationCandidate)}
+                onChange={event => updateEditing({ capitalizationCandidate: event.target.checked })}
+              />
+              Capitalization candidate
+            </label>
+            <InputField label="Useful Life (months)" type="number" value={String(editing.assetUsefulLifeMonths || 0)} onChange={value => updateEditing({ assetUsefulLifeMonths: Number(value) })} />
 
             {editing.type === "Revenue" && (
               <>
@@ -453,28 +500,53 @@ export function AccountancyLedgerManager({
               </div>
               <div className="space-y-3">
                 {subcategoryBreakdown.map((subcategory, index) => (
-                  <div key={index} className="grid gap-2 rounded-lg border border-border bg-background p-3 md:grid-cols-[minmax(0,1fr)_160px_140px_140px_40px]">
+                  <div key={index} className="grid gap-2 rounded-lg border border-border bg-background p-3 md:grid-cols-6">
                     <Input
+                      className="md:col-span-2"
                       value={subcategory.name}
                       onChange={event => updateSubcategory(index, { name: event.target.value })}
                       placeholder={index === 0 ? "e.g., Carrot, Chicken, Room upgrade..." : "Additional subcategory"}
                     />
                     <Input
                       type="number"
+                      value={String(subcategory.quantity || "")}
+                      onChange={event => updateSubcategory(index, { quantity: Number(event.target.value) })}
+                      placeholder="Qty"
+                    />
+                    <Input
+                      value={subcategory.unit || ""}
+                      onChange={event => updateSubcategory(index, { unit: event.target.value })}
+                      placeholder="Unit"
+                    />
+                    <Input
+                      type="number"
+                      value={String(subcategory.unitPrice || "")}
+                      onChange={event => updateSubcategory(index, { unitPrice: Number(event.target.value) })}
+                      placeholder="Unit price"
+                    />
+                    <Input
+                      type="number"
+                      value={String(subcategory.lineTotal ?? subcategory.amount ?? 0)}
+                      onChange={event => updateSubcategory(index, { lineTotal: Number(event.target.value), amount: Number(event.target.value) })}
+                      placeholder="Line total"
+                    />
+                    <Input
+                      type="number"
                       value={String(subcategory.amount || 0)}
                       onChange={event => updateSubcategory(index, { amount: Number(event.target.value) })}
-                      placeholder="Amount"
+                      placeholder="Allocation"
                     />
-                    <div className="rounded-md bg-muted px-3 py-2 text-xs">
+                    <div className="rounded-md bg-muted px-3 py-2 text-xs md:col-span-2">
                       <span className="block text-muted-foreground">USD</span>
                       <span className="font-semibold">{formatMoney(subcategory.amountUsd || 0, "USD")}</span>
                     </div>
-                    <div className="rounded-md bg-muted px-3 py-2 text-xs">
+                    <div className="rounded-md bg-muted px-3 py-2 text-xs md:col-span-2">
                       <span className="block text-muted-foreground">TZS</span>
                       <span className="font-semibold">{formatMoney(subcategory.amountThs || 0, "TZS")}</span>
                     </div>
-                    <Button type="button" variant="outline" size="icon" onClick={() => removeSubcategory(index)} aria-label="Remove subcategory">
+                    <Button type="button" variant="outline" size="sm" onClick={() => removeSubcategory(index)} aria-label="Remove subcategory">
                       <X className="h-4 w-4" />
+                      Remove
                     </Button>
                   </div>
                 ))}
@@ -487,6 +559,14 @@ export function AccountancyLedgerManager({
                 className="mt-1 min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 value={editing.description}
                 onChange={event => updateEditing({ description: event.target.value })}
+              />
+            </label>
+            <label className="block text-sm font-medium md:col-span-3">
+              IFRS Notes
+              <textarea
+                className="mt-1 min-h-20 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                value={editing.ifrsNotes || ""}
+                onChange={event => updateEditing({ ifrsNotes: event.target.value })}
               />
             </label>
           </div>
@@ -524,7 +604,7 @@ export function AccountancyLedgerManager({
                   <td className="p-4">{getDatedCategoryName(entry.category, entry.date)}</td>
                   <td className="p-4 text-xs text-muted-foreground">
                     {entry.subcategoryBreakdown?.length
-                      ? entry.subcategoryBreakdown.map(item => `${item.name}: ${formatMoney(item.amount, entry.currency)}`).join(", ")
+                      ? entry.subcategoryBreakdown.map(item => formatAccountancyLineItem(item, entry.currency)).join(", ")
                       : "Unassigned"}
                   </td>
                   <td className="p-4 text-xs text-muted-foreground">{formatTraceability(entry)}</td>
@@ -566,19 +646,44 @@ function recalculateEditing(entry: AccountancyEntry) {
     fxThsUsd: entry.fxThsUsd,
   });
   const currency = normalizeCurrency(entry.currency);
-  const subcategoryBreakdown = (entry.subcategoryBreakdown?.length ? entry.subcategoryBreakdown : [{ name: "", amount: 0, amountUsd: 0, amountThs: 0 }])
+  const subcategoryBreakdown = (entry.subcategoryBreakdown?.length ? entry.subcategoryBreakdown : [{ name: "", amount: 0, amountUsd: 0, amountThs: 0, lineTotal: 0 }])
     .map(item => {
+      const quantity = Number.isFinite(Number(item.quantity)) ? Number(item.quantity) : undefined;
+      const unitPrice = Number.isFinite(Number(item.unitPrice)) ? Number(item.unitPrice) : undefined;
+      const computedLineTotal = quantity && unitPrice ? roundMoney(quantity * unitPrice, currency === "TZS" ? 0 : 2) : undefined;
+      const lineTotal = Number.isFinite(Number(item.lineTotal)) ? Number(item.lineTotal) : computedLineTotal;
+      const amount = Number.isFinite(Number(item.amount)) ? Number(item.amount) : Number(lineTotal || 0);
       const itemFx = buildDualCurrencyAmounts({
-        amount: Number(item.amount || 0),
+        amount,
         currency,
         fxUsdThs: fx.fxUsdThs,
         fxThsUsd: fx.fxThsUsd,
       });
+      const unitFx = unitPrice !== undefined ? buildDualCurrencyAmounts({
+        amount: unitPrice,
+        currency,
+        fxUsdThs: fx.fxUsdThs,
+        fxThsUsd: fx.fxThsUsd,
+      }) : null;
+      const lineFx = Number.isFinite(Number(lineTotal)) ? buildDualCurrencyAmounts({
+        amount: Number(lineTotal),
+        currency,
+        fxUsdThs: fx.fxUsdThs,
+        fxThsUsd: fx.fxThsUsd,
+      }) : itemFx;
       return {
         name: item.name || "",
-        amount: Number(item.amount || 0),
+        quantity,
+        unit: item.unit || "",
+        unitPrice,
+        lineTotal: Number.isFinite(Number(lineTotal)) ? Number(lineTotal) : amount,
+        amount,
         amountUsd: itemFx.amountUsd,
         amountThs: itemFx.amountThs,
+        unitPriceUsd: unitFx?.amountUsd,
+        unitPriceThs: unitFx?.amountThs,
+        lineTotalUsd: lineFx.amountUsd,
+        lineTotalThs: lineFx.amountThs,
       };
     });
 

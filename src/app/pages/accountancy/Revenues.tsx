@@ -6,7 +6,7 @@ import { AccountancyLedgerManager } from "../../components/accountancy/Accountan
 import { AccountancyCurrencyFilter } from "../../components/accountancy/AccountancyCurrencyFilter";
 import { AccountancyDateRangeFilter } from "../../components/accountancy/AccountancyDateRangeFilter";
 import { exportToCSV, exportToExcel, exportToJSON, exportToPDF } from "../../utils/export";
-import { filterEntriesByDateRange, formatDisplayMoney, formatMoney, getAccountancySummary, getDatedCategoryName, getDefaultAccountancyDateRange, getEntryDisplayAmount, getEntryThsAmount, getEntryUsdAmount, normalizeAccountancyEntry } from "../../utils/accountancy";
+import { filterEntriesByDateRange, formatAccountancyLineItem, formatDisplayMoney, getAccountancySummary, getDatedCategoryName, getDefaultAccountancyDateRange, getEntryDisplayAmount, getEntryThsAmount, getEntryUsdAmount, normalizeAccountancyEntry } from "../../utils/accountancy";
 
 export function AccountancyRevenues() {
   const { accountancyEntries, selectedPropertyId, accountancyDisplayCurrency } = useAppContext();
@@ -23,7 +23,7 @@ export function AccountancyRevenues() {
     Date: entry.date,
     Category: getDatedCategoryName(entry.category, entry.date),
     Subcategories: entry.subcategoryBreakdown?.length
-      ? entry.subcategoryBreakdown.map(item => `${item.name}: ${formatMoney(item.amount, entry.currency)}`).join(", ")
+      ? entry.subcategoryBreakdown.map(item => formatAccountancyLineItem(item, entry.currency)).join(", ")
       : entry.subcategories?.join(", ") || "",
     ReservationID: entry.reservationId || "",
     CustomerInvoiceID: entry.customerInvoiceId || "",

@@ -6,7 +6,7 @@ import { AccountancyDateRangeFilter } from "../../components/accountancy/Account
 import { Button } from "../../components/ui/button";
 import { useAppContext } from "../../context/AppContext";
 import { exportToCSV, exportToExcel, exportToJSON, exportToPDF } from "../../utils/export";
-import { filterEntriesByDateRange, formatDisplayMoney, formatMoney, getAccountancySummary, getDatedCategoryName, getDefaultAccountancyDateRange, getEntryDisplayAmount, getEntryThsAmount, getEntryUsdAmount, groupAccountancyEntriesByCategory, normalizeAccountancyEntry } from "../../utils/accountancy";
+import { filterEntriesByDateRange, formatAccountancyLineItem, formatDisplayMoney, getAccountancySummary, getDatedCategoryName, getDefaultAccountancyDateRange, getEntryDisplayAmount, getEntryThsAmount, getEntryUsdAmount, groupAccountancyEntriesByCategory, normalizeAccountancyEntry } from "../../utils/accountancy";
 
 export function AccountancyAssets() {
   const { accountancyEntries, selectedPropertyId, accountancyDisplayCurrency } = useAppContext();
@@ -23,7 +23,7 @@ export function AccountancyAssets() {
     Date: entry.date,
     Category: getDatedCategoryName(entry.category, entry.date),
     Subcategories: entry.subcategoryBreakdown?.length
-      ? entry.subcategoryBreakdown.map(item => `${item.name}: ${formatMoney(item.amount, entry.currency)}`).join(", ")
+      ? entry.subcategoryBreakdown.map(item => formatAccountancyLineItem(item, entry.currency)).join(", ")
       : entry.subcategories?.join(", ") || "",
     Counterparty: entry.counterparty,
     Reference: entry.reference || "",

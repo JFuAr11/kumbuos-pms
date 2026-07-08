@@ -18,6 +18,7 @@ import { AccountancyProfitLoss as ProfitLoss } from "./pages/accountancy/ProfitL
 import { AccountancyAssets as Assets } from "./pages/accountancy/Assets";
 import { AccountancyLiabilities as Liabilities } from "./pages/accountancy/Liabilities";
 import { AccountancyBalance as Balance } from "./pages/accountancy/Balance";
+import { AccountancyAmortization as Amortization } from "./pages/accountancy/Amortization";
 import { AccountancyGenAIAssistant as GenAIAssistant } from "./pages/accountancy/GenAIAssistant";
 
 import { SupplyRequests } from "./pages/supply/SupplyRequests";
@@ -82,6 +83,7 @@ export const router = createBrowserRouter([
       { path: "assets", Component: Assets },
       { path: "liabilities", Component: Liabilities },
       { path: "balance", Component: Balance },
+      { path: "amortization", Component: Amortization },
       { path: "genai-assistant", Component: GenAIAssistant },
       { path: "notifications", Component: Notifications },
     ],

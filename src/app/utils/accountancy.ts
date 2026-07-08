@@ -14,6 +14,26 @@ export type AccountancySummary = {
   netBalance: number;
 };
 
+export type AccountancySyncDiagnostic = {
+  ok: boolean;
+  status: "synced" | "attention";
+  message: string;
+  pAndLSourceCount: number;
+  balanceSourceCount: number;
+  confirmedCount: number;
+  draftCount: number;
+  orphanCount: number;
+  overviewSource: {
+    netProfit: number;
+    netBalance: number;
+  };
+  checks: Array<{
+    label: string;
+    status: "ok" | "attention";
+    detail: string;
+  }>;
+};
+
 export type CategoryGroup = {
   category: string;
   total: number;
@@ -167,6 +187,78 @@ export function getAccountancySummary(params: {
   };
 }
 
+export function getAccountancySyncDiagnostic(params: {
+  propertyId: string;
+  accountancyEntries: AccountancyEntry[];
+  displayCurrency?: AccountancyDisplayCurrency;
+  dateRange?: AccountancyDateRange;
+}): AccountancySyncDiagnostic {
+  const displayCurrency = params.displayCurrency || "USD";
+  const propertyEntries = params.accountancyEntries.filter(entry => entry.propertyId === params.propertyId);
+  const inRangeEntries = filterEntriesByDateRange(propertyEntries, params.dateRange);
+  const confirmedEntries = inRangeEntries.filter(entry => entry.status === "Confirmed").map(normalizeAccountancyEntry);
+  const draftEntries = inRangeEntries.filter(entry => entry.status !== "Confirmed");
+  const pAndLSourceEntries = confirmedEntries.filter(entry => entry.type === "Revenue" || entry.type === "Expense");
+  const balanceSourceEntries = confirmedEntries.filter(entry => entry.type === "Asset" || entry.type === "Liability");
+  const orphanEntries = confirmedEntries.filter(entry => !["Revenue", "Expense", "Asset", "Liability"].includes(entry.type));
+  const summary = getAccountancySummary(params);
+  const calculatedProfit = sumByType(confirmedEntries, "Revenue", displayCurrency) - sumByType(confirmedEntries, "Expense", displayCurrency);
+  const calculatedBalance = sumByType(confirmedEntries, "Asset", displayCurrency) - sumByType(confirmedEntries, "Liability", displayCurrency);
+  const amountTolerance = displayCurrency === "TZS" ? 1 : 0.01;
+  const pAndLMatches = Math.abs(calculatedProfit - summary.netProfit) <= amountTolerance;
+  const balanceMatches = Math.abs(calculatedBalance - summary.netBalance) <= amountTolerance;
+  const checks = [
+    {
+      label: "Profit & Loss source",
+      status: pAndLMatches ? "ok" as const : "attention" as const,
+      detail: `${pAndLSourceEntries.length} confirmed Revenue/Expense entries feed P&L.`,
+    },
+    {
+      label: "Balance source",
+      status: balanceMatches ? "ok" as const : "attention" as const,
+      detail: `${balanceSourceEntries.length} confirmed Asset/Liability entries feed Balance.`,
+    },
+    {
+      label: "Overview source",
+      status: pAndLMatches && balanceMatches ? "ok" as const : "attention" as const,
+      detail: "Overview is derived from P&L net result and Balance net position.",
+    },
+    {
+      label: "Draft entries",
+      status: draftEntries.length ? "attention" as const : "ok" as const,
+      detail: draftEntries.length
+        ? `${draftEntries.length} draft entries are excluded from statements until confirmed.`
+        : "No draft entries are affecting statement visibility.",
+    },
+    {
+      label: "Ledger classification",
+      status: orphanEntries.length ? "attention" as const : "ok" as const,
+      detail: orphanEntries.length
+        ? `${orphanEntries.length} confirmed entries have an unsupported type.`
+        : "Every confirmed entry maps to P&L or Balance.",
+    },
+  ];
+  const ok = checks.every(check => check.status === "ok");
+
+  return {
+    ok,
+    status: ok ? "synced" : "attention",
+    message: ok
+      ? "Accountancy is synchronized: P&L, Balance, and Overview are recalculated from confirmed ledger entries."
+      : "Accountancy needs attention: review draft or unsupported entries before relying on statements.",
+    pAndLSourceCount: pAndLSourceEntries.length,
+    balanceSourceCount: balanceSourceEntries.length,
+    confirmedCount: confirmedEntries.length,
+    draftCount: draftEntries.length,
+    orphanCount: orphanEntries.length,
+    overviewSource: {
+      netProfit: summary.netProfit,
+      netBalance: summary.netBalance,
+    },
+    checks,
+  };
+}
+
 export function groupAccountancyEntriesByCategory(entries: AccountancyEntry[], displayCurrency: AccountancyDisplayCurrency = "USD") {
   const groups = entries.map(normalizeAccountancyEntry).reduce((acc, entry) => {
     const key = getDatedCategoryName(entry.category || "Uncategorized", entry.date);
@@ -184,7 +276,7 @@ export function groupAccountancyEntriesByCategory(entries: AccountancyEntry[], d
 
     const breakdown = entry.subcategoryBreakdown?.length
       ? entry.subcategoryBreakdown
-      : [{ name: "Unassigned", amount: entry.amount, amountUsd: getEntryUsdAmount(entry), amountThs: getEntryThsAmount(entry) }];
+      : [{ name: "Unassigned", amount: entry.amount, amountUsd: getEntryUsdAmount(entry), amountThs: getEntryThsAmount(entry), lineTotal: entry.amount }];
 
     breakdown.forEach(subcategory => {
       const name = subcategory.name || "Unassigned";
@@ -255,13 +347,31 @@ function normalizeSubcategoryBreakdown(
   if (entry.subcategoryBreakdown?.length) {
     return entry.subcategoryBreakdown
       .map(item => {
-        const amount = Number(item.amount || 0);
+        const quantity = Number.isFinite(Number(item.quantity)) ? Number(item.quantity) : undefined;
+        const unitPrice = Number.isFinite(Number(item.unitPrice)) ? Number(item.unitPrice) : undefined;
+        const computedLineTotal = quantity && unitPrice ? roundMoney(quantity * unitPrice, normalizeCurrency(currency) === "TZS" ? 0 : 2) : undefined;
+        const lineTotal = Number.isFinite(Number(item.lineTotal)) ? Number(item.lineTotal) : computedLineTotal;
+        const amount = Number.isFinite(Number(item.amount)) ? Number(item.amount) : Number(lineTotal || 0);
         const fx = buildDualCurrencyAmounts({ amount, currency, fxUsdThs, fxThsUsd });
+        const unitFx = unitPrice !== undefined
+          ? buildDualCurrencyAmounts({ amount: unitPrice, currency, fxUsdThs, fxThsUsd })
+          : null;
+        const lineFx = Number.isFinite(Number(lineTotal))
+          ? buildDualCurrencyAmounts({ amount: Number(lineTotal), currency, fxUsdThs, fxThsUsd })
+          : fx;
         return {
           name: item.name.trim(),
           amount,
           amountUsd: Number(item.amountUsd || fx.amountUsd),
           amountThs: Number(item.amountThs || fx.amountThs),
+          quantity,
+          unit: item.unit || "",
+          unitPrice,
+          lineTotal: Number.isFinite(Number(item.lineTotal)) ? Number(item.lineTotal) : amount,
+          unitPriceUsd: Number.isFinite(Number(item.unitPriceUsd)) ? Number(item.unitPriceUsd) : unitFx?.amountUsd,
+          unitPriceThs: Number.isFinite(Number(item.unitPriceThs)) ? Number(item.unitPriceThs) : unitFx?.amountThs,
+          lineTotalUsd: Number.isFinite(Number(item.lineTotalUsd)) ? Number(item.lineTotalUsd) : lineFx.amountUsd,
+          lineTotalThs: Number.isFinite(Number(item.lineTotalThs)) ? Number(item.lineTotalThs) : lineFx.amountThs,
         };
       })
       .filter(item => item.name);
@@ -278,6 +388,29 @@ function normalizeSubcategoryBreakdown(
       amount: splitAmount,
       amountUsd: fx.amountUsd,
       amountThs: fx.amountThs,
+      lineTotal: splitAmount,
+      lineTotalUsd: fx.amountUsd,
+      lineTotalThs: fx.amountThs,
     };
   });
+}
+
+export function formatAccountancyLineItem(
+  item: NonNullable<AccountancyEntry["subcategoryBreakdown"]>[number],
+  currency = "USD",
+) {
+  const parts = [item.name || "Unassigned"];
+  const quantity = Number(item.quantity || 0);
+  const unitPrice = Number(item.unitPrice || 0);
+  const lineTotal = Number(item.lineTotal ?? item.amount ?? 0);
+
+  if (quantity || unitPrice) {
+    parts.push(`qty ${quantity || "-"}${item.unit ? ` ${item.unit}` : ""}`);
+    parts.push(`unit ${formatMoney(unitPrice, currency)}`);
+    parts.push(`line ${formatMoney(lineTotal, currency)}`);
+  } else {
+    parts.push(formatMoney(Number(item.amount || 0), currency));
+  }
+
+  return parts.join(" | ");
 }

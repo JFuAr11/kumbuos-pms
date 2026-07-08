@@ -283,8 +283,23 @@ export type AccountancyAttachment = {
   size: number;
   storagePath?: string;
   downloadUrl?: string;
-  source?: 'GenAI Assistant' | 'Manual';
+  source?: 'GenAI Assistant' | 'Manual' | 'Financial Baseline';
   uploadedAt: string;
+};
+
+export type AccountancyLineItem = {
+  name: string;
+  quantity?: number;
+  unit?: string;
+  unitPrice?: number;
+  lineTotal?: number;
+  amount: number;
+  amountUsd: number;
+  amountThs: number;
+  unitPriceUsd?: number;
+  unitPriceThs?: number;
+  lineTotalUsd?: number;
+  lineTotalThs?: number;
 };
 
 export type AccountancyEntry = {
@@ -294,12 +309,7 @@ export type AccountancyEntry = {
   date: string;
   category: string;
   subcategories?: string[];
-  subcategoryBreakdown?: {
-    name: string;
-    amount: number;
-    amountUsd: number;
-    amountThs: number;
-  }[];
+  subcategoryBreakdown?: AccountancyLineItem[];
   counterparty: string;
   description: string;
   amount: number;
@@ -315,11 +325,19 @@ export type AccountancyEntry = {
   paymentMethod?: string;
   reference?: string;
   taxAmount?: number;
-  source: 'GenAI Assistant' | 'Manual' | 'Reservations' | 'Supply Requests';
+  source: 'GenAI Assistant' | 'Financial Baseline' | 'Manual' | 'Reservations' | 'Supply Requests';
   status: 'Draft' | 'Confirmed';
   attachmentName?: string;
   attachments?: AccountancyAttachment[];
   rawSummary?: string;
+  ifrsTreatment?: 'Operating Expense' | 'Inventory' | 'PPE Capitalization' | 'PPE Depreciation' | 'Intangible Amortization' | 'Revenue Recognition' | 'Liability Recognition' | 'Prepayment' | 'Manual Adjustment';
+  capitalizationCandidate?: boolean;
+  linkedAssetEntryId?: string;
+  assetUsefulLifeMonths?: number;
+  depreciationMethod?: 'Straight-line' | 'Manual';
+  depreciationStartDate?: string;
+  assetResidualValue?: number;
+  ifrsNotes?: string;
   createdAt: string;
 };
 
@@ -482,6 +500,7 @@ const editAllPermissions: PermissionRule[] = [
   { module: 'Accountancy', section: 'Assets', access: 'edit' },
   { module: 'Accountancy', section: 'Liabilities', access: 'edit' },
   { module: 'Accountancy', section: 'Balance', access: 'edit' },
+  { module: 'Accountancy', section: 'Depreciation & Amortization', access: 'edit' },
   { module: 'Accountancy', section: 'GenAI Assistant', access: 'edit' },
   { module: 'Accountancy', section: 'Notifications', access: 'edit' },
   { module: 'Supply Requests', section: 'Beverage', access: 'edit' },
@@ -906,7 +925,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const reservationsAccess = permissions.find(permission => permission.module === 'Reservations' && permission.access !== 'none')?.access;
       const legacyCheckInAccess = permissions.find(permission => permission.module === 'Check-in' && permission.section === 'Guest Form' && permission.access !== 'none')?.access;
 
-      const additions: PermissionRule[] = ['Assets', 'Liabilities']
+      const additions: PermissionRule[] = ['Assets', 'Liabilities', 'Depreciation & Amortization']
         .filter(() => Boolean(accountancyAccess))
         .filter(section => !permissions.some(permission => permission.module === 'Accountancy' && permission.section === section))
         .map(section => ({ module: 'Accountancy', section, access: accountancyAccess || 'none' }));
