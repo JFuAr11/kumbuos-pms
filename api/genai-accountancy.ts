@@ -199,7 +199,7 @@ Return strict JSON only:
         "date": "YYYY-MM-DD",
         "category": "statement line category",
         "subcategories": ["optional details"],
-        "subcategoryBreakdown": [{ "name": "detail", "amount": 0, "amountUsd": 0, "amountThs": 0 }],
+        "subcategoryBreakdown": [{ "name": "detail", "quantity": 0, "unit": "unit label or empty", "unitPrice": 0, "lineTotal": 0, "amount": 0, "amountUsd": 0, "amountThs": 0 }],
         "counterparty": "counterparty or statement source",
         "description": "reviewable ledger line",
         "amount": 0,
@@ -611,7 +611,32 @@ function ensureAssetPurchaseSyncProposal(payload: any, context: { hasFiles: bool
   const amount = Number(extraction.amount || sourceCandidates.find((entry: any) => Number(entry.amount))?.amount || 0);
   if (!amount) return payload;
 
-  const existingEntries = rawEntries.length ? [...rawEntries] : [];
+  const inheritedBreakdown = Array.isArray(extraction.subcategoryBreakdown) ? extraction.subcategoryBreakdown : [];
+  const inheritedSubcategories = Array.isArray(extraction.subcategories) ? extraction.subcategories : [];
+  const existingEntries = rawEntries.length
+    ? rawEntries.map((entry: any) => ({
+      ...entry,
+      date: entry.date || extraction.date,
+      amount: Number(entry.amount || amount),
+      currency: entry.currency || extraction.currency,
+      amountUsd: Number.isFinite(Number(entry.amountUsd)) ? Number(entry.amountUsd) : extraction.amountUsd,
+      amountThs: Number.isFinite(Number(entry.amountThs)) ? Number(entry.amountThs) : extraction.amountThs,
+      fxUsdThs: entry.fxUsdThs || extraction.fxUsdThs,
+      fxThsUsd: entry.fxThsUsd || extraction.fxThsUsd,
+      counterparty: entry.counterparty || extraction.counterparty,
+      description: entry.description || extraction.description,
+      subcategories: Array.isArray(entry.subcategories) && entry.subcategories.length ? entry.subcategories : inheritedSubcategories,
+      subcategoryBreakdown: Array.isArray(entry.subcategoryBreakdown) && entry.subcategoryBreakdown.length ? entry.subcategoryBreakdown : inheritedBreakdown,
+      supplierInvoiceId: entry.supplierInvoiceId || extraction.supplierInvoiceId,
+      documentType: entry.documentType || extraction.documentType || "Supplier Invoice",
+      paymentMethod: entry.paymentMethod || extraction.paymentMethod || "",
+      reference: entry.reference || extraction.reference || extraction.supplierInvoiceId || "",
+      taxAmount: Number(entry.taxAmount || extraction.taxAmount || 0),
+      assetUsefulLifeMonths: Number(entry.assetUsefulLifeMonths || extraction.assetUsefulLifeMonths || 0),
+      depreciationMethod: entry.depreciationMethod || extraction.depreciationMethod || "",
+      questions: Array.isArray(entry.questions) && entry.questions.length ? entry.questions : extraction.questions,
+    }))
+    : [];
   const hasExpense = existingEntries.some((entry: any) => entry.type === "Expense");
   const hasAsset = existingEntries.some((entry: any) => entry.type === "Asset");
   const base = { ...extraction, amount };

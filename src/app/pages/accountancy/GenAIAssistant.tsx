@@ -932,6 +932,53 @@ function BatchReviewPanel({
     setPendingAction({ ...pendingAction, draft: next[0], drafts: next });
   };
 
+  const getDraftBreakdown = (draft: Partial<AccountancyEntry>) => (
+    draft.subcategoryBreakdown?.length
+      ? draft.subcategoryBreakdown
+      : [{ name: "", amount: 0, amountUsd: 0, amountThs: 0, lineTotal: 0 }]
+  );
+
+  const updateDraftSubcategoryAt = (
+    draftIndex: number,
+    lineIndex: number,
+    updates: Partial<NonNullable<AccountancyEntry["subcategoryBreakdown"]>[number]>,
+  ) => {
+    const draft = drafts[draftIndex];
+    const breakdown = [...getDraftBreakdown(draft)];
+    const candidate = { ...breakdown[lineIndex], ...updates };
+    const quantity = Number(candidate.quantity || 0);
+    const unitPrice = Number(candidate.unitPrice || 0);
+    if ((updates.quantity !== undefined || updates.unitPrice !== undefined) && quantity && unitPrice) {
+      candidate.lineTotal = roundMoney(quantity * unitPrice, normalizeCurrency(draft.currency) === "TZS" ? 0 : 2);
+      candidate.amount = candidate.lineTotal;
+    }
+    if (updates.lineTotal !== undefined && updates.amount === undefined) {
+      candidate.amount = Number(updates.lineTotal || 0);
+    }
+    breakdown[lineIndex] = candidate;
+    updateDraftAt(draftIndex, {
+      subcategoryBreakdown: breakdown,
+      subcategories: breakdown.map(item => item.name).filter(Boolean),
+    });
+  };
+
+  const addDraftSubcategoryAt = (draftIndex: number) => {
+    const draft = drafts[draftIndex];
+    updateDraftAt(draftIndex, {
+      subcategoryBreakdown: [...getDraftBreakdown(draft), { name: "", amount: 0, amountUsd: 0, amountThs: 0, lineTotal: 0 }],
+    });
+  };
+
+  const removeDraftSubcategoryAt = (draftIndex: number, lineIndex: number) => {
+    const draft = drafts[draftIndex];
+    const nextBreakdown = getDraftBreakdown(draft).filter((_, index) => index !== lineIndex);
+    const safeBreakdown = nextBreakdown.length ? nextBreakdown : [{ name: "", amount: 0, amountUsd: 0, amountThs: 0, lineTotal: 0 }];
+    updateDraftAt(draftIndex, {
+      subcategoryBreakdown: safeBreakdown,
+      subcategories: safeBreakdown.map(item => item.name).filter(Boolean),
+    });
+  };
+
   const removeDraftAt = (index: number) => {
     const next = drafts.filter((_, itemIndex) => itemIndex !== index);
     if (!next.length) {
@@ -968,7 +1015,10 @@ function BatchReviewPanel({
       </div>
 
       <div className="mt-4 max-h-[620px] space-y-3 overflow-y-auto pr-1">
-        {drafts.map((draft, index) => (
+        {drafts.map((draft, index) => {
+          const subcategoryBreakdown = getDraftBreakdown(draft);
+          const subcategoryTotal = subcategoryBreakdown.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+          return (
           <div key={`${draft.category}-${index}`} className="space-y-3 rounded-lg border border-border bg-muted/20 p-3">
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -1002,6 +1052,108 @@ function BatchReviewPanel({
             </div>
             <ReadOnlyValue label="Statement impact" value={`${draft.type === "Expense" || draft.type === "Liability" ? "-" : ""}${formatDisplayMoney(getEntryDisplayAmount(draft as AccountancyEntry, accountancyDisplayCurrency), accountancyDisplayCurrency)}`} />
             <InputField label="Reference" value={draft.reference || ""} onChange={value => updateDraftAt(index, { reference: value })} />
+            <div className="space-y-2 rounded-md border border-border bg-background/70 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium">Line items and amount allocation</p>
+                  <p className="text-xs text-muted-foreground">
+                    Line allocation total: {formatMoney(subcategoryTotal, draft.currency || "USD")} / Entry total: {formatMoney(Number(draft.amount || 0), draft.currency || "USD")}
+                  </p>
+                </div>
+                <Button type="button" variant="outline" size="sm" onClick={() => addDraftSubcategoryAt(index)}>
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add
+                </Button>
+              </div>
+              <div className="space-y-3">
+                {subcategoryBreakdown.map((subcategory, lineIndex) => (
+                  <div key={lineIndex} className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
+                    <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                      Subcategory / item name
+                      <Input
+                        className="mt-1"
+                        value={subcategory.name}
+                        onChange={event => updateDraftSubcategoryAt(index, lineIndex, { name: event.target.value })}
+                        placeholder={lineIndex === 0 ? "e.g., King size bed, Chicken, Deposit..." : "Additional subcategory"}
+                      />
+                    </label>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Quantity
+                        <Input
+                          className="mt-1"
+                          type="number"
+                          value={String(subcategory.quantity || "")}
+                          onChange={event => updateDraftSubcategoryAt(index, lineIndex, { quantity: Number(event.target.value) })}
+                          placeholder="Units"
+                        />
+                      </label>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Unit
+                        <Input
+                          className="mt-1"
+                          value={subcategory.unit || ""}
+                          onChange={event => updateDraftSubcategoryAt(index, lineIndex, { unit: event.target.value })}
+                          placeholder="pcs, kg, box..."
+                        />
+                      </label>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Unit price
+                        <Input
+                          className="mt-1"
+                          type="number"
+                          value={String(subcategory.unitPrice || "")}
+                          onChange={event => updateDraftSubcategoryAt(index, lineIndex, { unitPrice: Number(event.target.value) })}
+                          placeholder="Price per unit"
+                        />
+                      </label>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Line total
+                        <Input
+                          className="mt-1"
+                          type="number"
+                          value={String(subcategory.lineTotal ?? subcategory.amount ?? 0)}
+                          onChange={event => updateDraftSubcategoryAt(index, lineIndex, { lineTotal: Number(event.target.value), amount: Number(event.target.value) })}
+                          placeholder="Quantity x unit price"
+                        />
+                      </label>
+                      <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground sm:col-span-2">
+                        Invoice allocation used in Accountancy
+                        <Input
+                          className="mt-1"
+                          type="number"
+                          value={String(subcategory.amount || 0)}
+                          onChange={event => updateDraftSubcategoryAt(index, lineIndex, { amount: Number(event.target.value) })}
+                          placeholder="Amount allocated to this line"
+                        />
+                      </label>
+                      <div className="grid gap-2 rounded-md bg-background px-3 py-2 text-xs sm:col-span-2 sm:grid-cols-2">
+                        <div>
+                          <span className="block text-muted-foreground">Unit price USD</span>
+                          <span className="font-semibold">{formatMoney(subcategory.unitPriceUsd || 0, "USD")}</span>
+                        </div>
+                        <div>
+                          <span className="block text-muted-foreground">Unit price TZS</span>
+                          <span className="font-semibold">{formatMoney(subcategory.unitPriceThs || 0, "TZS")}</span>
+                        </div>
+                        <div>
+                          <span className="block text-muted-foreground">Line total USD</span>
+                          <span className="font-semibold">{formatMoney(subcategory.lineTotalUsd || subcategory.amountUsd || 0, "USD")}</span>
+                        </div>
+                        <div>
+                          <span className="block text-muted-foreground">Line total TZS</span>
+                          <span className="font-semibold">{formatMoney(subcategory.lineTotalThs || subcategory.amountThs || 0, "TZS")}</span>
+                        </div>
+                      </div>
+                      <Button type="button" variant="outline" size="sm" onClick={() => removeDraftSubcategoryAt(index, lineIndex)} aria-label="Remove line item">
+                        <X className="h-4 w-4" />
+                        Remove
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
             <label className="block text-sm font-medium">
               IFRS Notes
               <textarea
@@ -1011,7 +1163,8 @@ function BatchReviewPanel({
               />
             </label>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {pendingFiles.length > 0 && (
