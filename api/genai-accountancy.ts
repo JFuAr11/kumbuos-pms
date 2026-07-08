@@ -112,15 +112,22 @@ Hard guardrails:
 - Only work with the active property and the provided active-property ledger entries.
 - For update/delete requests, identify an existing ledger entry from the provided entries. If the target is unclear, return action "none", type "Unknown", and questions.
 - For financial baseline/opening-position requests, read the provided P&L and Balance statements and return a batch of entries in extraction.entries. Each returned entry must be one confirmed-source candidate that the user can review before posting.
+- In Document Chat, whenever at least one source document is attached, do not ask whether it is an invoice, proforma invoice, quote, quotation, purchase order, receipt, bill, or proof of payment. Treat it as a finance source document and always return a reviewable action "create" proposal if any date, counterparty, amount, item, or currency can be extracted.
+- If an attached supplier document may correspond to an asset purchase, fixed asset, furniture, equipment, construction, renovation, or property improvement, return a multi-section proposal in extraction.entries with at least:
+  1. one Expense entry so the invoice can feed Profit & Loss, and
+  2. one Asset entry so the same source can feed Balance.
+  The user will review, remove, edit, or confirm the exact destinations before posting.
 
 Classify:
 - Proof of payment, bank transfer proof, customer receipt, OTA payout, reservation payment: Revenue.
 - Supplier invoice, purchase receipt, bill, vendor statement, operating cost: Expense.
 - Cash, bank deposits, receivables, inventory, equipment, vehicles, fixed assets, prepayments: Asset.
 - Supplier balances payable, customer deposits, taxes payable, loans, accrued costs: Liability.
-- If the document is ambiguous, return type "Unknown" and list questions.
+- If an attached source document is ambiguous but has extractable financial content, still return the best reviewable create proposal and put uncertainties in ifrsNotes/questions. Do not return action "none" solely because the source says quotation, proforma, quote, or proposal.
 - IFRS operating logic: ordinary consumables and repairs that maintain an asset are usually Expense; materials/equipment that create future economic benefits or improve a property beyond normal maintenance are Asset/PPE capitalization candidates; goods held for later consumption/resale are Inventory assets; customer payments before service delivery can be Liability/Customer Deposits until earned; depreciation/amortization is an Expense paired with a contra-asset/asset adjustment managed after user confirmation.
-- If a supplier invoice mixes operating expense items and capitalizable PPE/improvement items, prefer type "Unknown" with questions unless the user explicitly asks to post a single treatment. Never silently split into multiple postings.
+- If an attached supplier document mixes operating expense items and capitalizable PPE/improvement items, choose the dominant treatment for the single proposal, mark capitalizationCandidate when relevant, and explain the uncertainty in ifrsNotes/questions. Never leave the user without a proposal in Document Chat.
+- If an attached supplier document mixes operating expense items and capitalizable PPE/improvement items, prefer extraction.entries with separate reviewable Expense and Asset lines. Do not silently choose only one destination when an asset treatment is plausible.
+- Proforma invoices, quotes, quotations, purchase orders, or proposals for goods/services are handled as supplier invoice proposals for review. Use documentType "Supplier Invoice"; set confidence lower if needed; explain the source wording in ifrsNotes; the user will confirm or edit before posting.
 - For a financial baseline import, split statement lines into separate ledger candidates:
   - P&L revenue lines -> Revenue.
   - P&L expense lines -> Expense.
@@ -193,15 +200,15 @@ Return strict JSON only:
         "category": "statement line category",
         "subcategories": ["optional details"],
         "subcategoryBreakdown": [{ "name": "detail", "amount": 0, "amountUsd": 0, "amountThs": 0 }],
-        "counterparty": "Opening Financial Statements or statement source",
-        "description": "Financial baseline line imported from P&L or Balance",
+        "counterparty": "counterparty or statement source",
+        "description": "reviewable ledger line",
         "amount": 0,
         "currency": "USD|TZS",
         "amountUsd": 0,
         "amountThs": 0,
         "fxUsdThs": 2600,
         "fxThsUsd": 0.0003846154,
-        "reference": "Financial baseline YYYY-MM-DD",
+        "reference": "invoice number, financial baseline date, or source reference",
         "documentType": "Other",
         "ifrsTreatment": "Revenue Recognition|Operating Expense|PPE Capitalization|Liability Recognition|Manual Adjustment",
         "ifrsNotes": "short baseline classification note",
@@ -224,7 +231,8 @@ Rules:
 - Do not invent invoice numbers, dates, tax, or payment references.
 - If multiple line items exist, use the accounting category for the group and put each meaningful line item into subcategories.
 - Use hotel finance language, concise and operational.
-- For normal single-document extraction, extraction.entries can be omitted or empty.
+- For normal single-document extraction, extraction.entries can be omitted or empty unless the document may be an asset purchase.
+- For asset purchase or capitalizable improvement documents, put both the Expense and Asset candidates in extraction.entries so the user can decide what to post.
 - For financial baseline import, set extraction.action to "create", extraction.type to "Unknown" if the batch contains mixed types, and put all proposed ledger lines in extraction.entries.
 `.trim();
 
@@ -474,6 +482,159 @@ function normalizeAssistantPayload(payload: any, propertyCurrency = "USD") {
   };
 }
 
+function forceAttachedDocumentProposal(payload: any, context: { hasFiles: boolean; mode: string; propertyCurrency?: string }) {
+  if (!context.hasFiles || context.mode === "financial-baseline") return payload;
+  const extraction = payload?.extraction;
+  if (!extraction) return payload;
+  if (Array.isArray(extraction.entries) && extraction.entries.length) return payload;
+  const action = String(extraction.action || "");
+  const type = String(extraction.type || "");
+  const amount = Number(extraction.amount || 0);
+  const hasUsefulFinancialContent = amount || extraction.category || extraction.counterparty || extraction.subcategoryBreakdown?.length || extraction.subcategories?.length;
+  if (!hasUsefulFinancialContent) return payload;
+  if (action !== "none" && type !== "Unknown") return payload;
+
+  const combinedText = [
+    extraction.category,
+    extraction.counterparty,
+    extraction.description,
+    extraction.documentType,
+    extraction.reference,
+    extraction.ifrsNotes,
+    ...(Array.isArray(extraction.subcategories) ? extraction.subcategories : []),
+    ...(Array.isArray(extraction.subcategoryBreakdown) ? extraction.subcategoryBreakdown.map((item: any) => item?.name) : []),
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  const looksLikeRevenue = /proof|payment|receipt|customer|client|guest|reservation|booking|ota|agency|tour operator|payout/i.test(combinedText);
+  const looksLikeAsset = /asset|fixed|furniture|bed|mattress|equipment|vehicle|machinery|construction|renovation|improvement|terrace|lounge|bar|capex|capital/i.test(combinedText);
+  const inferredType = looksLikeRevenue ? "Revenue" : looksLikeAsset ? "Asset" : "Expense";
+  const fallbackCategory = extraction.category || (inferredType === "Revenue" ? "Customer Payment" : inferredType === "Asset" ? "Fixed Assets" : "Supplier Invoice");
+  const notes = [
+    extraction.ifrsNotes,
+    "Attached source document was treated as an invoice/accounting source for review. If the source says proforma, quotation, or proposal, confirm before posting.",
+  ].filter(Boolean).join(" ");
+
+  return {
+    ...payload,
+    reply: payload.reply && !/please confirm|please review/i.test(payload.reply)
+      ? `${payload.reply} I prepared a reviewable Accountancy proposal because a source document was attached. Please confirm or edit before posting.`
+      : payload.reply || "I prepared a reviewable Accountancy proposal from the attached source document. Please confirm or edit before posting.",
+    extraction: {
+      ...extraction,
+      action: "create",
+      type: inferredType,
+      confidence: Number(extraction.confidence || 0.65),
+      category: fallbackCategory,
+      counterparty: extraction.counterparty || "Document counterparty",
+      description: extraction.description || `${fallbackCategory} from attached source document`,
+      amount,
+      currency: normalizeCurrency(extraction.currency || context.propertyCurrency || "USD"),
+      documentType: extraction.documentType === "Proof of Payment" ? "Proof of Payment" : "Supplier Invoice",
+      ifrsTreatment: extraction.ifrsTreatment || (inferredType === "Revenue" ? "Revenue Recognition" : inferredType === "Asset" ? "PPE Capitalization" : "Operating Expense"),
+      capitalizationCandidate: Boolean(extraction.capitalizationCandidate || inferredType === "Asset"),
+      ifrsNotes: notes,
+      questions: Array.isArray(extraction.questions) ? extraction.questions : [],
+    },
+  };
+}
+
+function looksLikeCapitalAssetSource(extraction: any) {
+  const combinedText = [
+    extraction?.category,
+    extraction?.counterparty,
+    extraction?.description,
+    extraction?.documentType,
+    extraction?.reference,
+    extraction?.ifrsTreatment,
+    extraction?.ifrsNotes,
+    ...(Array.isArray(extraction?.subcategories) ? extraction.subcategories : []),
+    ...(Array.isArray(extraction?.subcategoryBreakdown) ? extraction.subcategoryBreakdown.map((item: any) => item?.name) : []),
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  return Boolean(extraction?.capitalizationCandidate) ||
+    /ppe capitalization|fixed asset|capitalization|capitalisable|capitalizable|asset|furniture|bed|mattress|equipment|vehicle|machinery|construction|renovation|improvement|terrace|lounge|bar|capex|capital/i.test(combinedText);
+}
+
+function buildSyncedAssetExpenseEntry(base: any, type: "Expense" | "Asset", propertyCurrency = "USD") {
+  const currency = normalizeCurrency(base.currency || propertyCurrency || "USD");
+  const amount = Number(base.amount || 0);
+  const fx = buildDualCurrencyAmounts(amount, currency, base.fxUsdThs, base.fxThsUsd);
+  const category = type === "Asset"
+    ? (/asset|fixed|furniture|equipment|improvement|renovation/i.test(String(base.category || "")) ? base.category : "Fixed Assets")
+    : (/expense|supply|maintenance|purchase|cost/i.test(String(base.category || "")) ? base.category : "Asset Purchase Expense");
+  const ifrsNotes = [
+    base.ifrsNotes,
+    type === "Asset"
+      ? "Asset-side proposal: review whether this purchase should increase Balance assets."
+      : "Expense-side proposal: review whether this invoice should also affect Profit & Loss.",
+  ].filter(Boolean).join(" ");
+
+  return {
+    action: "create",
+    type,
+    date: base.date || "",
+    category,
+    subcategories: Array.isArray(base.subcategories) ? base.subcategories : [],
+    subcategoryBreakdown: Array.isArray(base.subcategoryBreakdown) ? base.subcategoryBreakdown : [],
+    counterparty: base.counterparty || "Document counterparty",
+    description: base.description || `${category} from attached source document`,
+    amount,
+    currency,
+    amountUsd: Number.isFinite(Number(base.amountUsd)) ? Number(base.amountUsd) : fx.amountUsd,
+    amountThs: Number.isFinite(Number(base.amountThs)) ? Number(base.amountThs) : fx.amountThs,
+    fxUsdThs: fx.fxUsdThs,
+    fxThsUsd: fx.fxThsUsd,
+    supplierInvoiceId: base.supplierInvoiceId || "",
+    documentType: base.documentType || "Supplier Invoice",
+    paymentMethod: base.paymentMethod || "",
+    reference: base.reference || base.supplierInvoiceId || "",
+    taxAmount: Number(base.taxAmount || 0),
+    ifrsTreatment: type === "Asset" ? "PPE Capitalization" : "Operating Expense",
+    capitalizationCandidate: type === "Asset",
+    assetUsefulLifeMonths: Number(base.assetUsefulLifeMonths || 0),
+    depreciationMethod: type === "Asset" ? (base.depreciationMethod || "Straight-line") : "",
+    ifrsNotes,
+    questions: Array.isArray(base.questions) ? base.questions : [],
+  };
+}
+
+function ensureAssetPurchaseSyncProposal(payload: any, context: { hasFiles: boolean; mode: string; propertyCurrency?: string }) {
+  if (!context.hasFiles || context.mode === "financial-baseline") return payload;
+  const extraction = payload?.extraction;
+  if (!extraction) return payload;
+
+  const rawEntries = Array.isArray(extraction.entries) ? extraction.entries : [];
+  const sourceCandidates = rawEntries.length ? rawEntries : [extraction];
+  const hasAssetSignal = sourceCandidates.some(looksLikeCapitalAssetSource);
+  if (!hasAssetSignal) return payload;
+
+  const amount = Number(extraction.amount || sourceCandidates.find((entry: any) => Number(entry.amount))?.amount || 0);
+  if (!amount) return payload;
+
+  const existingEntries = rawEntries.length ? [...rawEntries] : [];
+  const hasExpense = existingEntries.some((entry: any) => entry.type === "Expense");
+  const hasAsset = existingEntries.some((entry: any) => entry.type === "Asset");
+  const base = { ...extraction, amount };
+  const nextEntries = [...existingEntries];
+  if (!hasExpense) nextEntries.unshift(buildSyncedAssetExpenseEntry(base, "Expense", context.propertyCurrency));
+  if (!hasAsset) nextEntries.push(buildSyncedAssetExpenseEntry(base, "Asset", context.propertyCurrency));
+
+  return {
+    ...payload,
+    reply: "I detected that the attached source may relate to an asset purchase or capitalizable improvement. I prepared a multi-section proposal so you can confirm whether it should post to Expense, Asset, or both before anything is synchronized.",
+    extraction: {
+      ...extraction,
+      action: "create",
+      type: "Unknown",
+      entries: nextEntries,
+      questions: [
+        ...(Array.isArray(extraction.questions) ? extraction.questions : []),
+        "Confirm whether this source should be posted as Expense, Asset, or both. You can remove or edit any line before confirming.",
+      ],
+    },
+  };
+}
+
 function isBasicHelpRequest(message: string) {
   const normalized = message
     .normalize("NFD")
@@ -545,7 +706,7 @@ User request:
 ${message || "Please read the attached document and extract the accounting entry."}
 
 Assistant mode:
-${mode === "financial-baseline" ? "Financial Baseline Setup. The user is providing P&L and Balance statements to create the current/opening accounting position for this property. Return all statement lines as extraction.entries for review." : "Document Chat. Return one reviewable accounting candidate unless the user explicitly asks for a batch."}
+${mode === "financial-baseline" ? "Financial Baseline Setup. The user is providing P&L and Balance statements to create the current/opening accounting position for this property. Return all statement lines as extraction.entries for review." : "Document Chat. Return one reviewable accounting candidate, or a multi-section extraction.entries proposal when an attached supplier document may need both Expense and Asset treatment."}
 
 Existing active-property Accountancy ledger entries available for update/delete:
 ${JSON.stringify(accountancyEntries).slice(0, 12000)}
@@ -595,7 +756,17 @@ ${files.map((file: any, index: number) => `${index + 1}. ${file.name || "Unnamed
       const geminiResponse = await callGemini(model, requestBody, apiKey);
       const text = extractText(geminiResponse);
       const parsed = parseJson(text);
-      res.status(200).json({ ...normalizeAssistantPayload(parsed, property.currency || "USD"), model });
+      const forcedPayload = forceAttachedDocumentProposal(parsed, {
+        hasFiles: Boolean(files.length),
+        mode,
+        propertyCurrency: property.currency || "USD",
+      });
+      const preparedPayload = ensureAssetPurchaseSyncProposal(forcedPayload, {
+        hasFiles: Boolean(files.length),
+        mode,
+        propertyCurrency: property.currency || "USD",
+      });
+      res.status(200).json({ ...normalizeAssistantPayload(preparedPayload, property.currency || "USD"), model });
       return;
     } catch (error) {
       lastError = error;

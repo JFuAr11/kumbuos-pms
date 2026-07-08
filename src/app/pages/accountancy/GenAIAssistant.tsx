@@ -75,7 +75,7 @@ type AssistantExtraction = {
 
 type PendingAction = {
   action: Exclude<AssistantAction, "none">;
-  mode?: "single" | "financial-baseline";
+  mode?: "single" | "multi-posting" | "financial-baseline";
   targetEntryId?: string;
   original?: AccountancyEntry | null;
   draft: Partial<AccountancyEntry>;
@@ -188,7 +188,7 @@ export function AccountancyGenAIAssistant() {
   const exportAssistantPdf = () => {
     const pendingRows = pendingAction?.drafts?.length
       ? pendingAction.drafts.map((draft, index) => ({
-        Status: "Pending financial baseline",
+        Status: pendingAction.mode === "financial-baseline" ? "Pending financial baseline" : "Pending multi-section proposal",
         Action: `Batch line ${index + 1}`,
         Type: draft.type || "",
         Date: draft.date || "",
@@ -388,7 +388,7 @@ export function AccountancyGenAIAssistant() {
       setPendingFiles(sourceFiles);
       setPendingAction({
         action: "create",
-        mode: "financial-baseline",
+        mode: assistantMode === "financial-baseline" ? "financial-baseline" : "multi-posting",
         draft: drafts[0],
         drafts,
       });
@@ -443,22 +443,24 @@ export function AccountancyGenAIAssistant() {
     setIsPosting(true);
 
     try {
-      if (pendingAction.mode === "financial-baseline" && pendingAction.drafts?.length) {
+      if ((pendingAction.mode === "financial-baseline" || pendingAction.mode === "multi-posting") && pendingAction.drafts?.length) {
+        const isBaseline = pendingAction.mode === "financial-baseline";
+        const sourceLabel = isBaseline ? "Financial Baseline" : "GenAI Assistant";
         const preparedDrafts = pendingAction.drafts.map(draft => balanceSubcategoryTotals(recalculateDraft(draft)));
         const missingIndex = preparedDrafts.findIndex(draft => !draft.type || !draft.date || !draft.category || !draft.description || !Number(draft.amount));
         if (missingIndex >= 0) {
-          setReviewError(`Baseline line ${missingIndex + 1} is missing type, date, category, description, or amount.`);
+          setReviewError(`Proposal line ${missingIndex + 1} is missing type, date, category, description, or amount.`);
           return;
         }
         const subcategoryErrors = preparedDrafts
           .map((draft, index) => ({ index, error: validateSubcategoryTotals(draft) }))
           .filter(item => item.error);
         if (subcategoryErrors.length) {
-          setReviewError(`Baseline line ${subcategoryErrors[0].index + 1}: ${subcategoryErrors[0].error}`);
+          setReviewError(`Proposal line ${subcategoryErrors[0].index + 1}: ${subcategoryErrors[0].error}`);
           return;
         }
 
-        const batchId = `baseline-${Date.now()}`;
+        const batchId = `${isBaseline ? "baseline" : "genai-batch"}-${Date.now()}`;
         let uploadedAttachments: AccountancyAttachment[] = [];
         if (pendingFiles.length) {
           try {
@@ -466,10 +468,10 @@ export function AccountancyGenAIAssistant() {
               propertyId: selectedPropertyId,
               entryId: batchId,
               files: pendingFiles,
-              source: "Financial Baseline",
+              source: sourceLabel,
             });
           } catch (error) {
-            setReviewError(error instanceof Error ? error.message : "Could not upload the baseline source documents. Nothing was posted.");
+            setReviewError(error instanceof Error ? error.message : "Could not upload the source documents. Nothing was posted.");
             return;
           }
         }
@@ -499,7 +501,7 @@ export function AccountancyGenAIAssistant() {
             paymentMethod: normalizedDraft.paymentMethod,
             reference: normalizedDraft.reference || batchId,
             taxAmount: Number(normalizedDraft.taxAmount || 0),
-            source: "Financial Baseline" as const,
+            source: sourceLabel as AccountancyEntry["source"],
             status: "Confirmed" as const,
             attachments: uploadedAttachments,
             attachmentName: uploadedAttachments.length ? uploadedAttachments.map(item => item.name).join(", ") : normalizedDraft.attachmentName,
@@ -517,7 +519,10 @@ export function AccountancyGenAIAssistant() {
         });
 
         payloads.forEach(addAccountancyEntry);
-        appendPostedMessage(`Financial baseline posted with ${payloads.length} confirmed ledger entries. Revenues and Expenses now feed P&L; Assets and Liabilities now feed Balance; Overview is recalculated from both.`);
+        appendPostedMessage(isBaseline
+          ? `Financial baseline posted with ${payloads.length} confirmed ledger entries. Revenues and Expenses now feed P&L; Assets and Liabilities now feed Balance; Overview is recalculated from both.`
+          : `Multi-section proposal posted with ${payloads.length} confirmed ledger entries. Expense lines now feed P&L; Asset and Liability lines now feed Balance; Overview is recalculated from both.`
+        );
         setPendingAction(null);
         setPendingFiles([]);
         setError("");
@@ -680,7 +685,7 @@ export function AccountancyGenAIAssistant() {
             <div>
               <p className="font-semibold">Document Chat</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Read invoices, proof of payment, and individual accounting changes. One proposal is prepared for review.
+                Read invoices, proformas, quotes, proof of payment, and individual accounting changes. Any attached document is treated as an accounting source and one proposal is prepared for review.
               </p>
             </div>
           </div>
@@ -745,7 +750,7 @@ export function AccountancyGenAIAssistant() {
                     <div className="mt-3 rounded-md border border-border bg-card p-3 text-foreground">
                       {message.extraction.entries?.length ? (
                         <>
-                          <p className="font-semibold">FINANCIAL BASELINE proposal</p>
+                          <p className="font-semibold">MULTI-LINE proposal</p>
                           <p className="text-muted-foreground">{message.extraction.entries.length} P&L / Balance lines prepared for review.</p>
                         </>
                       ) : (
@@ -881,9 +886,9 @@ function ReviewPanel({
     );
   }
 
-  if (pendingAction.mode === "financial-baseline" && pendingAction.drafts?.length) {
+  if ((pendingAction.mode === "financial-baseline" || pendingAction.mode === "multi-posting") && pendingAction.drafts?.length) {
     return (
-      <BaselineBatchReviewPanel
+      <BatchReviewPanel
         pendingAction={pendingAction}
         setPendingAction={setPendingAction}
         onConfirm={onConfirm}
@@ -897,7 +902,7 @@ function ReviewPanel({
   return <ActiveReviewPanel pendingAction={pendingAction} setPendingAction={setPendingAction} onConfirm={onConfirm} error={error} isPosting={isPosting} pendingFiles={pendingFiles} />;
 }
 
-function BaselineBatchReviewPanel({
+function BatchReviewPanel({
   pendingAction,
   setPendingAction,
   onConfirm,
@@ -913,6 +918,7 @@ function BaselineBatchReviewPanel({
   pendingFiles: File[];
 }) {
   const { accountancyDisplayCurrency } = useAppContext();
+  const isBaseline = pendingAction.mode === "financial-baseline";
   const drafts = (pendingAction.drafts || []).map(recalculateDraft);
   const totals = drafts.reduce((acc, draft) => {
     const type = draft.type || "Revenue";
@@ -939,8 +945,10 @@ function BaselineBatchReviewPanel({
     <div className="rounded-xl border border-border bg-card p-5 shadow-sm">
       <div className="flex items-center justify-between gap-3">
         <div>
-          <h2 className="font-semibold">Financial Baseline Review</h2>
-          <p className="text-xs uppercase tracking-wider text-primary">{drafts.length} statement lines ready for confirmation</p>
+          <h2 className="font-semibold">{isBaseline ? "Financial Baseline Review" : "Multi-Section Review"}</h2>
+          <p className="text-xs uppercase tracking-wider text-primary">
+            {isBaseline ? `${drafts.length} statement lines ready for confirmation` : `${drafts.length} ledger lines ready for destination confirmation`}
+          </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => setPendingAction(null)}>Clear</Button>
       </div>
@@ -953,14 +961,19 @@ function BaselineBatchReviewPanel({
       </div>
 
       <div className="mt-4 rounded-md border border-primary/30 bg-primary/10 p-3 text-sm text-muted-foreground">
-        Confirming this baseline will create confirmed ledger entries. Revenue and Expense lines feed P&L; Asset and Liability lines feed Balance; Overview recalculates from both.
+        {isBaseline
+          ? "Confirming this baseline will create confirmed ledger entries. Revenue and Expense lines feed P&L; Asset and Liability lines feed Balance; Overview recalculates from both."
+          : "Confirming this proposal will create the selected ledger entries. Expense lines feed P&L; Asset and Liability lines feed Balance; Overview recalculates from both. Remove any line you do not want to post."
+        }
       </div>
 
       <div className="mt-4 max-h-[620px] space-y-3 overflow-y-auto pr-1">
         {drafts.map((draft, index) => (
           <div key={`${draft.category}-${index}`} className="space-y-3 rounded-lg border border-border bg-muted/20 p-3">
             <div className="flex items-center justify-between gap-2">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Statement line {index + 1}</p>
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                {isBaseline ? "Statement" : "Proposal"} line {index + 1}
+              </p>
               <Button type="button" variant="outline" size="sm" onClick={() => removeDraftAt(index)}>
                 <X className="h-4 w-4" />
               </Button>
@@ -1003,7 +1016,8 @@ function BaselineBatchReviewPanel({
 
       {pendingFiles.length > 0 && (
         <div className="mt-4 rounded-md border border-border bg-muted/30 p-3 text-sm">
-          <p className="font-medium">Baseline source documents</p>
+          <p className="font-medium">{isBaseline ? "Baseline source documents" : "Source documents"}</p>
+          {!isBaseline && <p className="text-xs text-muted-foreground">These documents will be attached to each confirmed ledger line for traceability.</p>}
           <div className="mt-2 space-y-1 text-xs text-muted-foreground">
             {pendingFiles.map(file => (
               <p key={`${file.name}-${file.size}`}>{file.name} ({formatFileSize(file.size)})</p>
@@ -1013,7 +1027,7 @@ function BaselineBatchReviewPanel({
       )}
 
       <Button className="mt-4 w-full" onClick={onConfirm} disabled={isPosting}>
-        {isPosting ? "Posting baseline..." : "Confirm and Build Accountancy Baseline"}
+        {isPosting ? "Posting..." : isBaseline ? "Confirm and Build Accountancy Baseline" : "Confirm and Post Selected Lines"}
       </Button>
       {error && <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>}
     </div>
