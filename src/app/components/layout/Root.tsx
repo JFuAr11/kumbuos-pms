@@ -1,8 +1,8 @@
 import { Outlet, NavLink, useLocation } from "react-router";
 import {
-  Bell,
   BookOpenCheck,
   CalendarDays,
+  Home,
   LayoutDashboard,
   LogOut,
   MessageSquare,
@@ -88,9 +88,10 @@ export function Root() {
             </div>
           </div>
           <div className="flex items-center gap-4 ml-4">
-            <Button variant="ghost" size="icon" className="relative">
-              <Bell size={20} />
-              <span className="absolute top-1 right-1 w-2 h-2 bg-destructive rounded-full" />
+            <Button variant="ghost" size="icon" asChild aria-label="Go to Home" title="Home">
+              <NavLink to="/app">
+                <Home size={20} />
+              </NavLink>
             </Button>
             <Button variant="ghost" size="icon">
               <MessageSquare size={20} />

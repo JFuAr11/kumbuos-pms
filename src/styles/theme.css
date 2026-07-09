@@ -178,4 +178,30 @@
     font-weight: var(--font-weight-normal);
     line-height: 1.5;
   }
+
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+  select,
+  textarea {
+    box-sizing: border-box;
+    max-width: 100%;
+    min-width: 0;
+    border-color: rgba(84, 77, 66, 0.28);
+    background-color: var(--input-background);
+  }
+
+  input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):focus,
+  select:focus,
+  textarea:focus {
+    border-color: rgba(201, 138, 60, 0.75);
+  }
+
+  input[type="date"],
+  input[type="number"],
+  input[type="email"],
+  input[type="password"],
+  input[type="tel"],
+  input[type="text"],
+  select {
+    width: 100%;
+  }
 }

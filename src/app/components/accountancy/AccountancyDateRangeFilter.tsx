@@ -16,27 +16,27 @@ export function AccountancyDateRangeFilter({
   const hasCustomRange = Boolean(value.from) || value.to !== getDefaultAccountancyDateRange().to;
 
   return (
-    <div className={`rounded-lg border border-border bg-card/80 p-3 shadow-sm ${compact ? "w-full sm:w-auto" : ""}`}>
-      <div className={`grid gap-3 ${compact ? "sm:grid-cols-[minmax(0,150px)_minmax(0,150px)_auto]" : "sm:grid-cols-[minmax(0,180px)_minmax(0,180px)_auto]"}`}>
-        <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+    <div className={`max-w-full overflow-hidden rounded-lg border border-border bg-card/80 p-3 shadow-sm ${compact ? "w-full sm:w-auto" : "w-full"}`}>
+      <div className={`grid min-w-0 grid-cols-1 gap-3 ${compact ? "sm:grid-cols-[minmax(0,150px)_minmax(0,150px)_auto]" : "sm:grid-cols-[minmax(0,180px)_minmax(0,180px)_auto]"}`}>
+        <label className="block min-w-0 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           From
           <Input
-            className="mt-1 h-9"
+            className="mt-1 h-9 max-w-full"
             type="date"
             value={value.from || ""}
             onChange={event => onChange({ ...value, from: event.target.value })}
           />
         </label>
-        <label className="block text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        <label className="block min-w-0 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           To
           <Input
-            className="mt-1 h-9"
+            className="mt-1 h-9 max-w-full"
             type="date"
             value={value.to || ""}
             onChange={event => onChange({ ...value, to: event.target.value })}
           />
         </label>
-        <div className="flex items-end">
+        <div className="flex min-w-0 items-end">
           <Button className="h-9 w-full sm:w-auto" type="button" variant="outline" size="sm" onClick={reset}>
             All history
           </Button>

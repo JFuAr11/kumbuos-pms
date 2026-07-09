@@ -289,9 +289,14 @@ export function ModuleLayout() {
             </div>
           </div>
           <div className="ml-4 flex items-center gap-2 sm:gap-4">
-            <Button variant="ghost" size="icon" className="relative">
-              <Bell size={20} />
-              <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-destructive" />
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => navigate("/app")}
+              aria-label="Go to Home"
+              title="Home"
+            >
+              <Home size={20} />
             </Button>
             <Button variant="ghost" size="sm" className="gap-2" onClick={exportCurrentViewPdf} title="Export current view to PDF">
               <Download size={18} />
