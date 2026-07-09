@@ -57,21 +57,6 @@ export function subscribeCredentials(
       }
 
       const data = payload.data;
-      if (data.schemaVersion !== CREDENTIAL_SCHEMA_VERSION) {
-        const cleanPayload = {
-          schemaVersion: CREDENTIAL_SCHEMA_VERSION,
-          users: [],
-          passwordResetRequests: [],
-        };
-        const snapshot = JSON.stringify(cleanPayload);
-        if (snapshot !== lastSnapshot) {
-          lastSnapshot = snapshot;
-          onPayload(cleanPayload);
-        }
-        onStatus?.("Firebase credential store contains legacy users. It will be replaced with the clean root-owner baseline.");
-        return;
-      }
-
       const normalized = {
         schemaVersion: CREDENTIAL_SCHEMA_VERSION,
         users: data.users || [],
@@ -82,7 +67,11 @@ export function subscribeCredentials(
         lastSnapshot = snapshot;
         onPayload(normalized);
       }
-      onStatus?.("Firebase credential store is synced in real time.");
+      onStatus?.(
+        data.schemaVersion === CREDENTIAL_SCHEMA_VERSION
+          ? "Firebase credential store is synced in real time."
+          : "Firebase credential store is synced and will be upgraded to the current KumbuOS schema on the next save."
+      );
     } catch (error) {
       if (!active) return;
       onStatus?.(`Firebase credential sync failed: ${error instanceof Error ? error.message : String(error)}`);

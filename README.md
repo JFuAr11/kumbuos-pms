@@ -44,7 +44,7 @@
 
   FX rates are read from columns `Date`, `TZS_per_USD`, and `USD_per_TZS`. For private sheets, share the Google Sheet with the service account email as Viewer.
 
-  Firebase stores are read and written by the Vercel `/api/firebase-store` serverless bridge using Firebase Admin. Firestore rules can stay locked because the browser no longer writes directly to Firestore:
+  Firebase stores are read and written by the Vercel `/api/firebase-store` serverless bridge using the Firestore REST API and the server-side Firebase service account. Firestore rules can stay locked because the browser no longer writes directly to Firestore:
 
   - Credentials and password reset requests: `kumbuosCredentialStore/<FIREBASE_CREDENTIAL_STORE_ID or VITE_FIREBASE_CREDENTIAL_STORE_ID>`.
   - PMS operating data: `kumbuosPmsDataStore/<FIREBASE_PMS_STORE_ID or VITE_FIREBASE_PMS_STORE_ID>`.

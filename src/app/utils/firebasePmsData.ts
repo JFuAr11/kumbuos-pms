@@ -86,24 +86,17 @@ export function subscribePmsData(
         return;
       }
 
-      if (payload.data.schemaVersion !== PMS_DATA_SCHEMA_VERSION) {
-        const cleanPayload = normalizePayload({ schemaVersion: PMS_DATA_SCHEMA_VERSION });
-        const snapshot = JSON.stringify(cleanPayload);
-        if (snapshot !== lastSnapshot) {
-          lastSnapshot = snapshot;
-          onPayload(cleanPayload);
-        }
-        onStatus?.("Firebase PMS data store contains legacy data. It will be replaced with the clean empty KumbuOS baseline.");
-        return;
-      }
-
       const normalized = normalizePayload(payload.data);
       const snapshot = JSON.stringify(normalized);
       if (snapshot !== lastSnapshot) {
         lastSnapshot = snapshot;
         onPayload(normalized);
       }
-      onStatus?.("Firebase PMS data store is synced in real time.");
+      onStatus?.(
+        payload.data.schemaVersion === PMS_DATA_SCHEMA_VERSION
+          ? "Firebase PMS data store is synced in real time."
+          : "Firebase PMS data store is synced and will be upgraded to the current KumbuOS schema on the next save."
+      );
     } catch (error) {
       if (!active) return;
       onStatus?.(`Firebase PMS data sync failed: ${error instanceof Error ? error.message : String(error)}`);
