@@ -78,7 +78,8 @@ export type UserProfile =
   | 'Reservations'
   | 'Accountancy'
   | 'Supplies'
-  | 'Check-in';
+  | 'Check-in'
+  | 'Communications';
 
 export type ProfileDefinition = {
   name: UserProfile;
@@ -134,6 +135,313 @@ export type NotificationEmailConfig = {
   status: 'Not configured' | 'Configured' | 'Needs review';
   notes?: string;
   updatedAt: string;
+};
+
+export type CommunicationStatus = 'Draft' | 'Active' | 'Paused' | 'Archived';
+export type CommunicationCampaignStatus = 'draft' | 'ready' | 'scheduled' | 'sending' | 'paused' | 'completed' | 'failed' | 'cancelled';
+export type CommunicationOutboxStatus =
+  | 'pending'
+  | 'queued'
+  | 'sending'
+  | 'sent'
+  | 'delivered'
+  | 'failed'
+  | 'hard_bounced'
+  | 'soft_bounced'
+  | 'suppressed'
+  | 'unsubscribed'
+  | 'cancelled';
+export type CommunicationProviderKind = 'Mock/Test' | 'SMTP';
+export type CommunicationCampaignType = 'Operational' | 'Marketing';
+
+export type CommunicationSender = {
+  id: string;
+  tenantId?: string;
+  companyId: string;
+  propertyId: string;
+  providerAccountId?: string;
+  fromName: string;
+  fromEmail: string;
+  replyToEmail: string;
+  verified: boolean;
+  defaultSender: boolean;
+  status: CommunicationStatus;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CommunicationProviderAccount = {
+  id: string;
+  tenantId?: string;
+  companyId: string;
+  propertyId: string;
+  provider: CommunicationProviderKind;
+  name: string;
+  mode: 'test' | 'live';
+  smtpHost?: string;
+  smtpPort?: number;
+  smtpUsername?: string;
+  smtpPassword?: string;
+  secure?: boolean;
+  apiKeyLabel?: string;
+  status: CommunicationStatus;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CommunicationTemplateAsset = {
+  id: string;
+  tenantId?: string;
+  companyId: string;
+  propertyId: string;
+  templateId?: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  storagePath?: string;
+  downloadUrl?: string;
+  embeddedDataUrl?: string;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+  status: CommunicationStatus;
+};
+
+export type CommunicationTemplate = {
+  id: string;
+  tenantId?: string;
+  companyId: string;
+  propertyId: string;
+  name: string;
+  type: 'Rich Text' | 'HTML';
+  subject: string;
+  preheader: string;
+  html: string;
+  plainText: string;
+  variables: string[];
+  assetIds: string[];
+  status: CommunicationStatus;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CommunicationRecipient = {
+  id: string;
+  tenantId?: string;
+  companyId: string;
+  propertyId: string;
+  source: 'Client' | 'Reservation' | 'Excel' | 'Manual';
+  sourceId?: string;
+  importListId?: string;
+  name: string;
+  email: string;
+  language?: string;
+  reservationCode?: string;
+  checkinDate?: string;
+  checkoutDate?: string;
+  clientCategory?: Client['category'];
+  variables?: Record<string, string>;
+  valid: boolean;
+  validationError?: string;
+  suppressed?: boolean;
+  status: CommunicationStatus;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CommunicationImportList = {
+  id: string;
+  tenantId?: string;
+  companyId: string;
+  propertyId: string;
+  name: string;
+  fileName: string;
+  mappedColumns: Record<string, string>;
+  recipientIds: string[];
+  totalRows: number;
+  validRows: number;
+  invalidRows: number;
+  duplicateRows: number;
+  status: CommunicationStatus;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CommunicationAudience = {
+  id: string;
+  tenantId?: string;
+  companyId: string;
+  propertyId: string;
+  name: string;
+  source: 'Clients' | 'Reservations' | 'Import List' | 'Manual Mix';
+  filters?: Record<string, string>;
+  recipientIds: string[];
+  status: CommunicationStatus;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CommunicationSendingRule = {
+  id: string;
+  tenantId?: string;
+  companyId: string;
+  propertyId: string;
+  name: string;
+  batchSize: number;
+  batchIntervalMinutes: number;
+  dailyLimit: number;
+  allowedFromTime: string;
+  allowedToTime: string;
+  timezone: string;
+  retryCount: number;
+  maxRetries: number;
+  errorPauseThreshold: number;
+  bouncePauseThreshold: number;
+  status: CommunicationStatus;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CommunicationCampaign = {
+  id: string;
+  tenantId?: string;
+  companyId: string;
+  propertyId: string;
+  name: string;
+  type: CommunicationCampaignType;
+  senderId: string;
+  providerAccountId?: string;
+  templateId: string;
+  audienceId?: string;
+  recipientIds: string[];
+  sendingRuleId: string;
+  scheduledAt?: string;
+  status: CommunicationCampaignStatus;
+  preflightErrors: string[];
+  finalRecipientCount: number;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CommunicationCampaignStep = {
+  id: string;
+  tenantId?: string;
+  companyId: string;
+  propertyId: string;
+  campaignId: string;
+  stepIndex: number;
+  delayMinutes: number;
+  templateId: string;
+  status: CommunicationStatus;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CommunicationOutboxJob = {
+  id: string;
+  tenantId?: string;
+  companyId: string;
+  propertyId: string;
+  campaignId: string;
+  campaignStepId?: string;
+  recipientId: string;
+  recipientEmail: string;
+  recipientName: string;
+  senderId: string;
+  templateId: string;
+  providerAccountId?: string;
+  subject: string;
+  html: string;
+  plainText: string;
+  status: CommunicationOutboxStatus;
+  attempts: number;
+  maxRetries: number;
+  providerMessageId?: string;
+  lastError?: string;
+  scheduledFor: string;
+  sentAt?: string;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CommunicationEvent = {
+  id: string;
+  tenantId?: string;
+  companyId: string;
+  propertyId: string;
+  campaignId?: string;
+  outboxJobId?: string;
+  recipientId?: string;
+  recipientEmail?: string;
+  senderId?: string;
+  templateId?: string;
+  type: 'created' | 'queued' | 'sent' | 'delivered' | 'failed' | 'suppressed' | 'unsubscribed' | 'paused' | 'cancelled' | 'test';
+  message: string;
+  providerMessageId?: string;
+  errorCode?: string;
+  errorDetail?: string;
+  createdBy: string;
+  createdAt: string;
+  status: CommunicationStatus;
+};
+
+export type CommunicationSuppression = {
+  id: string;
+  tenantId?: string;
+  companyId: string;
+  propertyId: string;
+  email: string;
+  reason: 'Manual Block' | 'Unsubscribe' | 'Hard Bounce' | 'Complaint';
+  sourceCampaignId?: string;
+  notes?: string;
+  status: CommunicationStatus;
+  createdBy: string;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CommunicationUnsubscribe = {
+  id: string;
+  tenantId?: string;
+  companyId: string;
+  propertyId: string;
+  email: string;
+  token: string;
+  campaignId?: string;
+  reason?: string;
+  createdAt: string;
+  status: CommunicationStatus;
+};
+
+export type CommunicationHelpTooltip = {
+  id: string;
+  fieldKey: string;
+  title: string;
+  body: string;
+  example?: string;
+  warning?: string;
 };
 
 export type Client = {
@@ -444,6 +752,64 @@ type AppContextType = {
   addAccountancyEntry: (entry: AccountancyEntry) => void;
   updateAccountancyEntry: (id: string, entry: Partial<AccountancyEntry>) => void;
   deleteAccountancyEntry: (id: string) => void;
+
+  communicationSenders: CommunicationSender[];
+  addCommunicationSender: (sender: CommunicationSender) => void;
+  updateCommunicationSender: (id: string, sender: Partial<CommunicationSender>) => void;
+  deleteCommunicationSender: (id: string) => void;
+  communicationProviderAccounts: CommunicationProviderAccount[];
+  addCommunicationProviderAccount: (account: CommunicationProviderAccount) => void;
+  updateCommunicationProviderAccount: (id: string, account: Partial<CommunicationProviderAccount>) => void;
+  deleteCommunicationProviderAccount: (id: string) => void;
+  communicationTemplates: CommunicationTemplate[];
+  addCommunicationTemplate: (template: CommunicationTemplate) => void;
+  updateCommunicationTemplate: (id: string, template: Partial<CommunicationTemplate>) => void;
+  deleteCommunicationTemplate: (id: string) => void;
+  communicationTemplateAssets: CommunicationTemplateAsset[];
+  addCommunicationTemplateAsset: (asset: CommunicationTemplateAsset) => void;
+  updateCommunicationTemplateAsset: (id: string, asset: Partial<CommunicationTemplateAsset>) => void;
+  deleteCommunicationTemplateAsset: (id: string) => void;
+  communicationImportLists: CommunicationImportList[];
+  addCommunicationImportList: (list: CommunicationImportList) => void;
+  updateCommunicationImportList: (id: string, list: Partial<CommunicationImportList>) => void;
+  deleteCommunicationImportList: (id: string) => void;
+  communicationRecipients: CommunicationRecipient[];
+  addCommunicationRecipient: (recipient: CommunicationRecipient) => void;
+  updateCommunicationRecipient: (id: string, recipient: Partial<CommunicationRecipient>) => void;
+  deleteCommunicationRecipient: (id: string) => void;
+  communicationAudiences: CommunicationAudience[];
+  addCommunicationAudience: (audience: CommunicationAudience) => void;
+  updateCommunicationAudience: (id: string, audience: Partial<CommunicationAudience>) => void;
+  deleteCommunicationAudience: (id: string) => void;
+  communicationCampaigns: CommunicationCampaign[];
+  addCommunicationCampaign: (campaign: CommunicationCampaign) => void;
+  updateCommunicationCampaign: (id: string, campaign: Partial<CommunicationCampaign>) => void;
+  deleteCommunicationCampaign: (id: string) => void;
+  communicationCampaignSteps: CommunicationCampaignStep[];
+  addCommunicationCampaignStep: (step: CommunicationCampaignStep) => void;
+  updateCommunicationCampaignStep: (id: string, step: Partial<CommunicationCampaignStep>) => void;
+  deleteCommunicationCampaignStep: (id: string) => void;
+  communicationSendingRules: CommunicationSendingRule[];
+  addCommunicationSendingRule: (rule: CommunicationSendingRule) => void;
+  updateCommunicationSendingRule: (id: string, rule: Partial<CommunicationSendingRule>) => void;
+  deleteCommunicationSendingRule: (id: string) => void;
+  communicationOutbox: CommunicationOutboxJob[];
+  addCommunicationOutboxJob: (job: CommunicationOutboxJob) => void;
+  updateCommunicationOutboxJob: (id: string, job: Partial<CommunicationOutboxJob>) => void;
+  deleteCommunicationOutboxJob: (id: string) => void;
+  communicationEvents: CommunicationEvent[];
+  addCommunicationEvent: (event: CommunicationEvent) => void;
+  updateCommunicationEvent: (id: string, event: Partial<CommunicationEvent>) => void;
+  deleteCommunicationEvent: (id: string) => void;
+  communicationSuppressionList: CommunicationSuppression[];
+  addCommunicationSuppression: (suppression: CommunicationSuppression) => void;
+  updateCommunicationSuppression: (id: string, suppression: Partial<CommunicationSuppression>) => void;
+  deleteCommunicationSuppression: (id: string) => void;
+  communicationUnsubscribes: CommunicationUnsubscribe[];
+  addCommunicationUnsubscribe: (unsubscribe: CommunicationUnsubscribe) => void;
+  updateCommunicationUnsubscribe: (id: string, unsubscribe: Partial<CommunicationUnsubscribe>) => void;
+  deleteCommunicationUnsubscribe: (id: string) => void;
+  communicationHelpTooltips: CommunicationHelpTooltip[];
 };
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -484,6 +850,32 @@ const initialSystemUsers: SystemUser[] = [
 
 const initialNotifications: NotificationAutomation[] = [];
 
+const initialCommunicationHelpTooltips: CommunicationHelpTooltip[] = [
+  { id: 'help-from-email', fieldKey: 'fromEmail', title: 'From Email', body: 'Email address that recipients will see as the sender. Use a mailbox controlled by this company or property.', example: 'reservations@hotel.com', warning: 'Do not use public or unverified addresses for live campaigns.' },
+  { id: 'help-reply-to', fieldKey: 'replyToEmail', title: 'Reply-To', body: 'Mailbox where guest replies should arrive. It can be different from the technical sending mailbox.', example: 'guestrelations@hotel.com' },
+  { id: 'help-provider', fieldKey: 'provider', title: 'Provider', body: 'Email sending method used by this property. Mock/Test records delivery without sending real emails; SMTP uses the configured mailbox.', example: 'Mock/Test for testing, SMTP for live sending.' },
+  { id: 'help-api-key', fieldKey: 'apiKey', title: 'API Key', body: 'Secret token supplied by an email provider. This first version stores SMTP credentials through the secure server bridge and keeps API provider support ready for later.', warning: 'Never paste provider secrets in campaign copy or templates.' },
+  { id: 'help-spf', fieldKey: 'spf', title: 'SPF', body: 'DNS TXT record authorizing a mail server to send emails for your domain.', example: 'v=spf1 include:zoho.eu ~all' },
+  { id: 'help-dkim', fieldKey: 'dkim', title: 'DKIM', body: 'DNS record that lets email providers cryptographically verify your outgoing messages.', example: 'Add the TXT/CNAME values given by Zoho, Google Workspace, Microsoft 365, or your SMTP provider.' },
+  { id: 'help-dmarc', fieldKey: 'dmarc', title: 'DMARC', body: 'DNS policy that tells receivers how to handle mail that fails SPF or DKIM.', example: 'v=DMARC1; p=none; rua=mailto:dmarc@hotel.com' },
+  { id: 'help-excel', fieldKey: 'excelFile', title: 'Excel File', body: 'Upload an .xlsx, .xls, .csv, or .tsv list with recipient columns such as name, email, language, reservation code, check-in, and check-out.', example: 'Columns: Name, Email, Language, Reservation' },
+  { id: 'help-name-column', fieldKey: 'nameColumn', title: 'Name Column', body: 'Column containing the recipient name used for personalization.', example: '{{name}} becomes Maria Garcia.' },
+  { id: 'help-email-column', fieldKey: 'emailColumn', title: 'Email Column', body: 'Column containing the recipient email. Invalid or empty emails will be blocked before campaign launch.', example: 'guest@example.com' },
+  { id: 'help-subject', fieldKey: 'subject', title: 'Subject', body: 'Email subject line. It can include variables such as {{name}} or {{property_name}}.', example: 'Your stay at {{property_name}}' },
+  { id: 'help-preheader', fieldKey: 'preheader', title: 'Preheader', body: 'Short preview text shown by many inboxes after the subject.', example: 'Everything you need before arrival.' },
+  { id: 'help-html', fieldKey: 'html', title: 'HTML', body: 'HTML version of the email body. Scripts, iframes, and unsafe attributes are removed before saving.', example: '<h1>Hello {{name}}</h1>' },
+  { id: 'help-plain-text', fieldKey: 'plainText', title: 'Plain Text', body: 'Fallback email body for inboxes that do not render HTML. It can be generated from rich text or edited manually.' },
+  { id: 'help-images', fieldKey: 'images', title: 'Images', body: 'Upload images used by an HTML template. Store only images you have permission to send.', example: 'Header photo, logo, campaign banner.' },
+  { id: 'help-batch-size', fieldKey: 'batchSize', title: 'Batch Size', body: 'Number of emails processed per batch. Smaller batches reduce spikes and sender reputation risk.', example: '50' },
+  { id: 'help-batch-interval', fieldKey: 'batchInterval', title: 'Batch Interval', body: 'Minutes to wait between batches.', example: '60 means one batch every hour.' },
+  { id: 'help-daily-limit', fieldKey: 'dailyLimit', title: 'Daily Limit', body: 'Maximum emails allowed per day for this rule.', example: '500' },
+  { id: 'help-retry-count', fieldKey: 'retryCount', title: 'Retry Count', body: 'How many times a failed job can be retried before it is marked failed.', example: '3' },
+  { id: 'help-bounce-threshold', fieldKey: 'bounceThreshold', title: 'Bounce Threshold', body: 'If failures or bounces exceed this percentage, pause the campaign for review.', example: '10' },
+  { id: 'help-campaign-type', fieldKey: 'campaignType', title: 'Campaign Type', body: 'Operational emails relate to bookings or service. Marketing campaigns require unsubscribe links.', example: 'Marketing for newsletters, Operational for pre-arrival details.' },
+  { id: 'help-audience', fieldKey: 'audience', title: 'Audience', body: 'Set of recipients built from PMS clients, reservations, imported Excel lists, or manual combinations.' },
+  { id: 'help-suppression-list', fieldKey: 'suppressionList', title: 'Suppression List', body: 'Emails that must never receive campaigns from this property due to unsubscribe, bounce, complaint, or manual block.' },
+];
+
 const editAllPermissions: PermissionRule[] = [
   { module: 'Reservations', section: 'Calendar', access: 'edit' },
   { module: 'Reservations', section: 'Bookings', access: 'edit' },
@@ -515,6 +907,18 @@ const editAllPermissions: PermissionRule[] = [
   { module: 'Check-in', section: 'Database', access: 'edit' },
   { module: 'Check-in', section: 'Dashboard', access: 'edit' },
   { module: 'Check-in', section: 'Notifications', access: 'edit' },
+  { module: 'Communications', section: 'Dashboard', access: 'edit' },
+  { module: 'Communications', section: 'Senders', access: 'edit' },
+  { module: 'Communications', section: 'Provider Settings', access: 'edit' },
+  { module: 'Communications', section: 'DNS Verification', access: 'edit' },
+  { module: 'Communications', section: 'Recipients', access: 'edit' },
+  { module: 'Communications', section: 'Templates', access: 'edit' },
+  { module: 'Communications', section: 'Sending Rules', access: 'edit' },
+  { module: 'Communications', section: 'Campaigns', access: 'edit' },
+  { module: 'Communications', section: 'Outbox Queue', access: 'edit' },
+  { module: 'Communications', section: 'Logs', access: 'edit' },
+  { module: 'Communications', section: 'Suppression List', access: 'edit' },
+  { module: 'Communications', section: 'Notifications', access: 'edit' },
   { module: 'Admin Platform', section: 'Companies', access: 'edit' },
   { module: 'Admin Platform', section: 'Manage Users', access: 'edit' },
   { module: 'Admin Platform', section: 'Assign Permissions', access: 'edit' },
@@ -562,6 +966,11 @@ const profileDefinitions: ProfileDefinition[] = [
     name: 'Check-in',
     description: 'Can manage guest check-in, guest database, dashboard, and arrival notifications.',
     permissions: editAllPermissions.filter(rule => rule.module === 'Check-in'),
+  },
+  {
+    name: 'Communications',
+    description: 'Can manage email senders, recipients, templates, campaigns, outbox, logs, and suppression lists.',
+    permissions: editAllPermissions.filter(rule => rule.module === 'Communications'),
   },
 ];
 
@@ -689,6 +1098,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const [accountancyEntries, setAccountancyEntries] = usePersistentState<AccountancyEntry[]>('pms-accountancy-entries-v2', []);
   const [accountancyDisplayCurrency, setAccountancyDisplayCurrency] = usePersistentState<AccountancyDisplayCurrency>('pms-accountancy-display-currency', 'USD');
+  const [communicationSenders, setCommunicationSenders] = usePersistentState<CommunicationSender[]>('pms-communication-senders', []);
+  const [communicationProviderAccounts, setCommunicationProviderAccounts] = usePersistentState<CommunicationProviderAccount[]>('pms-communication-provider-accounts', []);
+  const [communicationTemplates, setCommunicationTemplates] = usePersistentState<CommunicationTemplate[]>('pms-communication-templates', []);
+  const [communicationTemplateAssets, setCommunicationTemplateAssets] = usePersistentState<CommunicationTemplateAsset[]>('pms-communication-template-assets', []);
+  const [communicationImportLists, setCommunicationImportLists] = usePersistentState<CommunicationImportList[]>('pms-communication-import-lists', []);
+  const [communicationRecipients, setCommunicationRecipients] = usePersistentState<CommunicationRecipient[]>('pms-communication-recipients', []);
+  const [communicationAudiences, setCommunicationAudiences] = usePersistentState<CommunicationAudience[]>('pms-communication-audiences', []);
+  const [communicationCampaigns, setCommunicationCampaigns] = usePersistentState<CommunicationCampaign[]>('pms-communication-campaigns', []);
+  const [communicationCampaignSteps, setCommunicationCampaignSteps] = usePersistentState<CommunicationCampaignStep[]>('pms-communication-campaign-steps', []);
+  const [communicationSendingRules, setCommunicationSendingRules] = usePersistentState<CommunicationSendingRule[]>('pms-communication-sending-rules', []);
+  const [communicationOutbox, setCommunicationOutbox] = usePersistentState<CommunicationOutboxJob[]>('pms-communication-outbox', []);
+  const [communicationEvents, setCommunicationEvents] = usePersistentState<CommunicationEvent[]>('pms-communication-events', []);
+  const [communicationSuppressionList, setCommunicationSuppressionList] = usePersistentState<CommunicationSuppression[]>('pms-communication-suppression-list', []);
+  const [communicationUnsubscribes, setCommunicationUnsubscribes] = usePersistentState<CommunicationUnsubscribe[]>('pms-communication-unsubscribes', []);
+  const [communicationHelpTooltips, setCommunicationHelpTooltips] = usePersistentState<CommunicationHelpTooltip[]>('pms-communication-help-tooltips', initialCommunicationHelpTooltips);
 
   useEffect(() => {
     if ((accountancyDisplayCurrency as string) === 'THS') {
@@ -735,6 +1159,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return missingDefaults.length ? [...current, ...missingDefaults] : current;
     });
   }, [setNotifications]);
+
+  useEffect(() => {
+    setCommunicationHelpTooltips(current => {
+      const missingDefaults = initialCommunicationHelpTooltips.filter(
+        tooltip => !current.some(item => item.id === tooltip.id || item.fieldKey === tooltip.fieldKey)
+      );
+      return missingDefaults.length ? [...current, ...missingDefaults] : current;
+    });
+  }, [setCommunicationHelpTooltips]);
 
   useEffect(() => {
     setSystemUsers(current => {
@@ -828,6 +1261,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setReservationPolicies(payload.reservationPolicies);
       setSupplyRequests(payload.supplyRequests);
       setAccountancyEntries(payload.accountancyEntries);
+      setCommunicationSenders(payload.communicationSenders);
+      setCommunicationProviderAccounts(payload.communicationProviderAccounts);
+      setCommunicationTemplates(payload.communicationTemplates);
+      setCommunicationTemplateAssets(payload.communicationTemplateAssets);
+      setCommunicationImportLists(payload.communicationImportLists);
+      setCommunicationRecipients(payload.communicationRecipients);
+      setCommunicationAudiences(payload.communicationAudiences);
+      setCommunicationCampaigns(payload.communicationCampaigns);
+      setCommunicationCampaignSteps(payload.communicationCampaignSteps);
+      setCommunicationSendingRules(payload.communicationSendingRules);
+      setCommunicationOutbox(payload.communicationOutbox);
+      setCommunicationEvents(payload.communicationEvents);
+      setCommunicationSuppressionList(payload.communicationSuppressionList);
+      setCommunicationUnsubscribes(payload.communicationUnsubscribes);
+      setCommunicationHelpTooltips(payload.communicationHelpTooltips.length ? payload.communicationHelpTooltips : initialCommunicationHelpTooltips);
       window.setTimeout(() => {
         applyingRemotePmsData.current = false;
       }, 0);
@@ -853,6 +1301,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setReservationPolicies,
     setSupplyRequests,
     setAccountancyEntries,
+    setCommunicationSenders,
+    setCommunicationProviderAccounts,
+    setCommunicationTemplates,
+    setCommunicationTemplateAssets,
+    setCommunicationImportLists,
+    setCommunicationRecipients,
+    setCommunicationAudiences,
+    setCommunicationCampaigns,
+    setCommunicationCampaignSteps,
+    setCommunicationSendingRules,
+    setCommunicationOutbox,
+    setCommunicationEvents,
+    setCommunicationSuppressionList,
+    setCommunicationUnsubscribes,
+    setCommunicationHelpTooltips,
   ]);
 
   useEffect(() => {
@@ -875,6 +1338,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
       reservationPolicies,
       supplyRequests,
       accountancyEntries,
+      communicationSenders,
+      communicationProviderAccounts,
+      communicationTemplates,
+      communicationTemplateAssets,
+      communicationImportLists,
+      communicationRecipients,
+      communicationAudiences,
+      communicationCampaigns,
+      communicationCampaignSteps,
+      communicationSendingRules,
+      communicationOutbox,
+      communicationEvents,
+      communicationSuppressionList,
+      communicationUnsubscribes,
+      communicationHelpTooltips,
     };
     const snapshot = JSON.stringify(payload);
     if (snapshot === latestPmsDataSnapshot.current) return;
@@ -903,6 +1381,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     reservationPolicies,
     supplyRequests,
     accountancyEntries,
+    communicationSenders,
+    communicationProviderAccounts,
+    communicationTemplates,
+    communicationTemplateAssets,
+    communicationImportLists,
+    communicationRecipients,
+    communicationAudiences,
+    communicationCampaigns,
+    communicationCampaignSteps,
+    communicationSendingRules,
+    communicationOutbox,
+    communicationEvents,
+    communicationSuppressionList,
+    communicationUnsubscribes,
+    communicationHelpTooltips,
   ]);
 
   useEffect(() => {
@@ -936,6 +1429,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       if (legacyCheckInAccess && !permissions.some(permission => permission.module === 'Check-in' && permission.section === 'Check-in Form')) {
         additions.push({ module: 'Check-in', section: 'Check-in Form', access: legacyCheckInAccess });
+      }
+
+      const communicationsAccess = permissions.find(permission => permission.module === 'Communications' && permission.access !== 'none')?.access;
+      if ((user.profile === 'Admin' || user.profile === 'General Director') && !communicationsAccess) {
+        editAllPermissions
+          .filter(rule => rule.module === 'Communications')
+          .forEach(rule => additions.push(rule));
       }
 
       const nextPermissions = additions.length ? [...permissions, ...additions] : permissions;
@@ -1127,6 +1627,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setReservations(current => current.filter(reservation => reservation.propertyId !== id));
     setSupplyRequests(current => current.filter(request => request.propertyId !== id));
     setAccountancyEntries(current => current.filter(entry => entry.propertyId !== id));
+    setCommunicationSenders(current => current.filter(item => item.propertyId !== id));
+    setCommunicationProviderAccounts(current => current.filter(item => item.propertyId !== id));
+    setCommunicationTemplates(current => current.filter(item => item.propertyId !== id));
+    setCommunicationTemplateAssets(current => current.filter(item => item.propertyId !== id));
+    setCommunicationImportLists(current => current.filter(item => item.propertyId !== id));
+    setCommunicationRecipients(current => current.filter(item => item.propertyId !== id));
+    setCommunicationAudiences(current => current.filter(item => item.propertyId !== id));
+    setCommunicationCampaigns(current => current.filter(item => item.propertyId !== id));
+    setCommunicationCampaignSteps(current => current.filter(item => item.propertyId !== id));
+    setCommunicationSendingRules(current => current.filter(item => item.propertyId !== id));
+    setCommunicationOutbox(current => current.filter(item => item.propertyId !== id));
+    setCommunicationEvents(current => current.filter(item => item.propertyId !== id));
+    setCommunicationSuppressionList(current => current.filter(item => item.propertyId !== id));
+    setCommunicationUnsubscribes(current => current.filter(item => item.propertyId !== id));
     setSystemUsers(current => current.map(user => ({
       ...user,
       propertyIds: user.propertyIds.filter(propertyId => propertyId !== id),
@@ -1413,6 +1927,120 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const deleteAccountancyEntry = (id: string) =>
     setAccountancyEntries(current => current.filter(entry => entry.id !== id));
 
+  const addCommunicationSender = (sender: CommunicationSender) =>
+    setCommunicationSenders(current => [sender, ...current.map(item => sender.defaultSender && item.propertyId === sender.propertyId ? { ...item, defaultSender: false } : item)]);
+  const updateCommunicationSender = (id: string, updates: Partial<CommunicationSender>) =>
+    setCommunicationSenders(current => current.map(item => {
+      if (item.id === id) return { ...item, ...updates };
+      if (updates.defaultSender && item.propertyId === current.find(target => target.id === id)?.propertyId) return { ...item, defaultSender: false };
+      return item;
+    }));
+  const deleteCommunicationSender = (id: string) => {
+    setCommunicationSenders(current => current.filter(item => item.id !== id));
+    setCommunicationCampaigns(current => current.map(item => item.senderId === id ? { ...item, senderId: '', status: 'draft' } : item));
+  };
+
+  const addCommunicationProviderAccount = (account: CommunicationProviderAccount) =>
+    setCommunicationProviderAccounts(current => [account, ...current]);
+  const updateCommunicationProviderAccount = (id: string, updates: Partial<CommunicationProviderAccount>) =>
+    setCommunicationProviderAccounts(current => current.map(item => item.id === id ? { ...item, ...updates } : item));
+  const deleteCommunicationProviderAccount = (id: string) => {
+    setCommunicationProviderAccounts(current => current.filter(item => item.id !== id));
+    setCommunicationSenders(current => current.map(item => item.providerAccountId === id ? { ...item, providerAccountId: undefined, verified: false } : item));
+  };
+
+  const addCommunicationTemplate = (template: CommunicationTemplate) =>
+    setCommunicationTemplates(current => [template, ...current]);
+  const updateCommunicationTemplate = (id: string, updates: Partial<CommunicationTemplate>) =>
+    setCommunicationTemplates(current => current.map(item => item.id === id ? { ...item, ...updates } : item));
+  const deleteCommunicationTemplate = (id: string) => {
+    setCommunicationTemplates(current => current.filter(item => item.id !== id));
+    setCommunicationCampaigns(current => current.map(item => item.templateId === id ? { ...item, templateId: '', status: 'draft' } : item));
+  };
+
+  const addCommunicationTemplateAsset = (asset: CommunicationTemplateAsset) =>
+    setCommunicationTemplateAssets(current => [asset, ...current]);
+  const updateCommunicationTemplateAsset = (id: string, updates: Partial<CommunicationTemplateAsset>) =>
+    setCommunicationTemplateAssets(current => current.map(item => item.id === id ? { ...item, ...updates } : item));
+  const deleteCommunicationTemplateAsset = (id: string) =>
+    setCommunicationTemplateAssets(current => current.filter(item => item.id !== id));
+
+  const addCommunicationImportList = (list: CommunicationImportList) =>
+    setCommunicationImportLists(current => [list, ...current]);
+  const updateCommunicationImportList = (id: string, updates: Partial<CommunicationImportList>) =>
+    setCommunicationImportLists(current => current.map(item => item.id === id ? { ...item, ...updates } : item));
+  const deleteCommunicationImportList = (id: string) => {
+    setCommunicationImportLists(current => current.filter(item => item.id !== id));
+    setCommunicationRecipients(current => current.filter(item => item.importListId !== id));
+  };
+
+  const addCommunicationRecipient = (recipient: CommunicationRecipient) =>
+    setCommunicationRecipients(current => [recipient, ...current]);
+  const updateCommunicationRecipient = (id: string, updates: Partial<CommunicationRecipient>) =>
+    setCommunicationRecipients(current => current.map(item => item.id === id ? { ...item, ...updates } : item));
+  const deleteCommunicationRecipient = (id: string) => {
+    setCommunicationRecipients(current => current.filter(item => item.id !== id));
+    setCommunicationAudiences(current => current.map(item => ({ ...item, recipientIds: item.recipientIds.filter(recipientId => recipientId !== id) })));
+  };
+
+  const addCommunicationAudience = (audience: CommunicationAudience) =>
+    setCommunicationAudiences(current => [audience, ...current]);
+  const updateCommunicationAudience = (id: string, updates: Partial<CommunicationAudience>) =>
+    setCommunicationAudiences(current => current.map(item => item.id === id ? { ...item, ...updates } : item));
+  const deleteCommunicationAudience = (id: string) =>
+    setCommunicationAudiences(current => current.filter(item => item.id !== id));
+
+  const addCommunicationCampaign = (campaign: CommunicationCampaign) =>
+    setCommunicationCampaigns(current => [campaign, ...current]);
+  const updateCommunicationCampaign = (id: string, updates: Partial<CommunicationCampaign>) =>
+    setCommunicationCampaigns(current => current.map(item => item.id === id ? { ...item, ...updates } : item));
+  const deleteCommunicationCampaign = (id: string) => {
+    setCommunicationCampaigns(current => current.filter(item => item.id !== id));
+    setCommunicationOutbox(current => current.map(item => item.campaignId === id ? { ...item, status: 'cancelled' } : item));
+  };
+
+  const addCommunicationCampaignStep = (step: CommunicationCampaignStep) =>
+    setCommunicationCampaignSteps(current => [step, ...current]);
+  const updateCommunicationCampaignStep = (id: string, updates: Partial<CommunicationCampaignStep>) =>
+    setCommunicationCampaignSteps(current => current.map(item => item.id === id ? { ...item, ...updates } : item));
+  const deleteCommunicationCampaignStep = (id: string) =>
+    setCommunicationCampaignSteps(current => current.filter(item => item.id !== id));
+
+  const addCommunicationSendingRule = (rule: CommunicationSendingRule) =>
+    setCommunicationSendingRules(current => [rule, ...current]);
+  const updateCommunicationSendingRule = (id: string, updates: Partial<CommunicationSendingRule>) =>
+    setCommunicationSendingRules(current => current.map(item => item.id === id ? { ...item, ...updates } : item));
+  const deleteCommunicationSendingRule = (id: string) =>
+    setCommunicationSendingRules(current => current.filter(item => item.id !== id));
+
+  const addCommunicationOutboxJob = (job: CommunicationOutboxJob) =>
+    setCommunicationOutbox(current => [job, ...current]);
+  const updateCommunicationOutboxJob = (id: string, updates: Partial<CommunicationOutboxJob>) =>
+    setCommunicationOutbox(current => current.map(item => item.id === id ? { ...item, ...updates } : item));
+  const deleteCommunicationOutboxJob = (id: string) =>
+    setCommunicationOutbox(current => current.filter(item => item.id !== id));
+
+  const addCommunicationEvent = (event: CommunicationEvent) =>
+    setCommunicationEvents(current => [event, ...current]);
+  const updateCommunicationEvent = (id: string, updates: Partial<CommunicationEvent>) =>
+    setCommunicationEvents(current => current.map(item => item.id === id ? { ...item, ...updates } : item));
+  const deleteCommunicationEvent = (id: string) =>
+    setCommunicationEvents(current => current.filter(item => item.id !== id));
+
+  const addCommunicationSuppression = (suppression: CommunicationSuppression) =>
+    setCommunicationSuppressionList(current => [suppression, ...current.filter(item => item.email.toLowerCase() !== suppression.email.toLowerCase() || item.propertyId !== suppression.propertyId)]);
+  const updateCommunicationSuppression = (id: string, updates: Partial<CommunicationSuppression>) =>
+    setCommunicationSuppressionList(current => current.map(item => item.id === id ? { ...item, ...updates } : item));
+  const deleteCommunicationSuppression = (id: string) =>
+    setCommunicationSuppressionList(current => current.filter(item => item.id !== id));
+
+  const addCommunicationUnsubscribe = (unsubscribe: CommunicationUnsubscribe) =>
+    setCommunicationUnsubscribes(current => [unsubscribe, ...current]);
+  const updateCommunicationUnsubscribe = (id: string, updates: Partial<CommunicationUnsubscribe>) =>
+    setCommunicationUnsubscribes(current => current.map(item => item.id === id ? { ...item, ...updates } : item));
+  const deleteCommunicationUnsubscribe = (id: string) =>
+    setCommunicationUnsubscribes(current => current.filter(item => item.id !== id));
+
   return (
     <AppContext.Provider value={{
       currentUser, login, logout,
@@ -1436,6 +2064,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
       reservationPolicies, addReservationPolicy, updateReservationPolicy, deleteReservationPolicy,
       supplyRequests, addSupplyRequest, updateSupplyRequest, deleteSupplyRequest,
       accountancyEntries, accountancyDisplayCurrency, setAccountancyDisplayCurrency, addAccountancyEntry, updateAccountancyEntry, deleteAccountancyEntry,
+      communicationSenders, addCommunicationSender, updateCommunicationSender, deleteCommunicationSender,
+      communicationProviderAccounts, addCommunicationProviderAccount, updateCommunicationProviderAccount, deleteCommunicationProviderAccount,
+      communicationTemplates, addCommunicationTemplate, updateCommunicationTemplate, deleteCommunicationTemplate,
+      communicationTemplateAssets, addCommunicationTemplateAsset, updateCommunicationTemplateAsset, deleteCommunicationTemplateAsset,
+      communicationImportLists, addCommunicationImportList, updateCommunicationImportList, deleteCommunicationImportList,
+      communicationRecipients, addCommunicationRecipient, updateCommunicationRecipient, deleteCommunicationRecipient,
+      communicationAudiences, addCommunicationAudience, updateCommunicationAudience, deleteCommunicationAudience,
+      communicationCampaigns, addCommunicationCampaign, updateCommunicationCampaign, deleteCommunicationCampaign,
+      communicationCampaignSteps, addCommunicationCampaignStep, updateCommunicationCampaignStep, deleteCommunicationCampaignStep,
+      communicationSendingRules, addCommunicationSendingRule, updateCommunicationSendingRule, deleteCommunicationSendingRule,
+      communicationOutbox, addCommunicationOutboxJob, updateCommunicationOutboxJob, deleteCommunicationOutboxJob,
+      communicationEvents, addCommunicationEvent, updateCommunicationEvent, deleteCommunicationEvent,
+      communicationSuppressionList, addCommunicationSuppression, updateCommunicationSuppression, deleteCommunicationSuppression,
+      communicationUnsubscribes, addCommunicationUnsubscribe, updateCommunicationUnsubscribe, deleteCommunicationUnsubscribe,
+      communicationHelpTooltips,
     }}>
       {children}
     </AppContext.Provider>

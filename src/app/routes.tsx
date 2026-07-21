@@ -26,6 +26,8 @@ import { SupplyRequests } from "./pages/supply/SupplyRequests";
 import { CheckIn } from "./pages/CheckIn";
 import { CheckInDatabase as CheckInDatabase } from "./pages/checkin/Database";
 import { CheckInDashboard as CheckInDashboard } from "./pages/checkin/Dashboard";
+import { Communications } from "./pages/communications/Communications";
+import { CommunicationsUnsubscribe } from "./pages/communications/Unsubscribe";
 
 import { PlatformAdmin } from "./pages/PlatformAdmin";
 import { Notifications } from "./pages/Notifications";
@@ -39,6 +41,10 @@ export const router = createBrowserRouter([
   {
     path: "/",
     loader: () => redirect("/login"),
+  },
+  {
+    path: "/unsubscribe/:token",
+    Component: CommunicationsUnsubscribe,
   },
   {
     path: "/app",
@@ -105,6 +111,25 @@ export const router = createBrowserRouter([
       { path: "form", Component: CheckIn },
       { path: "database", Component: CheckInDatabase },
       { path: "dashboard", Component: CheckInDashboard },
+      { path: "notifications", Component: Notifications },
+    ],
+  },
+  {
+    path: "/app/communications",
+    Component: ModuleLayout,
+    children: [
+      { index: true, loader: () => redirect("/app/communications/dashboard") },
+      { path: "dashboard", Component: Communications },
+      { path: "senders", Component: Communications },
+      { path: "provider-settings", Component: Communications },
+      { path: "dns-verification", Component: Communications },
+      { path: "recipients", Component: Communications },
+      { path: "templates", Component: Communications },
+      { path: "sending-rules", Component: Communications },
+      { path: "campaigns", Component: Communications },
+      { path: "outbox", Component: Communications },
+      { path: "logs", Component: Communications },
+      { path: "suppression-list", Component: Communications },
       { path: "notifications", Component: Notifications },
     ],
   },

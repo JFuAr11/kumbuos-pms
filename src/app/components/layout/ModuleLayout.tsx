@@ -11,6 +11,9 @@ import {
   Bell,
   Search,
   MessageSquare,
+  Mail,
+  Send,
+  Server,
   DollarSign,
   Package,
   Home,
@@ -94,6 +97,21 @@ const CHECKIN_ITEMS = [
   { path: "/app/check-in/notifications", label: "Notifications", icon: Bell },
 ];
 
+const COMMUNICATIONS_ITEMS = [
+  { path: "/app/communications/dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { path: "/app/communications/senders", label: "Senders", icon: Mail },
+  { path: "/app/communications/provider-settings", label: "Provider Settings", icon: Server },
+  { path: "/app/communications/dns-verification", label: "DNS Verification", icon: ShieldAlert },
+  { path: "/app/communications/recipients", label: "Recipients", icon: Users },
+  { path: "/app/communications/templates", label: "Templates", icon: ReceiptText },
+  { path: "/app/communications/sending-rules", label: "Sending Rules", icon: SettingsIcon },
+  { path: "/app/communications/campaigns", label: "Campaigns", icon: Send },
+  { path: "/app/communications/outbox", label: "Outbox Queue", icon: Package },
+  { path: "/app/communications/logs", label: "Logs", icon: Database },
+  { path: "/app/communications/suppression-list", label: "Suppression List", icon: ShieldAlert },
+  { path: "/app/communications/notifications", label: "Notifications", icon: Bell },
+];
+
 const ADMIN_ITEMS = [
   { path: "/app/admin/companies", label: "Company Scope", icon: Building2 },
   { path: "/app/admin/users", label: "Manage Users", icon: Users },
@@ -138,6 +156,9 @@ export function ModuleLayout() {
   } else if (location.pathname.startsWith("/app/check-in")) {
     navItems = CHECKIN_ITEMS;
     moduleTitle = "Check-in";
+  } else if (location.pathname.startsWith("/app/communications")) {
+    navItems = COMMUNICATIONS_ITEMS;
+    moduleTitle = "Communications";
   } else if (location.pathname.startsWith("/app/admin")) {
     navItems = ADMIN_ITEMS;
     moduleTitle = "Admin Platform";
@@ -166,7 +187,7 @@ export function ModuleLayout() {
   const visibleNavItems = navItems.filter(item => hasSectionAccess(item.label));
   const currentNavItem = navItems.find(item => location.pathname.startsWith(item.path));
   const hasCurrentSectionAccess = !currentNavItem || visibleNavItems.some(item => item.path === currentNavItem.path);
-  const requiresActiveProperty = ["Reservations", "Accountancy", "Supply Requests", "Check-in"].includes(moduleTitle);
+  const requiresActiveProperty = ["Reservations", "Accountancy", "Supply Requests", "Check-in", "Communications"].includes(moduleTitle);
   const exportCurrentViewPdf = () => {
     const currentSection = visibleNavItems.find(item => location.pathname.startsWith(item.path))?.label || moduleTitle;
     const filename = `${moduleTitle}-${currentSection}`.replace(/[^a-z0-9]+/gi, "-").replace(/^-|-$/g, "");
@@ -179,6 +200,7 @@ export function ModuleLayout() {
     { label: "Accountancy", path: "/app/accountancy/overview", module: "Accountancy" },
     { label: "Supply Requests", path: "/app/supply-requests/beverage", module: "Supply Requests" },
     { label: "Check-in", path: "/app/check-in/form", module: "Check-in" },
+    { label: "Communications", path: "/app/communications/dashboard", module: "Communications" },
     { label: "Admin Platform", path: "/app/admin/companies", module: "Admin Platform" },
     { label: "Owner Console", path: "/app/owner/tenants", module: "Owner Console" },
   ].filter(item => !currentUser || hasModulePermission(item.module));

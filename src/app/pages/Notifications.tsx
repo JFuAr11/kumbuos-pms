@@ -26,6 +26,11 @@ const MODULE_DETAILS: Record<string, { name: string; triggers: string[]; recipie
     triggers: ["Guest form completed", "Guest form incomplete", "Arrival due in 48 hours", "Guest checked in", "Marketing consent captured"],
     recipients: ["Arriving guests", "Front desk", "Guest relations", "Property manager"],
   },
+  communications: {
+    name: "Communications",
+    triggers: ["Campaign completed", "Campaign paused", "High failure rate detected", "Recipient unsubscribed", "Sender verification needed"],
+    recipients: ["Communications team", "Property manager", "Company admins", "Campaign owner"],
+  },
   admin: {
     name: "Admin Platform",
     triggers: ["New user created", "Permissions changed", "Company activated", "Property profile updated", "Support access started"],
@@ -54,6 +59,7 @@ const emptyForm = (moduleKey: string, moduleName: string): Partial<NotificationA
 function getModuleKey(pathname: string) {
   if (pathname.startsWith("/app/supply-requests")) return "supply-requests";
   if (pathname.startsWith("/app/check-in")) return "check-in";
+  if (pathname.startsWith("/app/communications")) return "communications";
   if (pathname.startsWith("/app/accountancy")) return "accountancy";
   if (pathname.startsWith("/app/admin")) return "admin";
   if (pathname.startsWith("/app/owner")) return "owner";

@@ -5,7 +5,7 @@ import { Input } from "../components/ui/input";
 import { Company, Property, SystemUser, UserProfile, useAppContext } from "../context/AppContext";
 import { validatePasswordPolicy } from "../utils/authSecurity";
 
-const roleOptions: UserProfile[] = ["Owner", "Admin", "General Director", "Reservations", "Accountancy", "Supplies", "Check-in"];
+const roleOptions: UserProfile[] = ["Owner", "Admin", "General Director", "Reservations", "Accountancy", "Supplies", "Check-in", "Communications"];
 const isValidEmail = (value?: string) => Boolean(value && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value));
 const isValidPhone = (value?: string) => !value || /^\+?[0-9\s().-]{7,24}$/.test(value);
 const hasValue = (value?: string | number) => value !== undefined && value !== null && String(value).trim().length > 0;
@@ -151,7 +151,7 @@ export function OwnerConsole() {
       email: adminForm.email,
       role: adminForm.role || "Tenant Admin",
       profile: "Admin",
-      departments: ["Admin", "Reservations", "Accountancy", "Supplies", "Check-in"],
+      departments: ["Admin", "Reservations", "Accountancy", "Supplies", "Check-in", "Communications"],
       phone: adminForm.phone || "",
       password: adminForm.password,
       status: "Active",

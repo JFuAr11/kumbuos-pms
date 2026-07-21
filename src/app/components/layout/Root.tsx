@@ -5,6 +5,7 @@ import {
   Home,
   LayoutDashboard,
   LogOut,
+  Mail,
   MessageSquare,
   Search,
   Settings as SettingsIcon,
@@ -20,6 +21,7 @@ const navItems = [
   { path: "/app/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { path: "/app/reservations", label: "Reservations", icon: BookOpenCheck },
   { path: "/app/check-in", label: "Check-in", icon: UserCheck },
+  { path: "/app/communications", label: "Communications", icon: Mail },
   { path: "/app/settings", label: "Configuration", icon: SettingsIcon },
   { path: "/app/admin", label: "Admin Platform", icon: ShieldAlert },
 ];

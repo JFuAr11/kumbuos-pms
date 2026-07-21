@@ -8,6 +8,7 @@ import {
   Crown,
   ShieldAlert,
   UserCheck,
+  Mail,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { useAppContext } from "../context/AppContext";
@@ -73,6 +74,13 @@ export function Mainpage() {
       icon: UserCheck,
       path: "/app/check-in/form",
     },
+    {
+      id: "communications",
+      title: "Communications",
+      subtitle: "Email campaigns, templates, senders, audiences, and logs",
+      icon: Mail,
+      path: "/app/communications/dashboard",
+    },
   ];
 
   return (
@@ -111,6 +119,7 @@ export function Mainpage() {
             {sections.filter(section => hasModuleAccess(
               section.id === "supply-requests" ? "Supply Requests" :
               section.id === "check-in" ? "Check-in" :
+              section.id === "communications" ? "Communications" :
               section.title
             )).map((section) => {
               const Icon = section.icon;

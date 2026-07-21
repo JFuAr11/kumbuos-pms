@@ -2,6 +2,21 @@ import type {
   AccountancyEntry,
   BookingPayment,
   Client,
+  CommunicationAudience,
+  CommunicationCampaign,
+  CommunicationCampaignStep,
+  CommunicationEvent,
+  CommunicationHelpTooltip,
+  CommunicationImportList,
+  CommunicationOutboxJob,
+  CommunicationProviderAccount,
+  CommunicationRecipient,
+  CommunicationSender,
+  CommunicationSendingRule,
+  CommunicationSuppression,
+  CommunicationTemplate,
+  CommunicationTemplateAsset,
+  CommunicationUnsubscribe,
   Company,
   NotificationAutomation,
   NotificationEmailConfig,
@@ -35,6 +50,21 @@ export type PmsDataPayload = {
   reservationPolicies: ReservationPolicy[];
   supplyRequests: SupplyRequest[];
   accountancyEntries: AccountancyEntry[];
+  communicationSenders: CommunicationSender[];
+  communicationProviderAccounts: CommunicationProviderAccount[];
+  communicationTemplates: CommunicationTemplate[];
+  communicationTemplateAssets: CommunicationTemplateAsset[];
+  communicationImportLists: CommunicationImportList[];
+  communicationRecipients: CommunicationRecipient[];
+  communicationAudiences: CommunicationAudience[];
+  communicationCampaigns: CommunicationCampaign[];
+  communicationCampaignSteps: CommunicationCampaignStep[];
+  communicationSendingRules: CommunicationSendingRule[];
+  communicationOutbox: CommunicationOutboxJob[];
+  communicationEvents: CommunicationEvent[];
+  communicationSuppressionList: CommunicationSuppression[];
+  communicationUnsubscribes: CommunicationUnsubscribe[];
+  communicationHelpTooltips: CommunicationHelpTooltip[];
   updatedAt?: unknown;
 };
 
@@ -152,5 +182,20 @@ function normalizePayload(data: Partial<PmsDataPayload>): PmsDataPayload {
     reservationPolicies: data.reservationPolicies || [],
     supplyRequests: data.supplyRequests || [],
     accountancyEntries: data.accountancyEntries || [],
+    communicationSenders: data.communicationSenders || [],
+    communicationProviderAccounts: data.communicationProviderAccounts || [],
+    communicationTemplates: data.communicationTemplates || [],
+    communicationTemplateAssets: data.communicationTemplateAssets || [],
+    communicationImportLists: data.communicationImportLists || [],
+    communicationRecipients: data.communicationRecipients || [],
+    communicationAudiences: data.communicationAudiences || [],
+    communicationCampaigns: data.communicationCampaigns || [],
+    communicationCampaignSteps: data.communicationCampaignSteps || [],
+    communicationSendingRules: data.communicationSendingRules || [],
+    communicationOutbox: data.communicationOutbox || [],
+    communicationEvents: data.communicationEvents || [],
+    communicationSuppressionList: data.communicationSuppressionList || [],
+    communicationUnsubscribes: data.communicationUnsubscribes || [],
+    communicationHelpTooltips: data.communicationHelpTooltips || [],
   };
 }
