@@ -153,6 +153,7 @@ export type CommunicationOutboxStatus =
   | 'cancelled';
 export type CommunicationProviderKind = 'Mock/Test' | 'SMTP';
 export type CommunicationCampaignType = 'Operational' | 'Marketing';
+export type CommunicationScheduleMode = 'Manual' | 'Before Check-in' | 'After Check-out';
 
 export type CommunicationSender = {
   id: string;
@@ -331,6 +332,10 @@ export type CommunicationCampaign = {
   recipientIds: string[];
   sendingRuleId: string;
   scheduledAt?: string;
+  scheduleMode?: CommunicationScheduleMode;
+  scheduleOffsetDays?: number;
+  scheduleOffsetHours?: number;
+  scheduleTimeOfDay?: string;
   status: CommunicationCampaignStatus;
   preflightErrors: string[];
   finalRecipientCount: number;

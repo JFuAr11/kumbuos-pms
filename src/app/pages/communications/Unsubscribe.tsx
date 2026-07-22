@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 import { CheckCircle2, MailX, ShieldCheck } from "lucide-react";
 import { Button } from "../../components/ui/button";
+import { Input } from "../../components/ui/input";
 import { useAppContext } from "../../context/AppContext";
 
 type TokenPayload = {
@@ -10,38 +11,61 @@ type TokenPayload = {
   issuedAt: string;
 };
 
+const unsubscribeReasons = [
+  "I receive too many emails",
+  "I am not planning to return to Africa",
+  "I am no longer interested in receiving communications",
+  "The content is not relevant to me",
+  "I did not request these emails",
+  "I prefer to be contacted only for active bookings",
+  "Other reason",
+];
+
 export function CommunicationsUnsubscribe() {
   const { token = "" } = useParams();
   const {
-    currentUser,
     communicationCampaigns,
     communicationSuppressionList,
     communicationUnsubscribes,
     addCommunicationSuppression,
     addCommunicationUnsubscribe,
   } = useAppContext();
-  const [status, setStatus] = useState<"loading" | "done" | "invalid">("loading");
-
   const decoded = useMemo(() => decodeToken(token), [token]);
   const campaign = decoded ? communicationCampaigns.find((item) => item.id === decoded.campaignId) : undefined;
+  const [email, setEmail] = useState(decoded?.email || "");
+  const [reason, setReason] = useState(unsubscribeReasons[0]);
+  const [confirmed, setConfirmed] = useState(false);
+  const [formError, setFormError] = useState("");
+  const [submitted, setSubmitted] = useState(false);
 
-  useEffect(() => {
-    if (!decoded || !campaign) {
-      if (communicationCampaigns.length) {
-        setStatus("invalid");
-      }
+  const invalidLink = !decoded || (!campaign && communicationCampaigns.length > 0);
+
+  const submit = () => {
+    setFormError("");
+    const normalizedEmail = email.trim().toLowerCase();
+
+    if (!campaign || !decoded) {
+      setFormError("This unsubscribe link is not connected to an available campaign yet.");
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      setFormError("Enter a valid email address before confirming unsubscribe.");
+      return;
+    }
+    if (!confirmed) {
+      setFormError("Confirm the checkbox before unsubscribing this email.");
       return;
     }
 
-    const email = decoded.email.trim().toLowerCase();
     const now = new Date().toISOString();
-    const userId = currentUser?.id || "public-unsubscribe";
+    const userId = "public-unsubscribe";
     const alreadySuppressed = communicationSuppressionList.some(
-      (item) => item.propertyId === campaign.propertyId && item.email.toLowerCase() === email && item.status !== "Archived",
+      (item) => item.propertyId === campaign.propertyId && item.email.toLowerCase() === normalizedEmail && item.status !== "Archived",
     );
     const alreadyUnsubscribed = communicationUnsubscribes.some(
-      (item) => item.propertyId === campaign.propertyId && item.token === token,
+      (item) => item.propertyId === campaign.propertyId && item.email.toLowerCase() === normalizedEmail && item.campaignId === campaign.id,
     );
+    const notes = `Client requested unsubscribe from the public link. Reason: ${reason}.`;
 
     if (!alreadySuppressed) {
       addCommunicationSuppression({
@@ -49,10 +73,10 @@ export function CommunicationsUnsubscribe() {
         tenantId: campaign.tenantId,
         companyId: campaign.companyId,
         propertyId: campaign.propertyId,
-        email,
+        email: normalizedEmail,
         reason: "Unsubscribe",
         sourceCampaignId: campaign.id,
-        notes: "Public unsubscribe link",
+        notes,
         status: "Active",
         createdBy: userId,
         updatedBy: userId,
@@ -67,45 +91,71 @@ export function CommunicationsUnsubscribe() {
         tenantId: campaign.tenantId,
         companyId: campaign.companyId,
         propertyId: campaign.propertyId,
-        email,
+        email: normalizedEmail,
         token,
         campaignId: campaign.id,
-        reason: "Public unsubscribe link",
+        reason,
         status: "Active",
         createdAt: now,
       });
     }
 
-    setStatus("done");
-  }, [
-    addCommunicationSuppression,
-    addCommunicationUnsubscribe,
-    campaign,
-    communicationCampaigns.length,
-    communicationSuppressionList,
-    communicationUnsubscribes,
-    currentUser?.id,
-    decoded,
-    token,
-  ]);
+    setSubmitted(true);
+  };
 
   return (
     <main className="min-h-screen bg-[#2b2721] px-4 py-10 text-white">
-      <section className="mx-auto flex min-h-[70vh] max-w-xl flex-col items-center justify-center text-center">
+      <section className="mx-auto flex min-h-[78vh] max-w-2xl flex-col items-center justify-center text-center">
         <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-full border border-[#d18b31] bg-[#15120f] text-[#f7bc6a]">
-          {status === "done" ? <CheckCircle2 className="h-8 w-8" /> : <MailX className="h-8 w-8" />}
+          {submitted ? <CheckCircle2 className="h-8 w-8" /> : <MailX className="h-8 w-8" />}
         </div>
         <p className="text-sm font-semibold uppercase tracking-[0.12em] text-[#f7bc6a]">KumbuOS Communications</p>
         <h1 className="mt-3 text-3xl font-bold">
-          {status === "done" ? "You have been unsubscribed" : status === "invalid" ? "This unsubscribe link is not valid" : "Processing your request"}
+          {submitted ? "Your unsubscribe request has been confirmed" : "Unsubscribe from email communications"}
         </h1>
         <p className="mt-4 text-base leading-7 text-white/75">
-          {status === "done"
-            ? "This email address has been added to the suppression list for this property. Future marketing campaigns will not be sent to it."
-            : status === "invalid"
-              ? "The link may be expired, incomplete, or connected to a campaign that is no longer available."
-              : "Please wait while we register the unsubscribe request."}
+          {submitted
+            ? "We have added this email address to the suppression list for this property. We are sorry to see you go and appreciate your feedback."
+            : "We are sorry that you have decided to stop receiving our emails. Please confirm the email address, tell us the reason if you wish, and submit the request below."}
         </p>
+
+        {!submitted && (
+          <div className="mt-8 w-full rounded-xl border border-[#d18b31]/45 bg-[#15120f] p-5 text-left shadow-2xl">
+            {invalidLink && (
+              <div className="mb-4 rounded-md border border-red-300/40 bg-red-950/40 p-3 text-sm text-red-100">
+                This unsubscribe link is not valid or the connected campaign is not available.
+              </div>
+            )}
+            <label className="block text-sm font-medium">
+              <span className="mb-1 block text-[#f7bc6a]">Email address</span>
+              <Input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" />
+            </label>
+            <label className="mt-4 block text-sm font-medium">
+              <span className="mb-1 block text-[#f7bc6a]">Reason</span>
+              <select
+                className="h-11 w-full rounded-md border border-[#d18b31]/45 bg-[#2b2721] px-3 text-sm text-white"
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+              >
+                {unsubscribeReasons.map((item) => <option key={item} value={item}>{item}</option>)}
+              </select>
+            </label>
+            <label className="mt-5 flex items-start gap-3 text-sm text-white/80">
+              <input
+                type="checkbox"
+                className="mt-1 h-4 w-4 rounded border-[#d18b31]/60"
+                checked={confirmed}
+                onChange={(event) => setConfirmed(event.target.checked)}
+              />
+              <span>I confirm that I want this email address to stop receiving marketing email communications from this property.</span>
+            </label>
+            {formError && <div className="mt-4 rounded-md border border-red-300/40 bg-red-950/40 p-3 text-sm text-red-100">{formError}</div>}
+            <Button className="mt-5 w-full bg-[#d18b31] text-white hover:bg-[#b97624]" onClick={submit} disabled={invalidLink}>
+              Confirm unsubscribe
+            </Button>
+          </div>
+        )}
+
         <div className="mt-8 rounded-lg border border-white/15 bg-white/5 p-4 text-left text-sm text-white/70">
           <div className="flex items-start gap-3">
             <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#f7bc6a]" />
@@ -114,7 +164,7 @@ export function CommunicationsUnsubscribe() {
             </p>
           </div>
         </div>
-        <Button asChild className="mt-8 bg-[#d18b31] text-white hover:bg-[#b97624]">
+        <Button asChild variant="outline" className="mt-8 border-white/20 bg-transparent text-white hover:bg-white/10 hover:text-white">
           <Link to="/login">Return to KumbuOS</Link>
         </Button>
       </section>

@@ -13,6 +13,8 @@ import {
   Info,
   Mail,
   MailCheck,
+  Maximize2,
+  Minimize2,
   PauseCircle,
   Play,
   Plus,
@@ -38,6 +40,7 @@ import {
   CommunicationOutboxJob,
   CommunicationProviderAccount,
   CommunicationRecipient,
+  CommunicationScheduleMode,
   CommunicationSender,
   CommunicationSendingRule,
   CommunicationStatus,
@@ -79,6 +82,7 @@ const sectionTitles: Record<SectionKey, string> = {
 
 const marketingTypes: CommunicationCampaignType[] = ["Operational", "Marketing"];
 const statusOptions: CommunicationStatus[] = ["Draft", "Active", "Paused", "Archived"];
+const scheduleModes: CommunicationScheduleMode[] = ["Manual", "Before Check-in", "After Check-out"];
 const clientCategories: Array<Client["category"] | "All"> = ["All", "Tour Operator", "Agency", "Direct Client", "Corporate", "Other"];
 const variables = ["{{name}}", "{{email}}", "{{hotel_name}}", "{{property_name}}", "{{reservation_code}}", "{{checkin_date}}", "{{checkout_date}}", "{{unsubscribe_url}}"];
 
@@ -958,6 +962,7 @@ function TemplatesSection({
   const [form, setForm] = useState<Partial<CommunicationTemplate>>({ name: "", type: "Rich Text", subject: "", preheader: "", html: "", plainText: "", variables, assetIds: [], status: "Active" });
   const [files, setFiles] = useState<File[]>([]);
   const [previewRecipientId, setPreviewRecipientId] = useState("");
+  const [previewExpanded, setPreviewExpanded] = useState(false);
   const [status, setStatus] = useState("");
   const previewRecipient = scoped.recipients.find(item => item.id === previewRecipientId) || scoped.recipients[0];
   const renderedHtml = renderTemplate(form.html || richTextToHtml(form.plainText || ""), previewRecipient, activeProperty?.name || "");
@@ -1001,6 +1006,7 @@ function TemplatesSection({
   };
 
   return (
+    <>
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
       <Panel title={editingId ? "Edit Template" : "Create Template"} icon={Mail}>
         <div className="grid gap-4 md:grid-cols-2">
@@ -1034,8 +1040,15 @@ function TemplatesSection({
 
       <div className="space-y-5">
         <Panel title="Rendered Preview" icon={Eye}>
-          <SelectField label="Preview Recipient" value={previewRecipientId} onChange={setPreviewRecipientId} options={[{ value: "", label: "First available recipient" }, ...scoped.recipients.map(item => ({ value: item.id, label: `${item.name} - ${item.email}` }))]} />
-          <div className="mt-4 rounded-md border border-border bg-white p-4 text-sm text-[#2d2924]" dangerouslySetInnerHTML={{ __html: renderedHtml || "<p>No preview yet.</p>" }} />
+          <div className="flex items-end gap-2">
+            <div className="min-w-0 flex-1">
+              <SelectField label="Preview Recipient" value={previewRecipientId} onChange={setPreviewRecipientId} options={[{ value: "", label: "First available recipient" }, ...scoped.recipients.map(item => ({ value: item.id, label: `${item.name} - ${item.email}` }))]} />
+            </div>
+            <Button type="button" variant="outline" size="icon" onClick={() => setPreviewExpanded(true)} aria-label="Maximize rendered preview" title="Maximize preview">
+              <Maximize2 className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="mt-4 h-[420px] overflow-auto rounded-md border border-border bg-white p-4 text-sm text-[#2d2924]" dangerouslySetInnerHTML={{ __html: renderedHtml || "<p>No preview yet.</p>" }} />
         </Panel>
         <Panel title="Saved Templates" icon={Database}>
           <div className="space-y-3">
@@ -1063,6 +1076,23 @@ function TemplatesSection({
         </Panel>
       </div>
     </div>
+    {previewExpanded && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 p-4">
+        <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-border bg-background shadow-2xl">
+          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-wider text-primary">Rendered Preview</p>
+              <p className="text-xs text-muted-foreground">Full email preview with the selected recipient variables applied.</p>
+            </div>
+            <Button type="button" variant="outline" size="icon" onClick={() => setPreviewExpanded(false)} aria-label="Minimize rendered preview" title="Minimize preview">
+              <Minimize2 className="h-4 w-4" />
+            </Button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-auto bg-white p-6 text-[#2d2924]" dangerouslySetInnerHTML={{ __html: renderedHtml || "<p>No preview yet.</p>" }} />
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 
@@ -1159,7 +1189,19 @@ function CampaignsSection({
   addCommunicationOutboxJob: (job: CommunicationOutboxJob) => void;
   addCommunicationEvent: (event: CommunicationEvent) => void;
 }) {
-  const [form, setForm] = useState({ name: "", type: "Operational" as CommunicationCampaignType, senderId: "", templateId: "", audienceId: "", sendingRuleId: "", scheduledAt: "" });
+  const [form, setForm] = useState({
+    name: "",
+    type: "Operational" as CommunicationCampaignType,
+    senderId: "",
+    templateId: "",
+    audienceId: "",
+    sendingRuleId: "",
+    scheduledAt: "",
+    scheduleMode: "Manual" as CommunicationScheduleMode,
+    scheduleOffsetDays: 0,
+    scheduleOffsetHours: 0,
+    scheduleTimeOfDay: "09:00",
+  });
   const [preflight, setPreflight] = useState<string[]>([]);
   const [readyRecipients, setReadyRecipients] = useState<CommunicationRecipient[]>([]);
   const sender = scoped.senders.find(item => item.id === form.senderId);
@@ -1169,7 +1211,17 @@ function CampaignsSection({
   const rule = scoped.rules.find(item => item.id === form.sendingRuleId);
 
   const runPreflight = () => {
-    const result = preflightCampaign({ sender, provider, template, audience, rule, recipients: scoped.recipients, suppressions: scoped.suppressions, type: form.type });
+    const result = preflightCampaign({
+      sender,
+      provider,
+      template,
+      audience,
+      rule,
+      recipients: scoped.recipients,
+      suppressions: scoped.suppressions,
+      type: form.type,
+      scheduleMode: form.scheduleMode,
+    });
     setPreflight(result.errors);
     setReadyRecipients(result.recipients);
     return result;
@@ -1191,8 +1243,12 @@ function CampaignsSection({
       audienceId: audience?.id,
       recipientIds: result.recipients.map(item => item.id),
       sendingRuleId: rule.id,
-      scheduledAt: form.scheduledAt || "",
-      status: form.scheduledAt ? "scheduled" : "sending",
+      scheduledAt: form.scheduleMode === "Manual" ? form.scheduledAt || "" : "",
+      scheduleMode: form.scheduleMode,
+      scheduleOffsetDays: Number(form.scheduleOffsetDays || 0),
+      scheduleOffsetHours: Number(form.scheduleOffsetHours || 0),
+      scheduleTimeOfDay: form.scheduleTimeOfDay || "09:00",
+      status: form.scheduleMode !== "Manual" || form.scheduledAt ? "scheduled" : "sending",
       preflightErrors: [],
       finalRecipientCount: result.recipients.length,
       createdAt: now,
@@ -1202,7 +1258,13 @@ function CampaignsSection({
     result.recipients.forEach((recipient, index) => {
       const unsubscribeUrl = `${window.location.origin}/unsubscribe/${encodeURIComponent(buildUnsubscribeToken(recipient.email, id))}`;
       const vars = getRecipientVariables(recipient, activeProperty?.name || "", unsubscribeUrl);
-      const scheduledFor = form.scheduledAt || scheduleByRule(index, rule);
+      const scheduledFor = resolveCampaignScheduleForRecipient(recipient, index, rule, {
+        scheduleMode: form.scheduleMode,
+        scheduledAt: form.scheduledAt,
+        scheduleOffsetDays: Number(form.scheduleOffsetDays || 0),
+        scheduleOffsetHours: Number(form.scheduleOffsetHours || 0),
+        scheduleTimeOfDay: form.scheduleTimeOfDay || "09:00",
+      });
       const job: CommunicationOutboxJob = {
         ...meta(),
         id: `comm-job-${Date.now()}-${index}`,
@@ -1235,7 +1297,7 @@ function CampaignsSection({
         message: `Queued email for ${recipient.email}.`,
       }));
     });
-    setForm({ name: "", type: "Operational", senderId: "", templateId: "", audienceId: "", sendingRuleId: "", scheduledAt: "" });
+    setForm({ name: "", type: "Operational", senderId: "", templateId: "", audienceId: "", sendingRuleId: "", scheduledAt: "", scheduleMode: "Manual", scheduleOffsetDays: 0, scheduleOffsetHours: 0, scheduleTimeOfDay: "09:00" });
     setPreflight([]);
     setReadyRecipients([]);
   };
@@ -1250,7 +1312,24 @@ function CampaignsSection({
           <SelectField label="Template" value={form.templateId} onChange={value => setForm({ ...form, templateId: value })} options={[{ value: "", label: "Select template" }, ...scoped.templates.map(item => ({ value: item.id, label: item.name }))]} />
           <SelectField label="Audience" info={helpFor("audience")} value={form.audienceId} onChange={value => setForm({ ...form, audienceId: value })} options={[{ value: "", label: "Select audience" }, ...scoped.audiences.map(item => ({ value: item.id, label: `${item.name} (${item.recipientIds.length})` }))]} />
           <SelectField label="Sending Rule" value={form.sendingRuleId} onChange={value => setForm({ ...form, sendingRuleId: value })} options={[{ value: "", label: "Select sending rule" }, ...scoped.rules.map(item => ({ value: item.id, label: item.name }))]} />
-          <Field label="Schedule At" type="datetime-local" value={form.scheduledAt} onChange={value => setForm({ ...form, scheduledAt: value })} />
+          <SelectField label="Delivery Timing" value={form.scheduleMode} onChange={value => setForm({ ...form, scheduleMode: value as CommunicationScheduleMode })} options={scheduleModes.map(item => ({ value: item, label: item }))} />
+          {form.scheduleMode === "Manual" ? (
+            <Field label="Schedule At" type="datetime-local" value={form.scheduledAt} onChange={value => setForm({ ...form, scheduledAt: value })} />
+          ) : (
+            <div className="rounded-lg border border-border bg-muted/20 p-3">
+              <p className="mb-3 text-sm font-medium">
+                {form.scheduleMode === "Before Check-in" ? "Reservation check-in automation" : "Reservation check-out automation"}
+              </p>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <Field label={form.scheduleMode === "Before Check-in" ? "Days Before" : "Days After"} type="number" value={String(form.scheduleOffsetDays)} onChange={value => setForm({ ...form, scheduleOffsetDays: Number(value) })} />
+                <Field label={form.scheduleMode === "Before Check-in" ? "Hours Before" : "Hours After"} type="number" value={String(form.scheduleOffsetHours)} onChange={value => setForm({ ...form, scheduleOffsetHours: Number(value) })} />
+                <Field label="Send Time" type="time" value={form.scheduleTimeOfDay} onChange={value => setForm({ ...form, scheduleTimeOfDay: value })} />
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                Check-in hour rules count backwards from 00:00 at the start of the check-in day. When a send time is set with days, the system uses that hour on the calculated day. Check-out rules calculate after the checkout date using the chosen send time.
+              </p>
+            </div>
+          )}
           <div className="grid gap-2 sm:grid-cols-2">
             <Button variant="outline" disabled={!canEdit} onClick={runPreflight}>Preflight Check</Button>
             <Button disabled={!canEdit || preflight.length > 0} onClick={launch}><Play className="mr-2 h-4 w-4" />Launch Campaign</Button>
@@ -1264,13 +1343,14 @@ function CampaignsSection({
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-              <tr><th className="p-3">Campaign</th><th className="p-3">Type</th><th className="p-3">Status</th><th className="p-3">Recipients</th><th className="p-3 text-right">Actions</th></tr>
+              <tr><th className="p-3">Campaign</th><th className="p-3">Type</th><th className="p-3">Timing</th><th className="p-3">Status</th><th className="p-3">Recipients</th><th className="p-3 text-right">Actions</th></tr>
             </thead>
             <tbody>
               {scoped.campaigns.map(campaign => (
                 <tr key={campaign.id} className="border-t border-border">
                   <td className="p-3 font-medium">{campaign.name}</td>
                   <td className="p-3">{campaign.type}</td>
+                  <td className="p-3 text-xs text-muted-foreground">{formatCampaignTiming(campaign)}</td>
                   <td className="p-3"><Badge>{campaign.status}</Badge></td>
                   <td className="p-3">{campaign.finalRecipientCount}</td>
                   <td className="p-3 text-right">
@@ -1315,9 +1395,13 @@ function OutboxSection({
     setProcessing("");
     const campaign = scoped.campaigns.find(item => item.id === (campaignId === "All" ? filtered[0]?.campaignId : campaignId));
     const rule = scoped.rules.find(item => item.id === campaign?.sendingRuleId);
-    const jobs = filtered.filter(job => job.status === "queued").slice(0, rule?.batchSize || 50);
+    const now = new Date();
+    const jobs = filtered
+      .filter(job => job.status === "queued")
+      .filter(job => !job.scheduledFor || new Date(job.scheduledFor) <= now)
+      .slice(0, rule?.batchSize || 50);
     if (!jobs.length) {
-      setProcessing("No queued jobs are available for this filter.");
+      setProcessing("No queued jobs are due for this filter yet.");
       return;
     }
     const sender = scoped.senders.find(item => item.id === jobs[0].senderId);
@@ -1476,13 +1560,18 @@ function SuppressionSection({
         <div className="overflow-x-auto rounded-md border border-border">
           <table className="w-full text-left text-sm">
             <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-              <tr><th className="p-3">Email</th><th className="p-3">Reason</th><th className="p-3">Notes</th><th className="p-3">Status</th><th className="p-3 text-right">Actions</th></tr>
+              <tr><th className="p-3">Email</th><th className="p-3">Reason</th><th className="p-3">Source</th><th className="p-3">Notes</th><th className="p-3">Status</th><th className="p-3 text-right">Actions</th></tr>
             </thead>
             <tbody>
               {scoped.suppressions.map(item => (
                 <tr key={item.id} className="border-t border-border">
                   <td className="p-3">{item.email}</td>
                   <td className="p-3">{item.reason}</td>
+                  <td className="p-3">
+                    <Badge tone={item.createdBy === "public-unsubscribe" ? "warning" : "neutral"}>
+                      {item.createdBy === "public-unsubscribe" ? "Client request" : "Manual / internal"}
+                    </Badge>
+                  </td>
                   <td className="p-3">{item.notes}</td>
                   <td className="p-3">{item.status}</td>
                   <td className="p-3 text-right">
@@ -1667,6 +1756,7 @@ function preflightCampaign({
   recipients,
   suppressions,
   type,
+  scheduleMode,
 }: {
   sender?: CommunicationSender;
   provider?: CommunicationProviderAccount;
@@ -1676,6 +1766,7 @@ function preflightCampaign({
   recipients: CommunicationRecipient[];
   suppressions: CommunicationSuppression[];
   type: CommunicationCampaignType;
+  scheduleMode: CommunicationScheduleMode;
 }) {
   const errors: string[] = [];
   if (!sender) errors.push("Select a sender.");
@@ -1705,7 +1796,59 @@ function preflightCampaign({
   if (type === "Marketing" && template && !`${template.html} ${template.plainText}`.includes("{{unsubscribe_url}}")) {
     errors.push("Marketing campaigns must include {{unsubscribe_url}} in the template.");
   }
+  if (scheduleMode === "Before Check-in" && finalRecipients.some(item => !item.checkinDate)) {
+    errors.push("Every recipient in a check-in automation needs a check-in date.");
+  }
+  if (scheduleMode === "After Check-out" && finalRecipients.some(item => !item.checkoutDate)) {
+    errors.push("Every recipient in a check-out automation needs a check-out date.");
+  }
   return { errors, recipients: finalRecipients };
+}
+
+function resolveCampaignScheduleForRecipient(
+  recipient: CommunicationRecipient,
+  index: number,
+  rule: CommunicationSendingRule,
+  timing: {
+    scheduleMode: CommunicationScheduleMode;
+    scheduledAt?: string;
+    scheduleOffsetDays?: number;
+    scheduleOffsetHours?: number;
+    scheduleTimeOfDay?: string;
+  },
+) {
+  if (timing.scheduleMode === "Manual") {
+    return timing.scheduledAt || scheduleByRule(index, rule);
+  }
+
+  const sourceDate = timing.scheduleMode === "Before Check-in" ? recipient.checkinDate : recipient.checkoutDate;
+  const base = parseLocalDate(sourceDate || "");
+  if (!base) return scheduleByRule(index, rule);
+
+  const days = Math.max(0, Number(timing.scheduleOffsetDays || 0));
+  const hours = Math.max(0, Number(timing.scheduleOffsetHours || 0));
+  const [sendHour, sendMinute] = parseTimeOfDay(timing.scheduleTimeOfDay || "09:00");
+
+  if (timing.scheduleMode === "Before Check-in") {
+    if (days > 0) {
+      base.setDate(base.getDate() - days);
+      base.setHours(sendHour, sendMinute, 0, 0);
+      if (hours > 0) base.setHours(base.getHours() - hours);
+    } else if (hours > 0) {
+      base.setHours(0, 0, 0, 0);
+      base.setHours(base.getHours() - hours);
+    } else {
+      base.setHours(sendHour, sendMinute, 0, 0);
+    }
+  } else {
+    base.setDate(base.getDate() + days);
+    base.setHours(sendHour, sendMinute, 0, 0);
+    if (hours > 0) base.setHours(base.getHours() + hours);
+  }
+
+  const batchIndex = Math.floor(index / Math.max(1, rule.batchSize));
+  base.setMinutes(base.getMinutes() + batchIndex * rule.batchIntervalMinutes);
+  return base.toISOString();
 }
 
 function scheduleByRule(index: number, rule: CommunicationSendingRule) {
@@ -1713,6 +1856,29 @@ function scheduleByRule(index: number, rule: CommunicationSendingRule) {
   const date = new Date();
   date.setMinutes(date.getMinutes() + batchIndex * rule.batchIntervalMinutes);
   return date.toISOString();
+}
+
+function parseLocalDate(value: string) {
+  if (!value) return null;
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 0, 0, 0, 0);
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function parseTimeOfDay(value: string): [number, number] {
+  const [hour, minute] = value.split(":").map(part => Number(part));
+  return [Number.isFinite(hour) ? hour : 9, Number.isFinite(minute) ? minute : 0];
+}
+
+function formatCampaignTiming(campaign: CommunicationCampaign) {
+  const mode = campaign.scheduleMode || "Manual";
+  if (mode === "Manual") return campaign.scheduledAt ? `Manual: ${campaign.scheduledAt}` : "Immediate / sending rule";
+  const days = Number(campaign.scheduleOffsetDays || 0);
+  const hours = Number(campaign.scheduleOffsetHours || 0);
+  const time = campaign.scheduleTimeOfDay || "09:00";
+  const parts = [`${days}d`, `${hours}h`, time].filter(Boolean).join(" / ");
+  return `${mode}: ${parts}`;
 }
 
 function buildUnsubscribeToken(email: string, campaignId: string) {
