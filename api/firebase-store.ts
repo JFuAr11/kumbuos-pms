@@ -1,6 +1,6 @@
 import { createSign } from "crypto";
 
-type StoreKey = "credentials" | "pms";
+export type StoreKey = "credentials" | "pms";
 
 type VercelRequest = {
   method?: string;
@@ -45,25 +45,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const accessToken = await getServiceAccountAccessToken();
-    const url = getFirestoreDocumentUrl(store);
-
     if (req.method === "GET") {
-      const response = await fetch(url, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-      });
-      const payload = await response.json().catch(() => ({}));
-
-      if (response.status === 404) {
-        res.status(200).json({ ok: true, exists: false, data: null });
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error(`${response.status} ${payload?.error?.message || response.statusText}`);
-      }
-
-      res.status(200).json({ ok: true, exists: true, data: decodeStoreDocument(payload) });
+      const payload = await readFirebaseStore(store);
+      res.status(200).json({ ok: true, ...payload });
       return;
     }
 
@@ -75,26 +59,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return;
       }
 
-      const response = await fetch(`${url}?updateMask.fieldPaths=payloadJson&updateMask.fieldPaths=schemaVersion&updateMask.fieldPaths=updatedAt`, {
-        method: "PATCH",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          fields: {
-            payloadJson: { stringValue: JSON.stringify(payload) },
-            schemaVersion: { stringValue: String(payload.schemaVersion || "") },
-            updatedAt: { timestampValue: new Date().toISOString() },
-          },
-        }),
-      });
-      const result = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        throw new Error(`${response.status} ${result?.error?.message || response.statusText}`);
-      }
-
+      await writeFirebaseStore(store, payload);
       res.status(200).json({ ok: true });
       return;
     }
@@ -105,6 +70,49 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       error: "Firebase REST store operation failed.",
       detail: error instanceof Error ? error.message : String(error),
     });
+  }
+}
+
+export async function readFirebaseStore(store: StoreKey) {
+  const accessToken = await getServiceAccountAccessToken();
+  const url = getFirestoreDocumentUrl(store);
+  const response = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const payload = await response.json().catch(() => ({}));
+
+  if (response.status === 404) {
+    return { exists: false, data: null };
+  }
+
+  if (!response.ok) {
+    throw new Error(`${response.status} ${payload?.error?.message || response.statusText}`);
+  }
+
+  return { exists: true, data: decodeStoreDocument(payload) };
+}
+
+export async function writeFirebaseStore(store: StoreKey, payload: Record<string, unknown>) {
+  const accessToken = await getServiceAccountAccessToken();
+  const url = getFirestoreDocumentUrl(store);
+  const response = await fetch(`${url}?updateMask.fieldPaths=payloadJson&updateMask.fieldPaths=schemaVersion&updateMask.fieldPaths=updatedAt`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      fields: {
+        payloadJson: { stringValue: JSON.stringify(payload) },
+        schemaVersion: { stringValue: String(payload.schemaVersion || "") },
+        updatedAt: { timestampValue: new Date().toISOString() },
+      },
+    }),
+  });
+  const result = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(`${response.status} ${result?.error?.message || response.statusText}`);
   }
 }
 

@@ -154,6 +154,7 @@ export type CommunicationOutboxStatus =
 export type CommunicationProviderKind = 'Mock/Test' | 'SMTP';
 export type CommunicationCampaignType = 'Operational' | 'Marketing';
 export type CommunicationScheduleMode = 'Manual' | 'Before Check-in' | 'After Check-out';
+export type CommunicationRecipientScope = 'Selected Audience' | 'All PMS Reservation Clients';
 
 export type CommunicationSender = {
   id: string;
@@ -329,6 +330,7 @@ export type CommunicationCampaign = {
   providerAccountId?: string;
   templateId: string;
   audienceId?: string;
+  recipientScope?: CommunicationRecipientScope;
   recipientIds: string[];
   sendingRuleId: string;
   scheduledAt?: string;
@@ -336,6 +338,8 @@ export type CommunicationCampaign = {
   scheduleOffsetDays?: number;
   scheduleOffsetHours?: number;
   scheduleTimeOfDay?: string;
+  repeatCount?: number;
+  repeatIntervalMinutes?: number;
   status: CommunicationCampaignStatus;
   preflightErrors: string[];
   finalRecipientCount: number;
@@ -380,6 +384,8 @@ export type CommunicationOutboxJob = {
   status: CommunicationOutboxStatus;
   attempts: number;
   maxRetries: number;
+  repeatIndex?: number;
+  repeatTotal?: number;
   providerMessageId?: string;
   lastError?: string;
   scheduledFor: string;

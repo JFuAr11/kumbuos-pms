@@ -40,6 +40,7 @@ import {
   CommunicationOutboxJob,
   CommunicationProviderAccount,
   CommunicationRecipient,
+  CommunicationRecipientScope,
   CommunicationScheduleMode,
   CommunicationSender,
   CommunicationSendingRule,
@@ -47,6 +48,7 @@ import {
   CommunicationSuppression,
   CommunicationTemplate,
   CommunicationTemplateAsset,
+  Reservation,
   useAppContext,
 } from "../../context/AppContext";
 import { exportToCSV, exportToExcel, exportToJSON, exportToPDF } from "../../utils/export";
@@ -83,6 +85,7 @@ const sectionTitles: Record<SectionKey, string> = {
 const marketingTypes: CommunicationCampaignType[] = ["Operational", "Marketing"];
 const statusOptions: CommunicationStatus[] = ["Draft", "Active", "Paused", "Archived"];
 const scheduleModes: CommunicationScheduleMode[] = ["Manual", "Before Check-in", "After Check-out"];
+const recipientScopes: CommunicationRecipientScope[] = ["Selected Audience", "All PMS Reservation Clients"];
 const clientCategories: Array<Client["category"] | "All"> = ["All", "Tour Operator", "Agency", "Direct Client", "Corporate", "Other"];
 const variables = ["{{name}}", "{{email}}", "{{hotel_name}}", "{{property_name}}", "{{reservation_code}}", "{{checkin_date}}", "{{checkout_date}}", "{{unsubscribe_url}}"];
 
@@ -211,6 +214,8 @@ export function Communications() {
     currentUserId: currentUser?.id || "system",
     selectedCompanyId,
     selectedPropertyId,
+    clients,
+    reservations,
     canEdit,
     scoped,
     helpFor,
@@ -243,8 +248,6 @@ export function Communications() {
       {section === "recipients" && (
         <RecipientsSection
           {...sharedProps}
-          clients={clients}
-          reservations={reservations}
           addCommunicationRecipient={addCommunicationRecipient}
           updateCommunicationRecipient={updateCommunicationRecipient}
           deleteCommunicationRecipient={deleteCommunicationRecipient}
@@ -278,6 +281,7 @@ export function Communications() {
           addCommunicationCampaign={addCommunicationCampaign}
           updateCommunicationCampaign={updateCommunicationCampaign}
           deleteCommunicationCampaign={deleteCommunicationCampaign}
+          addCommunicationRecipient={addCommunicationRecipient}
           addCommunicationOutboxJob={addCommunicationOutboxJob}
           addCommunicationEvent={addCommunicationEvent}
         />
@@ -352,6 +356,8 @@ type SharedProps = {
   currentUserId: string;
   selectedCompanyId: string;
   selectedPropertyId: string;
+  clients: Client[];
+  reservations: Reservation[];
   canEdit: boolean;
   scoped: ScopedData;
   helpFor: (fieldKey: string) => { title: string; body: string; example?: string; warning?: string } | undefined;
@@ -1175,17 +1181,22 @@ function CampaignsSection({
   canEdit,
   scoped,
   activeProperty,
+  selectedPropertyId,
+  clients,
+  reservations,
   helpFor,
   meta,
   addCommunicationCampaign,
   updateCommunicationCampaign,
   deleteCommunicationCampaign,
+  addCommunicationRecipient,
   addCommunicationOutboxJob,
   addCommunicationEvent,
 }: SharedProps & {
   addCommunicationCampaign: (campaign: CommunicationCampaign) => void;
   updateCommunicationCampaign: (id: string, campaign: Partial<CommunicationCampaign>) => void;
   deleteCommunicationCampaign: (id: string) => void;
+  addCommunicationRecipient: (recipient: CommunicationRecipient) => void;
   addCommunicationOutboxJob: (job: CommunicationOutboxJob) => void;
   addCommunicationEvent: (event: CommunicationEvent) => void;
 }) {
@@ -1195,14 +1206,18 @@ function CampaignsSection({
     senderId: "",
     templateId: "",
     audienceId: "",
+    recipientScope: "Selected Audience" as CommunicationRecipientScope,
     sendingRuleId: "",
     scheduledAt: "",
     scheduleMode: "Manual" as CommunicationScheduleMode,
     scheduleOffsetDays: 0,
     scheduleOffsetHours: 0,
     scheduleTimeOfDay: "09:00",
+    repeatCount: 1,
+    repeatIntervalMinutes: 30,
   });
   const [preflight, setPreflight] = useState<string[]>([]);
+  const [preflightWarnings, setPreflightWarnings] = useState<string[]>([]);
   const [readyRecipients, setReadyRecipients] = useState<CommunicationRecipient[]>([]);
   const sender = scoped.senders.find(item => item.id === form.senderId);
   const provider = scoped.providers.find(item => item.id === sender?.providerAccountId) || scoped.providers[0];
@@ -1211,6 +1226,9 @@ function CampaignsSection({
   const rule = scoped.rules.find(item => item.id === form.sendingRuleId);
 
   const runPreflight = () => {
+    const selectedRecipients = form.recipientScope === "All PMS Reservation Clients"
+      ? buildPmsReservationRecipients(clients, reservations, selectedPropertyId, scoped.suppressions, meta(), "preview")
+      : undefined;
     const result = preflightCampaign({
       sender,
       provider,
@@ -1218,11 +1236,16 @@ function CampaignsSection({
       audience,
       rule,
       recipients: scoped.recipients,
+      selectedRecipients,
       suppressions: scoped.suppressions,
+      clients,
+      reservations,
       type: form.type,
       scheduleMode: form.scheduleMode,
+      recipientScope: form.recipientScope,
     });
     setPreflight(result.errors);
+    setPreflightWarnings(result.warnings);
     setReadyRecipients(result.recipients);
     return result;
   };
@@ -1232,6 +1255,12 @@ function CampaignsSection({
     if (result.errors.length || !sender || !template || !rule) return;
     const id = `comm-campaign-${Date.now()}`;
     const now = new Date().toISOString();
+    const repeatCount = Math.max(1, Number(form.repeatCount || 1));
+    const repeatIntervalMinutes = Math.max(0, Number(form.repeatIntervalMinutes || 0));
+    const launchRecipients = result.recipients;
+    if (form.recipientScope === "All PMS Reservation Clients") {
+      launchRecipients.forEach(addCommunicationRecipient);
+    }
     const campaign: CommunicationCampaign = {
       ...meta(),
       id,
@@ -1241,64 +1270,73 @@ function CampaignsSection({
       providerAccountId: provider?.id,
       templateId: template.id,
       audienceId: audience?.id,
-      recipientIds: result.recipients.map(item => item.id),
+      recipientScope: form.recipientScope,
+      recipientIds: launchRecipients.map(item => item.id),
       sendingRuleId: rule.id,
       scheduledAt: form.scheduleMode === "Manual" ? form.scheduledAt || "" : "",
       scheduleMode: form.scheduleMode,
       scheduleOffsetDays: Number(form.scheduleOffsetDays || 0),
       scheduleOffsetHours: Number(form.scheduleOffsetHours || 0),
       scheduleTimeOfDay: form.scheduleTimeOfDay || "09:00",
+      repeatCount,
+      repeatIntervalMinutes,
       status: form.scheduleMode !== "Manual" || form.scheduledAt ? "scheduled" : "sending",
       preflightErrors: [],
-      finalRecipientCount: result.recipients.length,
+      finalRecipientCount: launchRecipients.length,
       createdAt: now,
       updatedAt: now,
     };
     addCommunicationCampaign(campaign);
-    result.recipients.forEach((recipient, index) => {
+    launchRecipients.forEach((recipient, index) => {
       const unsubscribeUrl = `${window.location.origin}/unsubscribe/${encodeURIComponent(buildUnsubscribeToken(recipient.email, id))}`;
       const vars = getRecipientVariables(recipient, activeProperty?.name || "", unsubscribeUrl);
-      const scheduledFor = resolveCampaignScheduleForRecipient(recipient, index, rule, {
+      const firstScheduledFor = resolveCampaignScheduleForRecipient(recipient, index, rule, {
         scheduleMode: form.scheduleMode,
         scheduledAt: form.scheduledAt,
         scheduleOffsetDays: Number(form.scheduleOffsetDays || 0),
         scheduleOffsetHours: Number(form.scheduleOffsetHours || 0),
         scheduleTimeOfDay: form.scheduleTimeOfDay || "09:00",
       });
-      const job: CommunicationOutboxJob = {
-        ...meta(),
-        id: `comm-job-${Date.now()}-${index}`,
-        campaignId: id,
-        recipientId: recipient.id,
-        recipientEmail: recipient.email,
-        recipientName: recipient.name,
-        senderId: sender.id,
-        templateId: template.id,
-        providerAccountId: provider?.id,
-        subject: renderString(template.subject, vars),
-        html: renderString(template.html, vars),
-        plainText: renderString(template.plainText, vars),
-        status: "queued",
-        attempts: 0,
-        maxRetries: rule.maxRetries,
-        scheduledFor,
-        createdAt: now,
-        updatedAt: now,
-      };
-      addCommunicationOutboxJob(job);
-      addCommunicationEvent(buildEvent(meta(), {
-        campaignId: id,
-        outboxJobId: job.id,
-        recipientId: recipient.id,
-        recipientEmail: recipient.email,
-        senderId: sender.id,
-        templateId: template.id,
-        type: "queued",
-        message: `Queued email for ${recipient.email}.`,
-      }));
+      for (let repeatIndex = 0; repeatIndex < repeatCount; repeatIndex += 1) {
+        const scheduledFor = addMinutesToIso(firstScheduledFor, repeatIndex * repeatIntervalMinutes);
+        const job: CommunicationOutboxJob = {
+          ...meta(),
+          id: `comm-job-${Date.now()}-${index}-${repeatIndex}`,
+          campaignId: id,
+          recipientId: recipient.id,
+          recipientEmail: recipient.email,
+          recipientName: recipient.name,
+          senderId: sender.id,
+          templateId: template.id,
+          providerAccountId: provider?.id,
+          subject: renderString(template.subject, vars),
+          html: renderString(template.html, vars),
+          plainText: renderString(template.plainText, vars),
+          status: "queued",
+          attempts: 0,
+          maxRetries: rule.maxRetries,
+          repeatIndex: repeatIndex + 1,
+          repeatTotal: repeatCount,
+          scheduledFor,
+          createdAt: now,
+          updatedAt: now,
+        };
+        addCommunicationOutboxJob(job);
+        addCommunicationEvent(buildEvent(meta(), {
+          campaignId: id,
+          outboxJobId: job.id,
+          recipientId: recipient.id,
+          recipientEmail: recipient.email,
+          senderId: sender.id,
+          templateId: template.id,
+          type: "queued",
+          message: `Queued email ${repeatIndex + 1}/${repeatCount} for ${recipient.email}.`,
+        }));
+      }
     });
-    setForm({ name: "", type: "Operational", senderId: "", templateId: "", audienceId: "", sendingRuleId: "", scheduledAt: "", scheduleMode: "Manual", scheduleOffsetDays: 0, scheduleOffsetHours: 0, scheduleTimeOfDay: "09:00" });
+    setForm({ name: "", type: "Operational", senderId: "", templateId: "", audienceId: "", recipientScope: "Selected Audience", sendingRuleId: "", scheduledAt: "", scheduleMode: "Manual", scheduleOffsetDays: 0, scheduleOffsetHours: 0, scheduleTimeOfDay: "09:00", repeatCount: 1, repeatIntervalMinutes: 30 });
     setPreflight([]);
+    setPreflightWarnings([]);
     setReadyRecipients([]);
   };
 
@@ -1310,7 +1348,14 @@ function CampaignsSection({
           <SelectField label="Campaign Type" info={helpFor("campaignType")} value={form.type} onChange={value => setForm({ ...form, type: value as CommunicationCampaignType })} options={marketingTypes.map(item => ({ value: item, label: item }))} />
           <SelectField label="Sender" value={form.senderId} onChange={value => setForm({ ...form, senderId: value })} options={[{ value: "", label: "Select sender" }, ...scoped.senders.map(item => ({ value: item.id, label: `${item.fromName} - ${item.fromEmail}` }))]} />
           <SelectField label="Template" value={form.templateId} onChange={value => setForm({ ...form, templateId: value })} options={[{ value: "", label: "Select template" }, ...scoped.templates.map(item => ({ value: item.id, label: item.name }))]} />
-          <SelectField label="Audience" info={helpFor("audience")} value={form.audienceId} onChange={value => setForm({ ...form, audienceId: value })} options={[{ value: "", label: "Select audience" }, ...scoped.audiences.map(item => ({ value: item.id, label: `${item.name} (${item.recipientIds.length})` }))]} />
+          <SelectField label="Recipient Scope" info={helpFor("audience")} value={form.recipientScope} onChange={value => setForm({ ...form, recipientScope: value as CommunicationRecipientScope, audienceId: value === "All PMS Reservation Clients" ? "" : form.audienceId })} options={recipientScopes.map(item => ({ value: item, label: item }))} />
+          {form.recipientScope === "Selected Audience" ? (
+            <SelectField label="Audience" info={helpFor("audience")} value={form.audienceId} onChange={value => setForm({ ...form, audienceId: value })} options={[{ value: "", label: "Select audience" }, ...scoped.audiences.map(item => ({ value: item.id, label: `${item.name} (${item.recipientIds.length})` }))]} />
+          ) : (
+            <div className="rounded-md border border-border bg-muted/20 p-3 text-sm text-muted-foreground">
+              The campaign will build recipients from all current PMS reservations for the active property. Operational check-in/check-out emails do not require marketing consent; Marketing campaigns automatically exclude guests without consent.
+            </div>
+          )}
           <SelectField label="Sending Rule" value={form.sendingRuleId} onChange={value => setForm({ ...form, sendingRuleId: value })} options={[{ value: "", label: "Select sending rule" }, ...scoped.rules.map(item => ({ value: item.id, label: item.name }))]} />
           <SelectField label="Delivery Timing" value={form.scheduleMode} onChange={value => setForm({ ...form, scheduleMode: value as CommunicationScheduleMode })} options={scheduleModes.map(item => ({ value: item, label: item }))} />
           {form.scheduleMode === "Manual" ? (
@@ -1330,11 +1375,22 @@ function CampaignsSection({
               </p>
             </div>
           )}
+          <div className="rounded-lg border border-border bg-muted/20 p-3">
+            <p className="mb-3 text-sm font-medium">Repeat Delivery</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Repeat Count" type="number" value={String(form.repeatCount)} onChange={value => setForm({ ...form, repeatCount: Number(value) })} />
+              <Field label="Repeat Interval Minutes" type="number" value={String(form.repeatIntervalMinutes)} onChange={value => setForm({ ...form, repeatIntervalMinutes: Number(value) })} />
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Use 1 to send once. Use 3 and 30 minutes to send the same campaign at the scheduled time, then again 30 and 60 minutes later. Max retries remain separate and only apply after failed delivery attempts.
+            </p>
+          </div>
           <div className="grid gap-2 sm:grid-cols-2">
             <Button variant="outline" disabled={!canEdit} onClick={runPreflight}>Preflight Check</Button>
             <Button disabled={!canEdit || preflight.length > 0} onClick={launch}><Play className="mr-2 h-4 w-4" />Launch Campaign</Button>
           </div>
           {preflight.length > 0 && <FormError message={`Preflight blocked launch:\n${preflight.map(item => `- ${item}`).join("\n")}`} />}
+          {preflightWarnings.length > 0 && !preflight.length && <InfoMessage message={preflightWarnings.join("\n")} />}
           {readyRecipients.length > 0 && !preflight.length && <SuccessMessage message={`Preflight passed. ${readyRecipients.length} final recipients will be queued.`} />}
         </div>
       </Panel>
@@ -1343,7 +1399,7 @@ function CampaignsSection({
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-              <tr><th className="p-3">Campaign</th><th className="p-3">Type</th><th className="p-3">Timing</th><th className="p-3">Status</th><th className="p-3">Recipients</th><th className="p-3 text-right">Actions</th></tr>
+              <tr><th className="p-3">Campaign</th><th className="p-3">Type</th><th className="p-3">Timing</th><th className="p-3">Repeat</th><th className="p-3">Status</th><th className="p-3">Recipients</th><th className="p-3 text-right">Actions</th></tr>
             </thead>
             <tbody>
               {scoped.campaigns.map(campaign => (
@@ -1351,6 +1407,7 @@ function CampaignsSection({
                   <td className="p-3 font-medium">{campaign.name}</td>
                   <td className="p-3">{campaign.type}</td>
                   <td className="p-3 text-xs text-muted-foreground">{formatCampaignTiming(campaign)}</td>
+                  <td className="p-3 text-xs text-muted-foreground">{formatCampaignRepeat(campaign)}</td>
                   <td className="p-3"><Badge>{campaign.status}</Badge></td>
                   <td className="p-3">{campaign.finalRecipientCount}</td>
                   <td className="p-3 text-right">
@@ -1395,13 +1452,13 @@ function OutboxSection({
     setProcessing("");
     const campaign = scoped.campaigns.find(item => item.id === (campaignId === "All" ? filtered[0]?.campaignId : campaignId));
     const rule = scoped.rules.find(item => item.id === campaign?.sendingRuleId);
-    const now = new Date();
     const jobs = filtered
-      .filter(job => job.status === "queued")
-      .filter(job => !job.scheduledFor || new Date(job.scheduledFor) <= now)
+      .filter(job => !campaign?.id || job.campaignId === campaign.id)
+      .filter(job => ["queued", "sending", "failed"].includes(job.status))
+      .filter(job => job.attempts < Math.max(1, job.maxRetries || rule?.maxRetries || 1))
       .slice(0, rule?.batchSize || 50);
     if (!jobs.length) {
-      setProcessing("No queued jobs are due for this filter yet.");
+      setProcessing("No queued, recoverable, or retryable jobs match this filter.");
       return;
     }
     const sender = scoped.senders.find(item => item.id === jobs[0].senderId);
@@ -1416,30 +1473,59 @@ function OutboxSection({
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.ok) throw new Error(payload?.error || "Queue processing failed.");
       payload.results.forEach((result: any) => {
-        updateCommunicationOutboxJob(result.id, {
-          status: result.status,
+        const jobId = result.jobId || result.id;
+        const sourceJob = jobs.find(job => job.id === jobId);
+        if (!sourceJob) return;
+        const attempts = sourceJob.attempts + 1;
+        const nextStatus = result.status === "failed" && attempts < Math.max(1, sourceJob.maxRetries)
+          ? "queued"
+          : result.status;
+        updateCommunicationOutboxJob(jobId, {
+          status: nextStatus,
+          attempts,
           providerMessageId: result.providerMessageId,
           lastError: result.error || "",
-          sentAt: result.status === "sent" ? new Date().toISOString() : undefined,
+          sentAt: result.status === "sent" ? new Date().toISOString() : sourceJob.sentAt,
           updatedAt: new Date().toISOString(),
         });
         addCommunicationEvent(buildEvent(meta(), {
-          campaignId: result.campaignId,
-          outboxJobId: result.id,
-          recipientEmail: result.recipientEmail,
-          senderId: result.senderId,
-          templateId: result.templateId,
+          campaignId: sourceJob.campaignId,
+          outboxJobId: sourceJob.id,
+          recipientId: sourceJob.recipientId,
+          recipientEmail: sourceJob.recipientEmail,
+          senderId: sourceJob.senderId,
+          templateId: sourceJob.templateId,
           type: result.status === "sent" ? "sent" : "failed",
-          message: result.status === "sent" ? `Sent email to ${result.recipientEmail}.` : `Failed email to ${result.recipientEmail}.`,
+          message: result.status === "sent"
+            ? `Sent email to ${sourceJob.recipientEmail}.`
+            : `Failed email to ${sourceJob.recipientEmail}. ${nextStatus === "queued" ? "Queued for retry." : "Retry limit reached."}`,
           providerMessageId: result.providerMessageId,
           errorDetail: result.error,
         }));
       });
-      const remainingQueued = scoped.outbox.filter(job => job.campaignId === campaign?.id && job.status === "queued" && !jobs.some(item => item.id === job.id)).length;
-      if (campaign && remainingQueued === 0) updateCommunicationCampaign(campaign.id, { status: "completed", updatedAt: new Date().toISOString() });
-      setProcessing(`Processed ${payload.results.length} jobs.`);
+      const processedIds = new Set(payload.results.map((result: any) => result.jobId || result.id).filter(Boolean));
+      const retriedBackToQueue = payload.results.filter((result: any) => {
+        const sourceJob = jobs.find(job => job.id === (result.jobId || result.id));
+        return result.status === "failed" && sourceJob && sourceJob.attempts + 1 < Math.max(1, sourceJob.maxRetries);
+      }).length;
+      const remainingOpen = scoped.outbox.filter(job =>
+        job.campaignId === campaign?.id &&
+        !processedIds.has(job.id) &&
+        ["pending", "queued", "sending", "failed"].includes(job.status) &&
+        job.attempts < Math.max(1, job.maxRetries)
+      ).length + retriedBackToQueue;
+      if (campaign && remainingOpen === 0) updateCommunicationCampaign(campaign.id, { status: "completed", updatedAt: new Date().toISOString() });
+      setProcessing(`Processed ${payload.results.length} jobs now. Future scheduled jobs remain in the queue unless this button is used again.`);
     } catch (error) {
-      jobs.forEach(job => updateCommunicationOutboxJob(job.id, { status: "failed", lastError: error instanceof Error ? error.message : String(error), updatedAt: new Date().toISOString() }));
+      jobs.forEach(job => {
+        const attempts = job.attempts + 1;
+        updateCommunicationOutboxJob(job.id, {
+          status: attempts < Math.max(1, job.maxRetries) ? "queued" : "failed",
+          attempts,
+          lastError: error instanceof Error ? error.message : String(error),
+          updatedAt: new Date().toISOString(),
+        });
+      });
       setProcessing(error instanceof Error ? error.message : String(error));
     }
   };
@@ -1450,20 +1536,25 @@ function OutboxSection({
         <SelectField label="Campaign" value={campaignId} onChange={setCampaignId} options={[{ value: "All", label: "All campaigns" }, ...scoped.campaigns.map(item => ({ value: item.id, label: item.name }))]} />
         <SelectField label="Status" value={status} onChange={setStatus} options={["All", "queued", "sending", "sent", "delivered", "failed", "hard_bounced", "soft_bounced", "suppressed", "unsubscribed", "cancelled"].map(item => ({ value: item, label: item }))} />
         <div className="flex items-end">
-          <Button disabled={!canEdit} className="h-10 w-full" onClick={processNextBatch}><Send className="mr-2 h-4 w-4" />Process Next Batch</Button>
+          <Button disabled={!canEdit} className="h-10 w-full" onClick={processNextBatch}><Send className="mr-2 h-4 w-4" />Process Next Batch Now</Button>
         </div>
+      </div>
+      <div className="mb-4 rounded-md border border-[#c98736]/25 bg-[#c98736]/10 p-3 text-sm text-muted-foreground">
+        This manual test button sends the next eligible batch immediately, including future-scheduled jobs and recoverable jobs stuck in sending. Sending rules still define batch size; repeat delivery creates separate scheduled jobs per recipient.
       </div>
       {processing && <div className="mb-4 rounded-md border border-[#c98736]/30 bg-[#c98736]/10 p-3 text-sm">{processing}</div>}
       <div className="overflow-x-auto rounded-md border border-border">
         <table className="w-full text-left text-sm">
           <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-            <tr><th className="p-3">Recipient</th><th className="p-3">Campaign</th><th className="p-3">Status</th><th className="p-3">Attempts</th><th className="p-3">Error</th><th className="p-3 text-right">Actions</th></tr>
+            <tr><th className="p-3">Recipient</th><th className="p-3">Campaign</th><th className="p-3">Scheduled For</th><th className="p-3">Repeat</th><th className="p-3">Status</th><th className="p-3">Retry Attempts</th><th className="p-3">Error</th><th className="p-3 text-right">Actions</th></tr>
           </thead>
           <tbody>
             {filtered.map(job => (
               <tr key={job.id} className="border-t border-border">
                 <td className="p-3"><p className="font-medium">{job.recipientName}</p><p className="text-xs text-muted-foreground">{job.recipientEmail}</p></td>
                 <td className="p-3">{scoped.campaigns.find(item => item.id === job.campaignId)?.name || job.campaignId}</td>
+                <td className="p-3 text-xs text-muted-foreground">{formatDateTime(job.scheduledFor)}</td>
+                <td className="p-3 text-xs text-muted-foreground">{job.repeatTotal && job.repeatTotal > 1 ? `${job.repeatIndex || 1}/${job.repeatTotal}` : "Once"}</td>
                 <td className="p-3"><Badge tone={job.status === "sent" ? "positive" : job.status === "failed" ? "negative" : "warning"}>{job.status}</Badge></td>
                 <td className="p-3">{job.attempts}/{job.maxRetries}</td>
                 <td className="max-w-xs truncate p-3">{job.lastError}</td>
@@ -1681,6 +1772,10 @@ function FormError({ message }: { message: string }) {
   return <div className="mt-3 whitespace-pre-line rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{message}</div>;
 }
 
+function InfoMessage({ message }: { message: string }) {
+  return <div className="whitespace-pre-line rounded-md border border-[#c98736]/30 bg-[#c98736]/10 p-3 text-sm text-muted-foreground">{message}</div>;
+}
+
 function SuccessMessage({ message }: { message: string }) {
   return <div className="rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-800">{message}</div>;
 }
@@ -1754,9 +1849,13 @@ function preflightCampaign({
   audience,
   rule,
   recipients,
+  selectedRecipients,
   suppressions,
+  clients,
+  reservations,
   type,
   scheduleMode,
+  recipientScope,
 }: {
   sender?: CommunicationSender;
   provider?: CommunicationProviderAccount;
@@ -1764,11 +1863,16 @@ function preflightCampaign({
   audience?: CommunicationAudience;
   rule?: CommunicationSendingRule;
   recipients: CommunicationRecipient[];
+  selectedRecipients?: CommunicationRecipient[];
   suppressions: CommunicationSuppression[];
+  clients: Client[];
+  reservations: Reservation[];
   type: CommunicationCampaignType;
   scheduleMode: CommunicationScheduleMode;
+  recipientScope: CommunicationRecipientScope;
 }) {
   const errors: string[] = [];
+  const warnings: string[] = [];
   if (!sender) errors.push("Select a sender.");
   if (sender && !sender.verified && provider?.mode !== "test") errors.push("Sender must be verified before live campaigns.");
   if (!provider) errors.push("Configure a provider account or Mock/Test provider.");
@@ -1776,13 +1880,13 @@ function preflightCampaign({
   if (!template) errors.push("Select a template.");
   if (template && !template.subject.trim()) errors.push("Template subject is required.");
   if (template && !template.html.trim() && !template.plainText.trim()) errors.push("Template body is required.");
-  if (!audience) errors.push("Select an audience.");
+  if (recipientScope === "Selected Audience" && !audience) errors.push("Select an audience.");
+  if (recipientScope === "All PMS Reservation Clients" && !selectedRecipients?.length) errors.push("No reservation-linked PMS recipients exist for the active property.");
   if (!rule) errors.push("Select a sending rule.");
 
   const activeSuppressions = new Set(suppressions.filter(item => item.status === "Active").map(item => item.email.toLowerCase()));
   const seen = new Set<string>();
-  const finalRecipients = (audience?.recipientIds || [])
-    .map(id => recipients.find(item => item.id === id))
+  let finalRecipients = (selectedRecipients || (audience?.recipientIds || []).map(id => recipients.find(item => item.id === id)))
     .filter((item): item is CommunicationRecipient => Boolean(item))
     .filter(item => {
       const email = item.email.toLowerCase();
@@ -1792,6 +1896,12 @@ function preflightCampaign({
       if (activeSuppressions.has(email) || item.suppressed) return false;
       return true;
     });
+  if (type === "Marketing") {
+    const beforeConsent = finalRecipients.length;
+    finalRecipients = finalRecipients.filter(recipient => hasMarketingConsent(recipient, clients, reservations));
+    const removed = beforeConsent - finalRecipients.length;
+    if (removed > 0) warnings.push(`${removed} recipient${removed === 1 ? "" : "s"} excluded because Marketing campaigns require guest communication consent.`);
+  }
   if (!finalRecipients.length) errors.push("No valid final recipients after duplicate and suppression checks.");
   if (type === "Marketing" && template && !`${template.html} ${template.plainText}`.includes("{{unsubscribe_url}}")) {
     errors.push("Marketing campaigns must include {{unsubscribe_url}} in the template.");
@@ -1802,7 +1912,75 @@ function preflightCampaign({
   if (scheduleMode === "After Check-out" && finalRecipients.some(item => !item.checkoutDate)) {
     errors.push("Every recipient in a check-out automation needs a check-out date.");
   }
-  return { errors, recipients: finalRecipients };
+  return { errors, warnings, recipients: finalRecipients };
+}
+
+function buildPmsReservationRecipients(
+  clients: Client[],
+  reservations: Reservation[],
+  selectedPropertyId: string,
+  suppressions: CommunicationSuppression[],
+  baseMeta: ReturnType<SharedProps["meta"]>,
+  idSeed: string,
+) {
+  const activeSuppressions = new Set(suppressions.filter(item => item.status === "Active").map(item => item.email.toLowerCase()));
+  const seen = new Set<string>();
+  const output: CommunicationRecipient[] = [];
+  reservations
+    .filter(reservation => reservation.propertyId === selectedPropertyId)
+    .filter(reservation => reservation.status !== "Cancelled")
+    .forEach((reservation, reservationIndex) => {
+      const client = clients.find(item => item.id === reservation.clientId);
+      const emails = client?.emails?.length ? client.emails : client?.email ? [client.email] : [];
+      emails.forEach(emailValue => {
+        const email = emailValue.trim().toLowerCase();
+        if (!isValidEmail(email) || seen.has(email)) return;
+        seen.add(email);
+        output.push({
+          ...baseMeta,
+          id: `comm-recipient-${idSeed}-${reservationIndex}-${output.length}`,
+          source: "Reservation",
+          sourceId: reservation.id,
+          name: client?.name || email,
+          email,
+          reservationCode: reservation.id,
+          checkinDate: reservation.checkIn,
+          checkoutDate: reservation.checkOut,
+          clientCategory: client?.category,
+          valid: true,
+          suppressed: activeSuppressions.has(email),
+          variables: {
+            name: client?.name || email,
+            email,
+            client_id: client?.id || "",
+            client_category: client?.category || "",
+            marketing_opt_in: client?.marketingOptIn ? "true" : "false",
+            reservation_code: reservation.id,
+            checkin_date: reservation.checkIn,
+            checkout_date: reservation.checkOut,
+          },
+        });
+      });
+    });
+  return output;
+}
+
+function hasMarketingConsent(recipient: CommunicationRecipient, clients: Client[], reservations: Reservation[]) {
+  const rawConsent = String(recipient.variables?.marketing_opt_in || recipient.variables?.marketingOptIn || "").toLowerCase();
+  if (["true", "yes", "1", "accepted", "consented"].includes(rawConsent)) return true;
+
+  const sourceReservation = recipient.source === "Reservation" && recipient.sourceId
+    ? reservations.find(reservation => reservation.id === recipient.sourceId)
+    : undefined;
+  const sourceClient = sourceReservation
+    ? clients.find(client => client.id === sourceReservation.clientId)
+    : clients.find(client =>
+      client.id === recipient.sourceId ||
+      client.email.toLowerCase() === recipient.email.toLowerCase() ||
+      (client.emails || []).some(email => email.toLowerCase() === recipient.email.toLowerCase())
+    );
+
+  return Boolean(sourceClient?.marketingOptIn);
 }
 
 function resolveCampaignScheduleForRecipient(
@@ -1851,6 +2029,17 @@ function resolveCampaignScheduleForRecipient(
   return base.toISOString();
 }
 
+function addMinutesToIso(value: string, minutes: number) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    const fallback = new Date();
+    fallback.setMinutes(fallback.getMinutes() + minutes);
+    return fallback.toISOString();
+  }
+  date.setMinutes(date.getMinutes() + minutes);
+  return date.toISOString();
+}
+
 function scheduleByRule(index: number, rule: CommunicationSendingRule) {
   const batchIndex = Math.floor(index / Math.max(1, rule.batchSize));
   const date = new Date();
@@ -1879,6 +2068,19 @@ function formatCampaignTiming(campaign: CommunicationCampaign) {
   const time = campaign.scheduleTimeOfDay || "09:00";
   const parts = [`${days}d`, `${hours}h`, time].filter(Boolean).join(" / ");
   return `${mode}: ${parts}`;
+}
+
+function formatCampaignRepeat(campaign: CommunicationCampaign) {
+  const repeatCount = Math.max(1, Number(campaign.repeatCount || 1));
+  const repeatInterval = Math.max(0, Number(campaign.repeatIntervalMinutes || 0));
+  if (repeatCount === 1) return "Once";
+  return `${repeatCount} sends / ${repeatInterval} min`;
+}
+
+function formatDateTime(value?: string) {
+  if (!value) return "Immediate";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
 function buildUnsubscribeToken(email: string, campaignId: string) {
