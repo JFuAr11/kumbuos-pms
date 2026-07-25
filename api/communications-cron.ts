@@ -49,6 +49,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const campaigns = payload.communicationCampaigns as Campaign[];
     const outbox = payload.communicationOutbox as OutboxJob[];
     const events = payload.communicationEvents as Record<string, any>[];
+    const activeSuppressions = new Set((payload.communicationSuppressionList || [])
+      .filter((item: any) => String(item.status || "Active") === "Active")
+      .map((item: any) => String(item.email || "").toLowerCase()));
     let processed = 0;
     let failed = 0;
 
@@ -67,21 +70,34 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .slice(0, batchSize);
 
       if (!jobs.length) continue;
+      const suppressedJobs = jobs.filter((job) => activeSuppressions.has(String(job.recipientEmail || "").toLowerCase()));
+      suppressedJobs.forEach((job) => {
+        job.status = "suppressed";
+        job.lastError = "Recipient is on the suppression list.";
+        job.updatedAt = new Date().toISOString();
+        events.unshift(buildCronEvent(job, "suppressed", `Cron skipped ${job.recipientEmail} because it is on the suppression list.`));
+      });
+      const deliverableJobs = jobs.filter((job) => !activeSuppressions.has(String(job.recipientEmail || "").toLowerCase()));
+      if (!deliverableJobs.length) {
+        campaign.status = resolveCampaignStatus(campaign, outbox, now);
+        campaign.updatedAt = new Date().toISOString();
+        continue;
+      }
 
-      const sender = payload.communicationSenders.find((item: any) => item.id === jobs[0].senderId);
-      const provider = payload.communicationProviderAccounts.find((item: any) => item.id === (jobs[0].providerAccountId || sender?.providerAccountId));
+      const sender = payload.communicationSenders.find((item: any) => item.id === deliverableJobs[0].senderId);
+      const provider = payload.communicationProviderAccounts.find((item: any) => item.id === (deliverableJobs[0].providerAccountId || sender?.providerAccountId));
       const sentAt = new Date().toISOString();
 
-      jobs.forEach((job) => {
+      deliverableJobs.forEach((job) => {
         job.status = "sending";
         job.attempts = Number(job.attempts || 0) + 1;
         job.updatedAt = sentAt;
       });
 
       try {
-        const delivery = await processCommunicationDelivery({ jobs: jobs as any, sender: sender || {}, provider: provider || null });
+        const delivery = await processCommunicationDelivery({ jobs: deliverableJobs as any, sender: sender || {}, provider: provider || null });
         delivery.results.forEach((result) => {
-          const job = jobs.find((item) => item.id === result.jobId);
+          const job = deliverableJobs.find((item) => item.id === result.jobId);
           if (!job) return;
           const retryLimit = Math.max(1, Number(job.maxRetries || rule?.maxRetries || 1));
           const canRetry = result.status === "failed" && Number(job.attempts || 0) < retryLimit;
@@ -97,7 +113,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             : `Cron failed email to ${job.recipientEmail}. ${canRetry ? "Queued for retry." : "Retry limit reached."}`, result.providerMessageId, result.error));
         });
       } catch (error) {
-        jobs.forEach((job) => {
+        deliverableJobs.forEach((job) => {
           const retryLimit = Math.max(1, Number(job.maxRetries || rule?.maxRetries || 1));
           const canRetry = Number(job.attempts || 0) < retryLimit;
           job.status = canRetry ? "queued" : "failed";
@@ -153,7 +169,7 @@ function resolveCampaignStatus(campaign: Campaign, outbox: OutboxJob[], now: Dat
   return "scheduled";
 }
 
-function buildCronEvent(job: OutboxJob, type: "sent" | "failed", message: string, providerMessageId?: string, errorDetail?: string) {
+function buildCronEvent(job: OutboxJob, type: "sent" | "failed" | "suppressed", message: string, providerMessageId?: string, errorDetail?: string) {
   return {
     id: `comm-event-cron-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     tenantId: job.tenantId,
@@ -184,6 +200,7 @@ function normalizePmsPayload(data: PmsPayload): PmsPayload {
     communicationSendingRules: data.communicationSendingRules || [],
     communicationOutbox: data.communicationOutbox || [],
     communicationEvents: data.communicationEvents || [],
+    communicationSuppressionList: data.communicationSuppressionList || [],
   };
 }
 

@@ -84,10 +84,42 @@ const sectionTitles: Record<SectionKey, string> = {
 
 const marketingTypes: CommunicationCampaignType[] = ["Operational", "Marketing"];
 const statusOptions: CommunicationStatus[] = ["Draft", "Active", "Paused", "Archived"];
-const scheduleModes: CommunicationScheduleMode[] = ["Manual", "Before Check-in", "After Check-out"];
+const scheduleModes: CommunicationScheduleMode[] = ["Manual", "Before Check-in", "After Check-out", "Birthday"];
 const recipientScopes: CommunicationRecipientScope[] = ["Selected Audience", "All PMS Reservation Clients"];
 const clientCategories: Array<Client["category"] | "All"> = ["All", "Tour Operator", "Agency", "Direct Client", "Corporate", "Other"];
 const variables = ["{{name}}", "{{email}}", "{{hotel_name}}", "{{property_name}}", "{{reservation_code}}", "{{checkin_date}}", "{{checkout_date}}", "{{unsubscribe_url}}"];
+const fallbackTimezones = [
+  "Africa/Dar_es_Salaam",
+  "Africa/Nairobi",
+  "Africa/Johannesburg",
+  "Africa/Cairo",
+  "Africa/Lagos",
+  "Europe/Madrid",
+  "Europe/London",
+  "Europe/Paris",
+  "Europe/Berlin",
+  "UTC",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "America/Mexico_City",
+  "America/Sao_Paulo",
+  "Asia/Dubai",
+  "Asia/Kolkata",
+  "Asia/Singapore",
+  "Asia/Tokyo",
+  "Australia/Sydney",
+];
+const timezoneOptions = (() => {
+  try {
+    const supportedValuesOf = (Intl as typeof Intl & { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf;
+    const zones = supportedValuesOf?.("timeZone");
+    return zones?.length ? zones : fallbackTimezones;
+  } catch {
+    return fallbackTimezones;
+  }
+})();
 
 export function Communications() {
   const location = useLocation();
@@ -124,6 +156,7 @@ export function Communications() {
     deleteCommunicationRecipient,
     communicationAudiences,
     addCommunicationAudience,
+    updateCommunicationAudience,
     deleteCommunicationAudience,
     communicationCampaigns,
     addCommunicationCampaign,
@@ -254,6 +287,7 @@ export function Communications() {
           addCommunicationImportList={addCommunicationImportList}
           deleteCommunicationImportList={deleteCommunicationImportList}
           addCommunicationAudience={addCommunicationAudience}
+          updateCommunicationAudience={updateCommunicationAudience}
           deleteCommunicationAudience={deleteCommunicationAudience}
         />
       )}
@@ -675,6 +709,7 @@ function RecipientsSection({
   addCommunicationImportList,
   deleteCommunicationImportList,
   addCommunicationAudience,
+  updateCommunicationAudience,
   deleteCommunicationAudience,
 }: SharedProps & {
   clients: Client[];
@@ -685,16 +720,23 @@ function RecipientsSection({
   addCommunicationImportList: (list: CommunicationImportList) => void;
   deleteCommunicationImportList: (id: string) => void;
   addCommunicationAudience: (audience: CommunicationAudience) => void;
+  updateCommunicationAudience: (id: string, audience: Partial<CommunicationAudience>) => void;
   deleteCommunicationAudience: (id: string) => void;
 }) {
   const today = new Date().toISOString().split("T")[0];
   const [filters, setFilters] = useState({ category: "All", from: "", to: "", stayStatus: "All" });
+  const [audienceName, setAudienceName] = useState(`PMS clients ${new Date().toISOString().slice(0, 10)}`);
   const [importName, setImportName] = useState("Imported audience");
   const [rows, setRows] = useState<ImportedRow[]>([]);
   const [columns, setColumns] = useState<string[]>([]);
   const [fileName, setFileName] = useState("");
-  const [mapping, setMapping] = useState({ name: "Name", email: "Email", language: "Language", reservationCode: "Reservation", checkinDate: "Check-in", checkoutDate: "Check-out" });
+  const [mapping, setMapping] = useState({ name: "Name", email: "Email", language: "Language", reservationCode: "Reservation", checkinDate: "Check-in", checkoutDate: "Check-out", dateOfBirth: "Date of Birth" });
   const [error, setError] = useState("");
+  const [manualAudienceId, setManualAudienceId] = useState("");
+  const [manualRecipient, setManualRecipient] = useState({ name: "", email: "", language: "", reservationCode: "", checkinDate: "", checkoutDate: "", dateOfBirth: "", marketingOptIn: false });
+  const [manualError, setManualError] = useState("");
+  const [editingAudienceId, setEditingAudienceId] = useState("");
+  const [editingAudienceName, setEditingAudienceName] = useState("");
 
   const clientCandidates = useMemo(() => {
     const propertyReservations = reservations.filter(reservation => reservation.propertyId === selectedPropertyId);
@@ -737,6 +779,7 @@ function RecipientsSection({
         reservationCode: findColumn(keys, ["reservation", "booking", "code"]) || current.reservationCode,
         checkinDate: findColumn(keys, ["check-in", "checkin", "arrival"]) || current.checkinDate,
         checkoutDate: findColumn(keys, ["check-out", "checkout", "departure"]) || current.checkoutDate,
+        dateOfBirth: findColumn(keys, ["date of birth", "birth", "birthday", "dob"]) || current.dateOfBirth,
       }));
     } catch {
       setError("The Excel file could not be read. Use .xlsx, .xls, .csv, or .tsv with a visible first sheet.");
@@ -760,6 +803,7 @@ function RecipientsSection({
       const duplicate = seen.has(email);
       if (email) seen.add(email);
       const valid = isValidEmail(email) && !duplicate;
+      const marketingOptIn = extractMarketingConsent(row);
       return {
         ...meta(),
         id: `comm-recipient-${Date.now()}-${index}`,
@@ -771,7 +815,14 @@ function RecipientsSection({
         reservationCode: String(row[mapping.reservationCode] || ""),
         checkinDate: String(row[mapping.checkinDate] || ""),
         checkoutDate: String(row[mapping.checkoutDate] || ""),
-        variables: row,
+        dateOfBirth: String(row[mapping.dateOfBirth] || ""),
+        marketingOptIn,
+        variables: {
+          ...row,
+          date_of_birth: String(row[mapping.dateOfBirth] || ""),
+          birthday_month_day: getMonthDay(String(row[mapping.dateOfBirth] || "")),
+          marketing_opt_in: marketingOptIn ? "true" : "false",
+        },
         valid,
         validationError: valid ? "" : duplicate ? "Duplicate email in import." : "Invalid or empty email.",
         suppressed: scoped.suppressions.some(item => item.email.toLowerCase() === email),
@@ -806,6 +857,12 @@ function RecipientsSection({
   const createAudienceFromClients = () => {
     const seen = new Set<string>();
     const recipients: CommunicationRecipient[] = [];
+    const name = audienceName.trim();
+    if (!name) {
+      setError("Enter an audience name before creating a PMS client audience.");
+      return;
+    }
+    setError("");
     clientCandidates.forEach(({ client, reservation }, index) => {
       const emails = client.emails?.length ? client.emails : client.email ? [client.email] : [];
       emails.forEach(emailValue => {
@@ -822,15 +879,22 @@ function RecipientsSection({
           reservationCode: reservation.id,
           checkinDate: reservation.checkIn,
           checkoutDate: reservation.checkOut,
+          dateOfBirth: client.dateOfBirth || "",
           clientCategory: client.category,
+          marketingOptIn: client.marketingOptIn,
           valid: true,
           suppressed: scoped.suppressions.some(item => item.email.toLowerCase() === email),
           variables: {
             name: client.name,
             email,
+            client_id: client.id,
+            client_category: client.category || "",
+            marketing_opt_in: client.marketingOptIn ? "true" : "false",
             reservation_code: reservation.id,
             checkin_date: reservation.checkIn,
             checkout_date: reservation.checkOut,
+            date_of_birth: client.dateOfBirth || "",
+            birthday_month_day: getMonthDay(client.dateOfBirth || ""),
           },
         });
       });
@@ -839,11 +903,76 @@ function RecipientsSection({
     addCommunicationAudience({
       ...meta(),
       id: `comm-audience-clients-${Date.now()}`,
-      name: `PMS clients ${new Date().toISOString().slice(0, 10)}`,
+      name,
       source: "Reservations",
       filters,
       recipientIds: recipients.map(item => item.id),
     });
+  };
+
+  const saveAudienceName = (audience: CommunicationAudience) => {
+    const name = editingAudienceName.trim();
+    if (!name) return;
+    updateCommunicationAudience(audience.id, { name, updatedAt: new Date().toISOString() });
+    setEditingAudienceId("");
+    setEditingAudienceName("");
+  };
+
+  const addManualRecipientToAudience = () => {
+    setManualError("");
+    const audience = scoped.audiences.find(item => item.id === manualAudienceId);
+    const email = manualRecipient.email.trim().toLowerCase();
+    if (!audience) {
+      setManualError("Select the audience where this recipient should be added.");
+      return;
+    }
+    if (!manualRecipient.name.trim()) {
+      setManualError("Enter the recipient name before saving.");
+      return;
+    }
+    if (!isValidEmail(email)) {
+      setManualError("Enter a valid email address before saving.");
+      return;
+    }
+    const duplicate = scoped.recipients.some(item => audience.recipientIds.includes(item.id) && item.email.toLowerCase() === email);
+    if (duplicate) {
+      setManualError("This email already exists inside the selected audience.");
+      return;
+    }
+    const now = Date.now();
+    const recipient: CommunicationRecipient = {
+      ...meta(),
+      id: `comm-recipient-manual-${now}`,
+      source: "Manual",
+      name: manualRecipient.name.trim(),
+      email,
+      language: manualRecipient.language.trim(),
+      reservationCode: manualRecipient.reservationCode.trim(),
+      checkinDate: manualRecipient.checkinDate,
+      checkoutDate: manualRecipient.checkoutDate,
+      dateOfBirth: manualRecipient.dateOfBirth,
+      marketingOptIn: manualRecipient.marketingOptIn,
+      valid: true,
+      suppressed: scoped.suppressions.some(item => item.email.toLowerCase() === email && item.status === "Active"),
+      variables: {
+        name: manualRecipient.name.trim(),
+        email,
+        language: manualRecipient.language.trim(),
+        reservation_code: manualRecipient.reservationCode.trim(),
+        checkin_date: manualRecipient.checkinDate,
+        checkout_date: manualRecipient.checkoutDate,
+        date_of_birth: manualRecipient.dateOfBirth,
+        birthday_month_day: getMonthDay(manualRecipient.dateOfBirth),
+        marketing_opt_in: manualRecipient.marketingOptIn ? "true" : "false",
+      },
+    };
+    addCommunicationRecipient(recipient);
+    updateCommunicationAudience(audience.id, {
+      source: audience.source === "Import List" || audience.source === "Reservations" ? "Manual Mix" : audience.source,
+      recipientIds: [...audience.recipientIds, recipient.id],
+      updatedAt: new Date().toISOString(),
+    });
+    setManualRecipient({ name: "", email: "", language: "", reservationCode: "", checkinDate: "", checkoutDate: "", dateOfBirth: "", marketingOptIn: false });
   };
 
   return (
@@ -859,7 +988,8 @@ function RecipientsSection({
           <div className="mt-4 rounded-md border border-border bg-muted/30 p-4 text-sm">
             {clientCandidates.length} reservation-linked recipient candidates found for this property.
           </div>
-          <div className="mt-4 flex justify-end">
+          <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto]">
+            <Field label="Audience Name" value={audienceName} onChange={setAudienceName} placeholder="Pre-arrival guests July" />
             <Button disabled={!canEdit || !clientCandidates.length} onClick={createAudienceFromClients}><Plus className="mr-2 h-4 w-4" />Create Audience From PMS Clients</Button>
           </div>
         </Panel>
@@ -881,6 +1011,7 @@ function RecipientsSection({
             <SelectField label="Name Column" info={helpFor("nameColumn")} value={mapping.name} onChange={value => setMapping({ ...mapping, name: value })} options={columns.map(column => ({ value: column, label: column }))} />
             <SelectField label="Email Column" info={helpFor("emailColumn")} value={mapping.email} onChange={value => setMapping({ ...mapping, email: value })} options={columns.map(column => ({ value: column, label: column }))} />
             <SelectField label="Language Column" value={mapping.language} onChange={value => setMapping({ ...mapping, language: value })} options={[{ value: "", label: "None" }, ...columns.map(column => ({ value: column, label: column }))]} />
+            <SelectField label="Date of Birth Column" value={mapping.dateOfBirth} onChange={value => setMapping({ ...mapping, dateOfBirth: value })} options={[{ value: "", label: "None" }, ...columns.map(column => ({ value: column, label: column }))]} />
           </div>
           <div className="mt-4 max-h-72 overflow-auto rounded-md border border-border">
             <table className="w-full text-left text-xs">
@@ -904,17 +1035,55 @@ function RecipientsSection({
       )}
 
       <Panel title="Audiences and Recipients" icon={Users}>
-        <div className="grid gap-4 lg:grid-cols-[340px_1fr]">
+        <div className="mb-5 rounded-lg border border-border bg-muted/20 p-4">
+          <h4 className="mb-3 font-semibold">Add Manual Recipient to Existing Audience</h4>
+          <div className="grid gap-3 md:grid-cols-3">
+            <SelectField label="Audience" value={manualAudienceId} onChange={setManualAudienceId} options={[{ value: "", label: "Select audience" }, ...scoped.audiences.map(item => ({ value: item.id, label: `${item.name} (${item.recipientIds.length})` }))]} />
+            <Field label="Full Name" value={manualRecipient.name} onChange={value => setManualRecipient({ ...manualRecipient, name: value })} placeholder="Jorge Fuertes" />
+            <Field label="Email" type="email" value={manualRecipient.email} onChange={value => setManualRecipient({ ...manualRecipient, email: value })} placeholder="name@example.com" />
+            <Field label="Language" value={manualRecipient.language} onChange={value => setManualRecipient({ ...manualRecipient, language: value })} placeholder="en, es, fr..." />
+            <Field label="Reservation Code" value={manualRecipient.reservationCode} onChange={value => setManualRecipient({ ...manualRecipient, reservationCode: value })} placeholder="RR_000001" />
+            <Field label="Date of Birth" type="date" value={manualRecipient.dateOfBirth} onChange={value => setManualRecipient({ ...manualRecipient, dateOfBirth: value })} />
+            <Field label="Check-in Date" type="date" value={manualRecipient.checkinDate} onChange={value => setManualRecipient({ ...manualRecipient, checkinDate: value })} />
+            <Field label="Check-out Date" type="date" value={manualRecipient.checkoutDate} onChange={value => setManualRecipient({ ...manualRecipient, checkoutDate: value })} />
+            <label className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm">
+              <input
+                type="checkbox"
+                checked={manualRecipient.marketingOptIn}
+                onChange={event => setManualRecipient({ ...manualRecipient, marketingOptIn: event.target.checked })}
+              />
+              Marketing Consent = Agree
+            </label>
+            <div className="flex items-end">
+              <Button className="w-full" disabled={!canEdit || !scoped.audiences.length} onClick={addManualRecipientToAudience}><Plus className="mr-2 h-4 w-4" />Add Recipient</Button>
+            </div>
+          </div>
+          {manualError && <FormError message={manualError} />}
+        </div>
+        <div className="grid gap-4 lg:grid-cols-[380px_1fr]">
           <div className="space-y-2">
             {scoped.audiences.map(audience => (
               <div key={audience.id} className="rounded-md border border-border p-3">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="font-medium">{audience.name}</p>
-                    <p className="text-xs text-muted-foreground">{audience.source} - {audience.recipientIds.length} recipients</p>
+                {editingAudienceId === audience.id ? (
+                  <div className="space-y-3">
+                    <Field label="Audience Name" value={editingAudienceName} onChange={setEditingAudienceName} />
+                    <div className="flex justify-end gap-2">
+                      <Button variant="outline" size="sm" onClick={() => { setEditingAudienceId(""); setEditingAudienceName(""); }}>Cancel</Button>
+                      <Button size="sm" disabled={!canEdit || !editingAudienceName.trim()} onClick={() => saveAudienceName(audience)}>Save Name</Button>
+                    </div>
                   </div>
-                  <Button variant="ghost" size="icon" disabled={!canEdit} className="text-destructive" onClick={() => deleteCommunicationAudience(audience.id)}><Trash2 size={15} /></Button>
-                </div>
+                ) : (
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="font-medium">{audience.name}</p>
+                      <p className="text-xs text-muted-foreground">{audience.source} - {audience.recipientIds.length} recipients</p>
+                    </div>
+                    <div className="flex shrink-0 gap-1">
+                      <Button variant="outline" size="sm" disabled={!canEdit} onClick={() => { setEditingAudienceId(audience.id); setEditingAudienceName(audience.name); }}>Edit</Button>
+                      <Button variant="ghost" size="icon" disabled={!canEdit} className="text-destructive" onClick={() => deleteCommunicationAudience(audience.id)}><Trash2 size={15} /></Button>
+                    </div>
+                  </div>
+                )}
               </div>
             ))}
             {!scoped.audiences.length && <EmptyState>No audiences yet.</EmptyState>}
@@ -971,7 +1140,14 @@ function TemplatesSection({
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [status, setStatus] = useState("");
   const previewRecipient = scoped.recipients.find(item => item.id === previewRecipientId) || scoped.recipients[0];
-  const renderedHtml = renderTemplate(form.html || richTextToHtml(form.plainText || ""), previewRecipient, activeProperty?.name || "");
+  const selectedTemplateAssets = (form.assetIds || [])
+    .map(assetId => scoped.assets.find(asset => asset.id === assetId))
+    .filter((asset): asset is CommunicationTemplateAsset => Boolean(asset));
+  const visibleTemplateVariables = Array.from(new Set([
+    ...variables,
+    ...buildAttachedImageVariableNames(selectedTemplateAssets.length + files.length),
+  ]));
+  const renderedHtml = renderTemplate(form.html || richTextToHtml(form.plainText || ""), previewRecipient, activeProperty?.name || "", selectedTemplateAssets);
   const save = async () => {
     setStatus("");
     if (!form.name || !form.subject || (!form.html && !form.plainText)) {
@@ -986,6 +1162,11 @@ function TemplatesSection({
       uploadedAssets.push(asset.id);
     }
     const sanitizedHtml = sanitizeHtml(form.html || richTextToHtml(form.plainText || ""));
+    const assetIds = [...(form.assetIds || []), ...uploadedAssets];
+    const templateVariables = Array.from(new Set([
+      ...extractVariables(`${form.subject || ""} ${form.preheader || ""} ${sanitizedHtml} ${form.plainText || ""}`),
+      ...buildAttachedImageVariableNames(assetIds.length),
+    ]));
     const payload: CommunicationTemplate = {
       ...meta(),
       id,
@@ -995,8 +1176,8 @@ function TemplatesSection({
       preheader: form.preheader || "",
       html: sanitizedHtml,
       plainText: form.plainText || htmlToText(sanitizedHtml),
-      variables: extractVariables(`${form.subject || ""} ${form.preheader || ""} ${sanitizedHtml} ${form.plainText || ""}`),
-      assetIds: [...(form.assetIds || []), ...uploadedAssets],
+      variables: templateVariables,
+      assetIds,
       status: form.status || "Active",
     };
     if (editingId) updateCommunicationTemplate(editingId, payload);
@@ -1035,8 +1216,11 @@ function TemplatesSection({
           </label>
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
-          {variables.map(variable => <Badge key={variable}>{variable}</Badge>)}
+          {visibleTemplateVariables.map(variable => <Badge key={variable}>{variable}</Badge>)}
         </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Use attached image variables exactly where the image should appear in the email body. The first uploaded image replaces {"{{attached_image1}}"}, the second replaces {"{{attached_image2}}"}, and so on.
+        </p>
         {status && <FormError message={status} />}
         <div className="mt-5 flex justify-end gap-2">
           {editingId && <Button variant="outline" onClick={() => { setEditingId(""); setForm({}); }}>Cancel</Button>}
@@ -1072,12 +1256,17 @@ function TemplatesSection({
           </div>
         </Panel>
         <Panel title="Template Assets" icon={Upload}>
-          {scoped.assets.map(asset => (
+          {scoped.assets.map(asset => {
+            const variableIndex = selectedTemplateAssets.findIndex(item => item.id === asset.id);
+            return (
             <div key={asset.id} className="mb-2 flex items-center justify-between gap-3 rounded-md border border-border p-2 text-sm">
-              <span className="truncate">{asset.name}</span>
+              <span className="min-w-0">
+                <span className="block truncate">{asset.name}</span>
+                {variableIndex >= 0 && <span className="text-xs text-muted-foreground">{`{{attached_image${variableIndex + 1}}}`}</span>}
+              </span>
               <Button variant="ghost" size="icon" disabled={!canEdit} className="text-destructive" onClick={() => deleteCommunicationTemplateAsset(asset.id)}><Trash2 size={14} /></Button>
             </div>
-          ))}
+          )})}
           {!scoped.assets.length && <EmptyState>No template assets uploaded yet.</EmptyState>}
         </Panel>
       </div>
@@ -1151,7 +1340,12 @@ function SendingRulesSection({
             <Field label="Allowed From" value={form.allowedFromTime || ""} onChange={value => setForm({ ...form, allowedFromTime: value })} type="time" />
             <Field label="Allowed To" value={form.allowedToTime || ""} onChange={value => setForm({ ...form, allowedToTime: value })} type="time" />
           </div>
-          <Field label="Timezone" value={form.timezone || ""} onChange={value => setForm({ ...form, timezone: value })} placeholder="Africa/Dar_es_Salaam" />
+          <SelectField
+            label="Timezone"
+            value={form.timezone || activeProperty?.timezone || "Africa/Dar_es_Salaam"}
+            onChange={value => setForm({ ...form, timezone: value })}
+            options={timezoneOptions.map(zone => ({ value: zone, label: zone }))}
+          />
           <Field label="Max Retries" info={helpFor("retryCount")} type="number" value={String(form.maxRetries || "")} onChange={value => setForm({ ...form, maxRetries: Number(value) })} />
           <Field label="Bounce Pause Threshold %" info={helpFor("bounceThreshold")} type="number" value={String(form.bouncePauseThreshold || "")} onChange={value => setForm({ ...form, bouncePauseThreshold: Number(value) })} />
           <Button disabled={!canEdit} className="w-full" onClick={save}>Save Sending Rule</Button>
@@ -1213,6 +1407,7 @@ function CampaignsSection({
     scheduleOffsetDays: 0,
     scheduleOffsetHours: 0,
     scheduleTimeOfDay: "09:00",
+    scheduleTimezone: activeProperty?.timezone || "Africa/Dar_es_Salaam",
     repeatCount: 1,
     repeatIntervalMinutes: 30,
   });
@@ -1224,6 +1419,10 @@ function CampaignsSection({
   const template = scoped.templates.find(item => item.id === form.templateId);
   const audience = scoped.audiences.find(item => item.id === form.audienceId);
   const rule = scoped.rules.find(item => item.id === form.sendingRuleId);
+  const campaignTimezone = rule?.timezone || form.scheduleTimezone || activeProperty?.timezone || "Africa/Dar_es_Salaam";
+  const templateAssets = template?.assetIds
+    .map(assetId => scoped.assets.find(asset => asset.id === assetId))
+    .filter((asset): asset is CommunicationTemplateAsset => Boolean(asset)) || [];
 
   const runPreflight = () => {
     const selectedRecipients = form.recipientScope === "All PMS Reservation Clients"
@@ -1278,6 +1477,7 @@ function CampaignsSection({
       scheduleOffsetDays: Number(form.scheduleOffsetDays || 0),
       scheduleOffsetHours: Number(form.scheduleOffsetHours || 0),
       scheduleTimeOfDay: form.scheduleTimeOfDay || "09:00",
+      scheduleTimezone: campaignTimezone,
       repeatCount,
       repeatIntervalMinutes,
       status: form.scheduleMode !== "Manual" || form.scheduledAt ? "scheduled" : "sending",
@@ -1287,15 +1487,34 @@ function CampaignsSection({
       updatedAt: now,
     };
     addCommunicationCampaign(campaign);
+    result.suppressedRecipients.forEach(recipient => {
+      addCommunicationEvent(buildEvent(meta(), {
+        campaignId: id,
+        recipientId: recipient.id,
+        recipientEmail: recipient.email,
+        senderId: sender.id,
+        templateId: template.id,
+        type: "suppressed",
+        message: `${recipient.email} was skipped because it is on the suppression list.`,
+      }));
+    });
     launchRecipients.forEach((recipient, index) => {
       const unsubscribeUrl = `${window.location.origin}/unsubscribe/${encodeURIComponent(buildUnsubscribeToken(recipient.email, id))}`;
-      const vars = getRecipientVariables(recipient, activeProperty?.name || "", unsubscribeUrl);
+      const htmlVars = {
+        ...getRecipientVariables(recipient, activeProperty?.name || "", unsubscribeUrl, "html"),
+        ...getAttachedImageVariables(templateAssets, "html"),
+      };
+      const textVars = {
+        ...getRecipientVariables(recipient, activeProperty?.name || "", unsubscribeUrl, "text"),
+        ...getAttachedImageVariables(templateAssets, "text"),
+      };
       const firstScheduledFor = resolveCampaignScheduleForRecipient(recipient, index, rule, {
         scheduleMode: form.scheduleMode,
         scheduledAt: form.scheduledAt,
         scheduleOffsetDays: Number(form.scheduleOffsetDays || 0),
         scheduleOffsetHours: Number(form.scheduleOffsetHours || 0),
         scheduleTimeOfDay: form.scheduleTimeOfDay || "09:00",
+        timezone: campaignTimezone,
       });
       for (let repeatIndex = 0; repeatIndex < repeatCount; repeatIndex += 1) {
         const scheduledFor = addMinutesToIso(firstScheduledFor, repeatIndex * repeatIntervalMinutes);
@@ -1309,9 +1528,9 @@ function CampaignsSection({
           senderId: sender.id,
           templateId: template.id,
           providerAccountId: provider?.id,
-          subject: renderString(template.subject, vars),
-          html: renderString(template.html, vars),
-          plainText: renderString(template.plainText, vars),
+          subject: renderString(template.subject, htmlVars),
+          html: renderString(template.html, htmlVars),
+          plainText: renderString(template.plainText, textVars),
           status: "queued",
           attempts: 0,
           maxRetries: rule.maxRetries,
@@ -1334,7 +1553,7 @@ function CampaignsSection({
         }));
       }
     });
-    setForm({ name: "", type: "Operational", senderId: "", templateId: "", audienceId: "", recipientScope: "Selected Audience", sendingRuleId: "", scheduledAt: "", scheduleMode: "Manual", scheduleOffsetDays: 0, scheduleOffsetHours: 0, scheduleTimeOfDay: "09:00", repeatCount: 1, repeatIntervalMinutes: 30 });
+    setForm({ name: "", type: "Operational", senderId: "", templateId: "", audienceId: "", recipientScope: "Selected Audience", sendingRuleId: "", scheduledAt: "", scheduleMode: "Manual", scheduleOffsetDays: 0, scheduleOffsetHours: 0, scheduleTimeOfDay: "09:00", scheduleTimezone: activeProperty?.timezone || "Africa/Dar_es_Salaam", repeatCount: 1, repeatIntervalMinutes: 30 });
     setPreflight([]);
     setPreflightWarnings([]);
     setReadyRecipients([]);
@@ -1358,8 +1577,21 @@ function CampaignsSection({
           )}
           <SelectField label="Sending Rule" value={form.sendingRuleId} onChange={value => setForm({ ...form, sendingRuleId: value })} options={[{ value: "", label: "Select sending rule" }, ...scoped.rules.map(item => ({ value: item.id, label: item.name }))]} />
           <SelectField label="Delivery Timing" value={form.scheduleMode} onChange={value => setForm({ ...form, scheduleMode: value as CommunicationScheduleMode })} options={scheduleModes.map(item => ({ value: item, label: item }))} />
+          {rule && (
+            <div className="rounded-md border border-[#c98736]/25 bg-[#c98736]/10 p-3 text-xs text-muted-foreground">
+              Scheduled times are interpreted in <strong>{campaignTimezone}</strong>, inherited from the selected sending rule.
+            </div>
+          )}
           {form.scheduleMode === "Manual" ? (
             <Field label="Schedule At" type="datetime-local" value={form.scheduledAt} onChange={value => setForm({ ...form, scheduledAt: value })} />
+          ) : form.scheduleMode === "Birthday" ? (
+            <div className="rounded-lg border border-border bg-muted/20 p-3">
+              <p className="mb-3 text-sm font-medium">Birthday automation</p>
+              <Field label="Send Time" type="time" value={form.scheduleTimeOfDay} onChange={value => setForm({ ...form, scheduleTimeOfDay: value })} />
+              <p className="mt-2 text-xs text-muted-foreground">
+                The campaign sends every year on each recipient's day and month of birth. Only recipients with Date of Birth and Marketing Consent = Agree are eligible.
+              </p>
+            </div>
           ) : (
             <div className="rounded-lg border border-border bg-muted/20 p-3">
               <p className="mb-3 text-sm font-medium">
@@ -1452,13 +1684,31 @@ function OutboxSection({
     setProcessing("");
     const campaign = scoped.campaigns.find(item => item.id === (campaignId === "All" ? filtered[0]?.campaignId : campaignId));
     const rule = scoped.rules.find(item => item.id === campaign?.sendingRuleId);
-    const jobs = filtered
+    const candidates = filtered
       .filter(job => !campaign?.id || job.campaignId === campaign.id)
       .filter(job => ["queued", "sending", "failed"].includes(job.status))
       .filter(job => job.attempts < Math.max(1, job.maxRetries || rule?.maxRetries || 1))
       .slice(0, rule?.batchSize || 50);
+    const activeSuppressions = new Set(scoped.suppressions.filter(item => item.status === "Active").map(item => item.email.toLowerCase()));
+    const suppressedJobs = candidates.filter(job => activeSuppressions.has(job.recipientEmail.toLowerCase()));
+    suppressedJobs.forEach(job => {
+      updateCommunicationOutboxJob(job.id, { status: "suppressed", lastError: "Recipient is on the suppression list.", updatedAt: new Date().toISOString() });
+      addCommunicationEvent(buildEvent(meta(), {
+        campaignId: job.campaignId,
+        outboxJobId: job.id,
+        recipientId: job.recipientId,
+        recipientEmail: job.recipientEmail,
+        senderId: job.senderId,
+        templateId: job.templateId,
+        type: "suppressed",
+        message: `${job.recipientEmail} was skipped because it is on the suppression list.`,
+      }));
+    });
+    const jobs = candidates.filter(job => !activeSuppressions.has(job.recipientEmail.toLowerCase()));
     if (!jobs.length) {
-      setProcessing("No queued, recoverable, or retryable jobs match this filter.");
+      setProcessing(suppressedJobs.length
+        ? `${suppressedJobs.length} jobs were marked as suppressed. No deliverable jobs remain in this batch.`
+        : "No queued, recoverable, or retryable jobs match this filter.");
       return;
     }
     const sender = scoped.senders.find(item => item.id === jobs[0].senderId);
@@ -1798,6 +2048,12 @@ function findColumn(columns: string[], candidates: string[]) {
   return columns.find(column => candidates.some(candidate => column.toLowerCase().includes(candidate.toLowerCase()))) || "";
 }
 
+function extractMarketingConsent(row: ImportedRow) {
+  const entry = Object.entries(row).find(([key]) => ["marketing", "consent", "opt in", "opt-in", "agree"].some(candidate => key.toLowerCase().includes(candidate)));
+  const value = String(entry?.[1] || "").trim().toLowerCase();
+  return ["true", "yes", "1", "agree", "agreed", "accepted", "consented", "si", "sí"].includes(value);
+}
+
 function extractVariables(content: string) {
   return Array.from(new Set((content.match(/\{\{[a-zA-Z0-9_]+\}\}/g) || []).map(item => item.trim())));
 }
@@ -1819,16 +2075,22 @@ function richTextToHtml(value: string) {
   return `<div>${escapeHtml(value).replace(/\n/g, "<br />")}</div>`;
 }
 
-function renderTemplate(html: string, recipient?: CommunicationRecipient, propertyName = "") {
+function renderTemplate(html: string, recipient?: CommunicationRecipient, propertyName = "", assets: CommunicationTemplateAsset[] = []) {
   if (!recipient) return sanitizeHtml(html);
-  return renderString(sanitizeHtml(html), getRecipientVariables(recipient, propertyName, "#unsubscribe"));
+  return renderString(sanitizeHtml(html), {
+    ...getRecipientVariables(recipient, propertyName, "#unsubscribe", "html"),
+    ...getAttachedImageVariables(assets, "html"),
+  });
 }
 
 function renderString(value: string, variablesMap: Record<string, string>) {
   return value.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (_, key) => variablesMap[key] ?? "");
 }
 
-function getRecipientVariables(recipient: CommunicationRecipient, propertyName: string, unsubscribeUrl: string) {
+function getRecipientVariables(recipient: CommunicationRecipient, propertyName: string, unsubscribeUrl: string, mode: "html" | "text" = "html") {
+  const unsubscribeValue = mode === "html"
+    ? `<a href="${escapeAttribute(unsubscribeUrl)}" target="_blank" rel="noopener noreferrer">Click here to unsubscribe communications</a>`
+    : `Click here to unsubscribe communications: ${unsubscribeUrl}`;
   return {
     ...(recipient.variables || {}),
     name: recipient.name || "",
@@ -1838,8 +2100,29 @@ function getRecipientVariables(recipient: CommunicationRecipient, propertyName: 
     reservation_code: recipient.reservationCode || "",
     checkin_date: recipient.checkinDate || "",
     checkout_date: recipient.checkoutDate || "",
-    unsubscribe_url: unsubscribeUrl,
+    date_of_birth: getRecipientBirthDate(recipient),
+    birthday_month_day: getMonthDay(getRecipientBirthDate(recipient)),
+    unsubscribe_url: unsubscribeValue,
   };
+}
+
+function buildAttachedImageVariableNames(count: number) {
+  return Array.from({ length: count }, (_, index) => `{{attached_image${index + 1}}}`);
+}
+
+function getAttachedImageVariables(assets: CommunicationTemplateAsset[], mode: "html" | "text") {
+  return Object.fromEntries(assets.map((asset, index) => {
+    const source = asset.downloadUrl || asset.embeddedDataUrl || "";
+    const alt = escapeAttribute(asset.name || `Attached image ${index + 1}`);
+    const value = mode === "html"
+      ? source
+        ? `<img src="${escapeAttribute(source)}" alt="${alt}" style="max-width:100%;height:auto;display:block;border:0;" />`
+        : ""
+      : source
+        ? `[Image: ${asset.name}] ${source}`
+        : `[Image: ${asset.name}]`;
+    return [`attached_image${index + 1}`, value];
+  }));
 }
 
 function preflightCampaign({
@@ -1883,9 +2166,12 @@ function preflightCampaign({
   if (recipientScope === "Selected Audience" && !audience) errors.push("Select an audience.");
   if (recipientScope === "All PMS Reservation Clients" && !selectedRecipients?.length) errors.push("No reservation-linked PMS recipients exist for the active property.");
   if (!rule) errors.push("Select a sending rule.");
+  if (scheduleMode === "Birthday" && type !== "Marketing") errors.push("Birthday campaigns must be Marketing campaigns because they require guest communication consent.");
 
   const activeSuppressions = new Set(suppressions.filter(item => item.status === "Active").map(item => item.email.toLowerCase()));
   const seen = new Set<string>();
+  let suppressedCount = 0;
+  const suppressedRecipients: CommunicationRecipient[] = [];
   let finalRecipients = (selectedRecipients || (audience?.recipientIds || []).map(id => recipients.find(item => item.id === id)))
     .filter((item): item is CommunicationRecipient => Boolean(item))
     .filter(item => {
@@ -1893,14 +2179,39 @@ function preflightCampaign({
       if (!item.valid || !isValidEmail(item.email)) return false;
       if (seen.has(email)) return false;
       seen.add(email);
-      if (activeSuppressions.has(email) || item.suppressed) return false;
+      if (activeSuppressions.has(email) || item.suppressed) {
+        suppressedCount += 1;
+        suppressedRecipients.push(item);
+        return false;
+      }
       return true;
     });
-  if (type === "Marketing") {
+  if (suppressedCount > 0) {
+    warnings.push(`${suppressedCount} recipient${suppressedCount === 1 ? "" : "s"} excluded because they are on the suppression list.`);
+  }
+  if (type === "Marketing" || scheduleMode === "Birthday") {
     const beforeConsent = finalRecipients.length;
     finalRecipients = finalRecipients.filter(recipient => hasMarketingConsent(recipient, clients, reservations));
     const removed = beforeConsent - finalRecipients.length;
     if (removed > 0) warnings.push(`${removed} recipient${removed === 1 ? "" : "s"} excluded because Marketing campaigns require guest communication consent.`);
+  }
+  if (scheduleMode === "Birthday") {
+    const beforeBirthday = finalRecipients.length;
+    finalRecipients = finalRecipients.filter(recipient => hasRecipientBirthDate(recipient, clients, reservations));
+    finalRecipients = finalRecipients.map(recipient => {
+      const dateOfBirth = getRecipientBirthDate(recipient, clients, reservations);
+      return {
+        ...recipient,
+        dateOfBirth,
+        variables: {
+          ...(recipient.variables || {}),
+          date_of_birth: dateOfBirth,
+          birthday_month_day: getMonthDay(dateOfBirth),
+        },
+      };
+    });
+    const removed = beforeBirthday - finalRecipients.length;
+    if (removed > 0) warnings.push(`${removed} recipient${removed === 1 ? "" : "s"} excluded because Birthday automation requires Date of Birth.`);
   }
   if (!finalRecipients.length) errors.push("No valid final recipients after duplicate and suppression checks.");
   if (type === "Marketing" && template && !`${template.html} ${template.plainText}`.includes("{{unsubscribe_url}}")) {
@@ -1912,7 +2223,7 @@ function preflightCampaign({
   if (scheduleMode === "After Check-out" && finalRecipients.some(item => !item.checkoutDate)) {
     errors.push("Every recipient in a check-out automation needs a check-out date.");
   }
-  return { errors, warnings, recipients: finalRecipients };
+  return { errors, warnings, recipients: finalRecipients, suppressedRecipients };
 }
 
 function buildPmsReservationRecipients(
@@ -1946,7 +2257,9 @@ function buildPmsReservationRecipients(
           reservationCode: reservation.id,
           checkinDate: reservation.checkIn,
           checkoutDate: reservation.checkOut,
+          dateOfBirth: client?.dateOfBirth || "",
           clientCategory: client?.category,
+          marketingOptIn: Boolean(client?.marketingOptIn),
           valid: true,
           suppressed: activeSuppressions.has(email),
           variables: {
@@ -1958,6 +2271,8 @@ function buildPmsReservationRecipients(
             reservation_code: reservation.id,
             checkin_date: reservation.checkIn,
             checkout_date: reservation.checkOut,
+            date_of_birth: client?.dateOfBirth || "",
+            birthday_month_day: getMonthDay(client?.dateOfBirth || ""),
           },
         });
       });
@@ -1966,6 +2281,7 @@ function buildPmsReservationRecipients(
 }
 
 function hasMarketingConsent(recipient: CommunicationRecipient, clients: Client[], reservations: Reservation[]) {
+  if (recipient.marketingOptIn) return true;
   const rawConsent = String(recipient.variables?.marketing_opt_in || recipient.variables?.marketingOptIn || "").toLowerCase();
   if (["true", "yes", "1", "accepted", "consented"].includes(rawConsent)) return true;
 
@@ -1983,6 +2299,26 @@ function hasMarketingConsent(recipient: CommunicationRecipient, clients: Client[
   return Boolean(sourceClient?.marketingOptIn);
 }
 
+function hasRecipientBirthDate(recipient: CommunicationRecipient, clients: Client[] = [], reservations: Reservation[] = []) {
+  return Boolean(getRecipientBirthDate(recipient, clients, reservations));
+}
+
+function getRecipientBirthDate(recipient: CommunicationRecipient, clients: Client[] = [], reservations: Reservation[] = []) {
+  const ownValue = recipient.dateOfBirth || recipient.variables?.date_of_birth || recipient.variables?.dateOfBirth || "";
+  if (ownValue) return ownValue;
+  const sourceReservation = recipient.source === "Reservation" && recipient.sourceId
+    ? reservations.find(reservation => reservation.id === recipient.sourceId)
+    : undefined;
+  const sourceClient = sourceReservation
+    ? clients.find(client => client.id === sourceReservation.clientId)
+    : clients.find(client =>
+      client.id === recipient.sourceId ||
+      client.email.toLowerCase() === recipient.email.toLowerCase() ||
+      (client.emails || []).some(email => email.toLowerCase() === recipient.email.toLowerCase())
+    );
+  return sourceClient?.dateOfBirth || "";
+}
+
 function resolveCampaignScheduleForRecipient(
   recipient: CommunicationRecipient,
   index: number,
@@ -1993,40 +2329,49 @@ function resolveCampaignScheduleForRecipient(
     scheduleOffsetDays?: number;
     scheduleOffsetHours?: number;
     scheduleTimeOfDay?: string;
+    timezone?: string;
   },
 ) {
+  const timezone = timing.timezone || rule.timezone || "UTC";
   if (timing.scheduleMode === "Manual") {
-    return timing.scheduledAt || scheduleByRule(index, rule);
+    const scheduledAt = timing.scheduledAt
+      ? zonedDateTimeToIso(timing.scheduledAt, timezone)
+      : scheduleByRule(index, rule);
+    return timing.scheduledAt ? addRuleBatchDelay(scheduledAt, index, rule) : scheduledAt;
+  }
+
+  if (timing.scheduleMode === "Birthday") {
+    const birthdayIso = resolveNextBirthdayIso(getRecipientBirthDate(recipient), timing.scheduleTimeOfDay || "09:00", timezone);
+    return birthdayIso ? addRuleBatchDelay(birthdayIso, index, rule) : scheduleByRule(index, rule);
   }
 
   const sourceDate = timing.scheduleMode === "Before Check-in" ? recipient.checkinDate : recipient.checkoutDate;
-  const base = parseLocalDate(sourceDate || "");
-  if (!base) return scheduleByRule(index, rule);
-
+  const normalizedSourceDate = normalizeDateOnly(sourceDate || "");
+  if (!normalizedSourceDate) return scheduleByRule(index, rule);
   const days = Math.max(0, Number(timing.scheduleOffsetDays || 0));
   const hours = Math.max(0, Number(timing.scheduleOffsetHours || 0));
-  const [sendHour, sendMinute] = parseTimeOfDay(timing.scheduleTimeOfDay || "09:00");
-
+  const sendTime = normalizeTimeOfDay(timing.scheduleTimeOfDay || "09:00");
+  let scheduledIso: string;
   if (timing.scheduleMode === "Before Check-in") {
     if (days > 0) {
-      base.setDate(base.getDate() - days);
-      base.setHours(sendHour, sendMinute, 0, 0);
-      if (hours > 0) base.setHours(base.getHours() - hours);
+      scheduledIso = zonedDateTimeToIso(`${addDaysToDateString(normalizedSourceDate, -days)}T${sendTime}`, timezone);
+      if (hours > 0) scheduledIso = addMinutesToIso(scheduledIso, -hours * 60);
     } else if (hours > 0) {
-      base.setHours(0, 0, 0, 0);
-      base.setHours(base.getHours() - hours);
+      scheduledIso = addMinutesToIso(zonedDateTimeToIso(`${normalizedSourceDate}T00:00`, timezone), -hours * 60);
     } else {
-      base.setHours(sendHour, sendMinute, 0, 0);
+      scheduledIso = zonedDateTimeToIso(`${normalizedSourceDate}T${sendTime}`, timezone);
     }
   } else {
-    base.setDate(base.getDate() + days);
-    base.setHours(sendHour, sendMinute, 0, 0);
-    if (hours > 0) base.setHours(base.getHours() + hours);
+    scheduledIso = zonedDateTimeToIso(`${addDaysToDateString(normalizedSourceDate, days)}T${sendTime}`, timezone);
+    if (hours > 0) scheduledIso = addMinutesToIso(scheduledIso, hours * 60);
   }
 
-  const batchIndex = Math.floor(index / Math.max(1, rule.batchSize));
-  base.setMinutes(base.getMinutes() + batchIndex * rule.batchIntervalMinutes);
-  return base.toISOString();
+  return addRuleBatchDelay(scheduledIso, index, rule);
+}
+
+function addRuleBatchDelay(value: string, index: number, rule: CommunicationSendingRule) {
+  const batchIndex = Math.floor(index / Math.max(1, Number(rule.batchSize || 1)));
+  return addMinutesToIso(value, batchIndex * Math.max(0, Number(rule.batchIntervalMinutes || 0)));
 }
 
 function addMinutesToIso(value: string, minutes: number) {
@@ -2047,12 +2392,24 @@ function scheduleByRule(index: number, rule: CommunicationSendingRule) {
   return date.toISOString();
 }
 
-function parseLocalDate(value: string) {
-  if (!value) return null;
+function normalizeDateOnly(value: string) {
+  if (!value) return "";
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (match) return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]), 0, 0, 0, 0);
+  if (match) return `${match[1]}-${match[2]}-${match[3]}`;
   const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
+  return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString().slice(0, 10);
+}
+
+function addDaysToDateString(value: string, days: number) {
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function normalizeTimeOfDay(value: string) {
+  const [hour, minute] = parseTimeOfDay(value);
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 }
 
 function parseTimeOfDay(value: string): [number, number] {
@@ -2060,14 +2417,82 @@ function parseTimeOfDay(value: string): [number, number] {
   return [Number.isFinite(hour) ? hour : 9, Number.isFinite(minute) ? minute : 0];
 }
 
+function zonedDateTimeToIso(localValue: string, timezone: string) {
+  const match = localValue.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  if (!match) {
+    const fallback = new Date(localValue);
+    return Number.isNaN(fallback.getTime()) ? new Date().toISOString() : fallback.toISOString();
+  }
+  const parts = match.slice(1).map(Number);
+  const utcGuess = Date.UTC(parts[0], parts[1] - 1, parts[2], parts[3], parts[4], 0, 0);
+  let offset = getTimeZoneOffsetMs(new Date(utcGuess), timezone);
+  let result = new Date(utcGuess - offset);
+  const correctedOffset = getTimeZoneOffsetMs(result, timezone);
+  if (correctedOffset !== offset) result = new Date(utcGuess - correctedOffset);
+  return result.toISOString();
+}
+
+function getTimeZoneOffsetMs(date: Date, timezone: string) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(date);
+    const lookup = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    const asUtc = Date.UTC(
+      Number(lookup.year),
+      Number(lookup.month) - 1,
+      Number(lookup.day),
+      Number(lookup.hour),
+      Number(lookup.minute),
+      Number(lookup.second),
+    );
+    return asUtc - date.getTime();
+  } catch {
+    return 0;
+  }
+}
+
+function resolveNextBirthdayIso(dateOfBirth: string, sendTime: string, timezone: string) {
+  const birthday = normalizeDateOnly(dateOfBirth);
+  if (!birthday) return "";
+  const [, month, day] = birthday.split("-");
+  const now = new Date();
+  const todayParts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+  const todayLookup = Object.fromEntries(todayParts.map(part => [part.type, part.value]));
+  const currentYear = Number(todayLookup.year);
+  let candidateIso = zonedDateTimeToIso(`${currentYear}-${month}-${day}T${normalizeTimeOfDay(sendTime)}`, timezone);
+  if (new Date(candidateIso) <= now) {
+    candidateIso = zonedDateTimeToIso(`${currentYear + 1}-${month}-${day}T${normalizeTimeOfDay(sendTime)}`, timezone);
+  }
+  return candidateIso;
+}
+
+function getMonthDay(value: string) {
+  const normalized = normalizeDateOnly(value);
+  return normalized ? normalized.slice(5) : "";
+}
+
 function formatCampaignTiming(campaign: CommunicationCampaign) {
   const mode = campaign.scheduleMode || "Manual";
-  if (mode === "Manual") return campaign.scheduledAt ? `Manual: ${campaign.scheduledAt}` : "Immediate / sending rule";
+  if (mode === "Manual") return campaign.scheduledAt ? `Manual: ${campaign.scheduledAt} (${campaign.scheduleTimezone || "rule timezone"})` : "Immediate / sending rule";
+  if (mode === "Birthday") return `Birthday: ${campaign.scheduleTimeOfDay || "09:00"} (${campaign.scheduleTimezone || "rule timezone"})`;
   const days = Number(campaign.scheduleOffsetDays || 0);
   const hours = Number(campaign.scheduleOffsetHours || 0);
   const time = campaign.scheduleTimeOfDay || "09:00";
   const parts = [`${days}d`, `${hours}h`, time].filter(Boolean).join(" / ");
-  return `${mode}: ${parts}`;
+  return `${mode}: ${parts} (${campaign.scheduleTimezone || "rule timezone"})`;
 }
 
 function formatCampaignRepeat(campaign: CommunicationCampaign) {
@@ -2151,4 +2576,8 @@ function escapeHtml(value: string) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function escapeAttribute(value: string) {
+  return escapeHtml(value).replace(/'/g, "&#039;");
 }

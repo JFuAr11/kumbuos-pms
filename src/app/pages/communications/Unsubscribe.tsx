@@ -25,15 +25,19 @@ export function CommunicationsUnsubscribe() {
   const { token = "" } = useParams();
   const {
     communicationCampaigns,
+    properties,
     communicationSuppressionList,
     communicationUnsubscribes,
     addCommunicationSuppression,
     addCommunicationUnsubscribe,
+    addCommunicationEvent,
   } = useAppContext();
   const decoded = useMemo(() => decodeToken(token), [token]);
   const campaign = decoded ? communicationCampaigns.find((item) => item.id === decoded.campaignId) : undefined;
+  const property = campaign ? properties.find((item) => item.id === campaign.propertyId) : undefined;
+  const propertyName = property?.name || "this property";
   const [email, setEmail] = useState(decoded?.email || "");
-  const [reason, setReason] = useState(unsubscribeReasons[0]);
+  const [reason, setReason] = useState("");
   const [confirmed, setConfirmed] = useState(false);
   const [formError, setFormError] = useState("");
   const [submitted, setSubmitted] = useState(false);
@@ -50,6 +54,10 @@ export function CommunicationsUnsubscribe() {
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
       setFormError("Enter a valid email address before confirming unsubscribe.");
+      return;
+    }
+    if (!reason) {
+      setFormError("Select the reason for unsubscribing before confirming.");
       return;
     }
     if (!confirmed) {
@@ -99,6 +107,20 @@ export function CommunicationsUnsubscribe() {
         createdAt: now,
       });
     }
+    addCommunicationEvent({
+      id: `comm-event-unsubscribe-${Date.now()}`,
+      tenantId: campaign.tenantId,
+      companyId: campaign.companyId,
+      propertyId: campaign.propertyId,
+      campaignId: campaign.id,
+      recipientEmail: normalizedEmail,
+      type: "unsubscribed",
+      message: `${normalizedEmail} unsubscribed from ${propertyName} communications through the public unsubscribe page.`,
+      errorDetail: notes,
+      createdBy: userId,
+      createdAt: now,
+      status: "Active",
+    });
 
     setSubmitted(true);
   };
@@ -109,14 +131,14 @@ export function CommunicationsUnsubscribe() {
         <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-full border border-[#d18b31] bg-[#15120f] text-[#f7bc6a]">
           {submitted ? <CheckCircle2 className="h-8 w-8" /> : <MailX className="h-8 w-8" />}
         </div>
-        <p className="text-sm font-semibold uppercase tracking-[0.12em] text-[#f7bc6a]">KumbuOS Communications</p>
+        <p className="text-sm font-semibold uppercase tracking-[0.12em] text-[#f7bc6a]">{propertyName} Communications</p>
         <h1 className="mt-3 text-3xl font-bold">
           {submitted ? "Your unsubscribe request has been confirmed" : "Unsubscribe from email communications"}
         </h1>
         <p className="mt-4 text-base leading-7 text-white/75">
           {submitted
-            ? "We have added this email address to the suppression list for this property. We are sorry to see you go and appreciate your feedback."
-            : "We are sorry that you have decided to stop receiving our emails. Please confirm the email address, tell us the reason if you wish, and submit the request below."}
+            ? `You have successfully unsubscribed from ${propertyName} communications. We are sorry to see you go and appreciate your feedback.`
+            : `We are sorry that you have decided to stop receiving ${propertyName} emails. Please confirm the email address, select the reason, tick the confirmation checkbox, and submit the request below.`}
         </p>
 
         {!submitted && (
@@ -127,16 +149,22 @@ export function CommunicationsUnsubscribe() {
               </div>
             )}
             <label className="block text-sm font-medium">
-              <span className="mb-1 block text-[#f7bc6a]">Email address</span>
-              <Input value={email} onChange={(event) => setEmail(event.target.value)} placeholder="name@example.com" />
+              <span className="mb-1 block text-[#f7bc6a]">Email address *</span>
+              <Input
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                placeholder="name@example.com"
+                className="border-[#d18b31]/45 bg-[#2b2721] text-white placeholder:text-white/45"
+              />
             </label>
             <label className="mt-4 block text-sm font-medium">
-              <span className="mb-1 block text-[#f7bc6a]">Reason</span>
+              <span className="mb-1 block text-[#f7bc6a]">Reason *</span>
               <select
                 className="h-11 w-full rounded-md border border-[#d18b31]/45 bg-[#2b2721] px-3 text-sm text-white"
                 value={reason}
                 onChange={(event) => setReason(event.target.value)}
               >
+                <option value="">Select a reason</option>
                 {unsubscribeReasons.map((item) => <option key={item} value={item}>{item}</option>)}
               </select>
             </label>

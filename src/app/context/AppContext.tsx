@@ -153,7 +153,7 @@ export type CommunicationOutboxStatus =
   | 'cancelled';
 export type CommunicationProviderKind = 'Mock/Test' | 'SMTP';
 export type CommunicationCampaignType = 'Operational' | 'Marketing';
-export type CommunicationScheduleMode = 'Manual' | 'Before Check-in' | 'After Check-out';
+export type CommunicationScheduleMode = 'Manual' | 'Before Check-in' | 'After Check-out' | 'Birthday';
 export type CommunicationRecipientScope = 'Selected Audience' | 'All PMS Reservation Clients';
 
 export type CommunicationSender = {
@@ -248,7 +248,9 @@ export type CommunicationRecipient = {
   reservationCode?: string;
   checkinDate?: string;
   checkoutDate?: string;
+  dateOfBirth?: string;
   clientCategory?: Client['category'];
+  marketingOptIn?: boolean;
   variables?: Record<string, string>;
   valid: boolean;
   validationError?: string;
@@ -338,6 +340,7 @@ export type CommunicationCampaign = {
   scheduleOffsetDays?: number;
   scheduleOffsetHours?: number;
   scheduleTimeOfDay?: string;
+  scheduleTimezone?: string;
   repeatCount?: number;
   repeatIntervalMinutes?: number;
   status: CommunicationCampaignStatus;
@@ -462,6 +465,7 @@ export type Client = {
   emails?: string[];
   phone: string;
   nationality: string;
+  dateOfBirth?: string;
   category?: 'Tour Operator' | 'Agency' | 'Direct Client' | 'Corporate' | 'Other';
   defaultPaymentPlanId?: string;
   marketingOptIn: boolean;

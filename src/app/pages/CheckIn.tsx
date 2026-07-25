@@ -13,6 +13,7 @@ export function CheckIn() {
     firstName: '',
     lastName: '',
     nationality: '',
+    dateOfBirth: '',
     email: '',
     phone: '',
     marketingOptIn: true,
@@ -75,6 +76,7 @@ export function CheckIn() {
       email: formData.email,
       phone: formData.phone,
       nationality: formData.nationality,
+      dateOfBirth: formData.dateOfBirth,
       marketingOptIn: formData.marketingOptIn,
       emails: formData.email ? [formData.email] : [],
       category: 'Direct Client'
@@ -142,7 +144,11 @@ export function CheckIn() {
             </div>
             <div>
               <label className="text-sm font-medium block mb-1.5 text-foreground">Date of Birth</label>
-              <Input type="date" />
+              <Input
+                type="date"
+                value={formData.dateOfBirth}
+                onChange={e => setFormData({...formData, dateOfBirth: e.target.value})}
+              />
             </div>
             <div>
               <label className="text-sm font-medium block mb-1.5 text-foreground">Email</label>
