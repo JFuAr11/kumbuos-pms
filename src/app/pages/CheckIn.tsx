@@ -1,4 +1,4 @@
-import { PointerEvent, useRef, useState } from "react";
+import { PointerEvent, useEffect, useRef, useState } from "react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Search, UserCheck } from "lucide-react";
@@ -9,9 +9,31 @@ const MARKETING_CONSENT_TEXT = "By ticking the box below, you consent to receive
 const UNSUBSCRIBE_TEXT = "You can unsubscribe at any time by contacting us at info@luxurytentedcamp.com.";
 const PRIVACY_POLICY_TEXT = "Please see our Privacy Policy: www.luxurytentedcamp.com/new-privacy-policy";
 const CHECK_IN_FORM_VERSION = "english-2026-07-23";
+const countries = [
+  "Afghanistan", "Albania", "Algeria", "Andorra", "Angola", "Antigua and Barbuda", "Argentina", "Armenia", "Australia", "Austria",
+  "Azerbaijan", "Bahamas", "Bahrain", "Bangladesh", "Barbados", "Belarus", "Belgium", "Belize", "Benin", "Bhutan", "Bolivia",
+  "Bosnia and Herzegovina", "Botswana", "Brazil", "Brunei", "Bulgaria", "Burkina Faso", "Burundi", "Cabo Verde", "Cambodia",
+  "Cameroon", "Canada", "Central African Republic", "Chad", "Chile", "China", "Colombia", "Comoros", "Congo", "Costa Rica",
+  "Croatia", "Cuba", "Cyprus", "Czechia", "Democratic Republic of the Congo", "Denmark", "Djibouti", "Dominica", "Dominican Republic",
+  "Ecuador", "Egypt", "El Salvador", "Equatorial Guinea", "Eritrea", "Estonia", "Eswatini", "Ethiopia", "Fiji", "Finland", "France",
+  "Gabon", "Gambia", "Georgia", "Germany", "Ghana", "Greece", "Grenada", "Guatemala", "Guinea", "Guinea-Bissau", "Guyana", "Haiti",
+  "Honduras", "Hungary", "Iceland", "India", "Indonesia", "Iran", "Iraq", "Ireland", "Israel", "Italy", "Jamaica", "Japan", "Jordan",
+  "Kazakhstan", "Kenya", "Kiribati", "Kuwait", "Kyrgyzstan", "Laos", "Latvia", "Lebanon", "Lesotho", "Liberia", "Libya",
+  "Liechtenstein", "Lithuania", "Luxembourg", "Madagascar", "Malawi", "Malaysia", "Maldives", "Mali", "Malta", "Marshall Islands",
+  "Mauritania", "Mauritius", "Mexico", "Micronesia", "Moldova", "Monaco", "Mongolia", "Montenegro", "Morocco", "Mozambique",
+  "Myanmar", "Namibia", "Nauru", "Nepal", "Netherlands", "New Zealand", "Nicaragua", "Niger", "Nigeria", "North Korea",
+  "North Macedonia", "Norway", "Oman", "Pakistan", "Palau", "Palestine", "Panama", "Papua New Guinea", "Paraguay", "Peru",
+  "Philippines", "Poland", "Portugal", "Qatar", "Romania", "Russia", "Rwanda", "Saint Kitts and Nevis", "Saint Lucia",
+  "Saint Vincent and the Grenadines", "Samoa", "San Marino", "Sao Tome and Principe", "Saudi Arabia", "Senegal", "Serbia",
+  "Seychelles", "Sierra Leone", "Singapore", "Slovakia", "Slovenia", "Solomon Islands", "Somalia", "South Africa", "South Korea",
+  "South Sudan", "Spain", "Sri Lanka", "Sudan", "Suriname", "Sweden", "Switzerland", "Syria", "Taiwan", "Tajikistan", "Tanzania",
+  "Thailand", "Timor-Leste", "Togo", "Tonga", "Trinidad and Tobago", "Tunisia", "Turkey", "Turkmenistan", "Tuvalu", "Uganda",
+  "Ukraine", "United Arab Emirates", "United Kingdom", "United States", "Uruguay", "Uzbekistan", "Vanuatu", "Vatican City",
+  "Venezuela", "Vietnam", "Yemen", "Zambia", "Zimbabwe",
+];
 
 export function CheckIn() {
-  const { addClient, addCheckInSubmission, reservationPolicies, selectedPropertyId, currentUser } = useAppContext();
+  const { addClient, addCheckInSubmission, addCommunicationSuppression, reservationPolicies, selectedCompanyId, selectedPropertyId, currentUser } = useAppContext();
   const navigate = useNavigate();
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [isSigning, setIsSigning] = useState(false);
@@ -31,6 +53,10 @@ export function CheckIn() {
     termsAccepted: true,
     notes: "",
   });
+
+  useEffect(() => {
+    paintSignatureBackground();
+  }, []);
 
   const openPoliciesDocument = () => {
     const sections = [
@@ -142,6 +168,23 @@ export function CheckIn() {
         emails: [submission.emailAddress],
         category: "Direct Client",
       });
+      if (!submission.marketingConsent) {
+        addCommunicationSuppression({
+          id: `comm-suppression-checkin-marketing-${Date.now()}`,
+          tenantId: selectedCompanyId,
+          companyId: selectedCompanyId,
+          propertyId: selectedPropertyId,
+          email: submission.emailAddress,
+          reason: "Manual Block",
+          appliesTo: "Marketing",
+          notes: `Automatically added from Check-in Form because Marketing Consent / Agree was not selected by ${submission.fullName}.`,
+          status: "Active",
+          createdBy: currentUser?.id || "check-in-form",
+          updatedBy: currentUser?.id || "check-in-form",
+          createdAt: submissionTime,
+          updatedAt: submissionTime,
+        });
+      }
       alert("Check-in completed successfully!");
       navigate("/app/check-in/database");
     } catch (uploadError) {
@@ -182,10 +225,18 @@ export function CheckIn() {
   };
 
   const clearSignature = () => {
+    paintSignatureBackground();
+    setSignatureDataUrl("");
+  };
+
+  const paintSignatureBackground = () => {
     const canvas = canvasRef.current;
     const ctx = canvas?.getContext("2d");
-    if (canvas && ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
-    setSignatureDataUrl("");
+    if (!canvas || !ctx) return;
+    ctx.save();
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.restore();
   };
 
   return (
@@ -211,7 +262,13 @@ export function CheckIn() {
             <h3 className="mb-4 text-lg font-medium">Main Guest Information</h3>
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Full name *" value={formData.fullName} onChange={value => setFormData({ ...formData, fullName: value })} placeholder="e.g., Robert Johnson" />
-              <Field label="Country of nationality *" value={formData.countryOfNationality} onChange={value => setFormData({ ...formData, countryOfNationality: value })} placeholder="e.g., United States" />
+              <div>
+                <label className="mb-1.5 block text-sm font-medium text-foreground">Country of nationality *</label>
+                <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm" value={formData.countryOfNationality} onChange={event => setFormData({ ...formData, countryOfNationality: event.target.value })}>
+                  <option value="">Select country</option>
+                  {countries.map(country => <option key={country} value={country}>{country}</option>)}
+                </select>
+              </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-foreground">Type of document *</label>
                 <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm" value={formData.documentType} onChange={event => setFormData({ ...formData, documentType: event.target.value as CheckInSubmission["documentType"] })}>
@@ -225,8 +282,7 @@ export function CheckIn() {
               <Field label="Date of birth *" type="date" value={formData.dateOfBirth} onChange={value => setFormData({ ...formData, dateOfBirth: value })} />
               <Field label="Email address *" type="email" value={formData.emailAddress} onChange={value => setFormData({ ...formData, emailAddress: value })} placeholder="guest@example.com" />
               <div className="md:col-span-2">
-                <label className="mb-1.5 block text-sm font-medium text-foreground">Permanent address *</label>
-                <textarea className="min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm" value={formData.permanentAddress} onChange={event => setFormData({ ...formData, permanentAddress: event.target.value })} placeholder="Street, city, region, country" />
+                <Field label="Permanent address *" value={formData.permanentAddress} onChange={value => setFormData({ ...formData, permanentAddress: value })} placeholder="Street, city, region, country" />
               </div>
             </div>
           </section>

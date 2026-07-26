@@ -299,6 +299,7 @@ export function Communications() {
           addCommunicationAudience={addCommunicationAudience}
           updateCommunicationAudience={updateCommunicationAudience}
           deleteCommunicationAudience={deleteCommunicationAudience}
+          addCommunicationSuppression={addCommunicationSuppression}
         />
       )}
       {section === "templates" && (
@@ -726,6 +727,7 @@ function RecipientsSection({
   addCommunicationAudience,
   updateCommunicationAudience,
   deleteCommunicationAudience,
+  addCommunicationSuppression,
 }: SharedProps & {
   clients: Client[];
   checkInSubmissions: CheckInSubmission[];
@@ -738,10 +740,12 @@ function RecipientsSection({
   addCommunicationAudience: (audience: CommunicationAudience) => void;
   updateCommunicationAudience: (id: string, audience: Partial<CommunicationAudience>) => void;
   deleteCommunicationAudience: (id: string) => void;
+  addCommunicationSuppression: (suppression: CommunicationSuppression) => void;
 }) {
   const today = new Date().toISOString().split("T")[0];
   const [filters, setFilters] = useState({ category: "All", from: "", to: "", stayStatus: "All" });
   const [audienceName, setAudienceName] = useState(`PMS clients ${new Date().toISOString().slice(0, 10)}`);
+  const [checkInAudienceName, setCheckInAudienceName] = useState(`Check-in guests ${new Date().toISOString().slice(0, 10)}`);
   const [importName, setImportName] = useState("Imported audience");
   const [rows, setRows] = useState<ImportedRow[]>([]);
   const [columns, setColumns] = useState<string[]>([]);
@@ -785,6 +789,20 @@ function RecipientsSection({
         return { reservation, client };
       });
   }, [clients, filters, reservations, selectedPropertyId, today]);
+
+  const checkInCandidates = useMemo(() => {
+    const seen = new Set<string>();
+    return checkInSubmissions
+      .filter(submission => submission.propertyId === selectedPropertyId)
+      .filter(submission => isValidEmail(submission.emailAddress))
+      .sort((left, right) => String(right.submissionTime).localeCompare(String(left.submissionTime)))
+      .filter(submission => {
+        const email = submission.emailAddress.trim().toLowerCase();
+        if (seen.has(email)) return false;
+        seen.add(email);
+        return true;
+      });
+  }, [checkInSubmissions, selectedPropertyId]);
 
   const parseExcel = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -864,7 +882,7 @@ function RecipientsSection({
         },
         valid,
         validationError: valid ? "" : duplicate ? "Duplicate email in import." : "Invalid or empty email.",
-        suppressed: scoped.suppressions.some(item => item.email.toLowerCase() === email),
+        suppressed: hasGlobalSuppression(scoped.suppressions, email),
       } satisfies CommunicationRecipient;
     });
     recipients.forEach(addCommunicationRecipient);
@@ -928,7 +946,7 @@ function RecipientsSection({
           clientCategory: client.category,
           marketingOptIn,
           valid: true,
-          suppressed: scoped.suppressions.some(item => item.email.toLowerCase() === email),
+          suppressed: hasGlobalSuppression(scoped.suppressions, email),
           variables: {
             name: client.name,
             email,
@@ -953,6 +971,80 @@ function RecipientsSection({
       filters,
       recipientIds: recipients.map(item => item.id),
     });
+  };
+
+  const createAudienceFromCheckInDatabase = () => {
+    const name = checkInAudienceName.trim();
+    if (!name) {
+      setError("Enter an audience name before creating a Check-in Database audience.");
+      return;
+    }
+    if (!checkInCandidates.length) {
+      setError("No valid Check-in Database emails exist for the active property.");
+      return;
+    }
+    setError("");
+    const now = Date.now();
+    const audienceId = `comm-audience-checkin-${now}`;
+    const recipients: CommunicationRecipient[] = checkInCandidates.map((submission, index) => {
+      const email = submission.emailAddress.trim().toLowerCase();
+      return {
+        ...meta(),
+        id: `comm-recipient-checkin-${now}-${index}`,
+        source: "Check-in Database",
+        sourceId: submission.id,
+        audienceIds: [audienceId],
+        audienceNames: [name],
+        name: submission.fullName,
+        email,
+        language: "",
+        dateOfBirth: submission.dateOfBirth,
+        marketingOptIn: submission.marketingConsent,
+        valid: true,
+        suppressed: hasGlobalSuppression(scoped.suppressions, email),
+        variables: {
+          name: submission.fullName,
+          email,
+          country_of_nationality: submission.countryOfNationality,
+          document_type: submission.documentType,
+          document_number: submission.documentNumber,
+          date_of_birth: submission.dateOfBirth,
+          birthday_month_day: getMonthDay(submission.dateOfBirth),
+          permanent_address: submission.permanentAddress,
+          marketing_opt_in: submission.marketingConsent ? "true" : "false",
+          checkin_submission_id: submission.id,
+          checkin_submission_uuid: submission.uuid,
+        },
+      };
+    });
+
+    recipients.forEach(addCommunicationRecipient);
+    addCommunicationAudience({
+      ...meta(),
+      id: audienceId,
+      name,
+      source: "Check-in Database",
+      filters: {
+        source: "Check-in Database",
+        totalCheckInSubmissions: String(checkInCandidates.length),
+        marketingConsentAgree: String(checkInCandidates.filter(item => item.marketingConsent).length),
+      },
+      recipientIds: recipients.map(item => item.id),
+    });
+
+    checkInCandidates
+      .filter(submission => !submission.marketingConsent)
+      .forEach((submission, index) => {
+        const email = submission.emailAddress.trim().toLowerCase();
+        addCommunicationSuppression({
+          ...meta(),
+          id: `comm-suppression-checkin-marketing-${now}-${index}`,
+          email,
+          reason: "Manual Block",
+          appliesTo: "Marketing",
+          notes: `Automatically added from Check-in Database because Marketing Consent / Agree was not selected by ${submission.fullName}.`,
+        });
+      });
   };
 
   const saveAudienceName = (audience: CommunicationAudience) => {
@@ -1000,7 +1092,7 @@ function RecipientsSection({
       dateOfBirth: manualRecipient.dateOfBirth,
       marketingOptIn: manualRecipient.marketingOptIn,
       valid: true,
-      suppressed: scoped.suppressions.some(item => item.email.toLowerCase() === email && item.status === "Active"),
+      suppressed: hasGlobalSuppression(scoped.suppressions, email),
       variables: {
         name: manualRecipient.name.trim(),
         email,
@@ -1106,7 +1198,7 @@ function RecipientsSection({
       marketingOptIn: editingRecipient.marketingOptIn,
       valid: true,
       validationError: "",
-      suppressed: scoped.suppressions.some(item => item.email.toLowerCase() === email && item.status === "Active"),
+      suppressed: hasGlobalSuppression(scoped.suppressions, email),
       variables: {
         ...(current.variables || {}),
         name: editingRecipient.name.trim(),
@@ -1184,6 +1276,36 @@ function RecipientsSection({
           </div>
         </Panel>
       )}
+
+      <Panel title="Check-in Database Source" icon={Database}>
+        <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
+          <div>
+            <p className="mb-4 text-sm text-muted-foreground">
+              Build a recipient audience from official Check-in Database submissions for this property. Date of birth, country, email, and marketing consent are kept synchronized from the Check-in module data.
+            </p>
+            <div className="grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-end">
+              <Field label="Audience Name" value={checkInAudienceName} onChange={setCheckInAudienceName} placeholder="Checked-in guests July" />
+              <div className="rounded-md border border-border bg-muted/30 px-4 py-2 text-sm">
+                <p className="text-xs uppercase tracking-wider text-muted-foreground">Available guests</p>
+                <p className="font-semibold">{checkInCandidates.length}</p>
+              </div>
+              <Button disabled={!canEdit || !checkInCandidates.length} onClick={createAudienceFromCheckInDatabase}>
+                <Plus className="mr-2 h-4 w-4" />Create Audience From Check-in Database
+              </Button>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div className="rounded-md border border-green-200 bg-green-50 p-3 text-green-800">
+              <p className="text-xs uppercase tracking-wider">Marketing Agree</p>
+              <p className="text-lg font-semibold">{checkInCandidates.filter(item => item.marketingConsent).length}</p>
+            </div>
+            <div className="rounded-md border border-destructive/20 bg-destructive/10 p-3 text-destructive">
+              <p className="text-xs uppercase tracking-wider">Marketing Suppressed</p>
+              <p className="text-lg font-semibold">{checkInCandidates.filter(item => !item.marketingConsent).length}</p>
+            </div>
+          </div>
+        </div>
+      </Panel>
 
       <Panel title="Audiences and Recipients" icon={Users}>
         <div className="mb-5 rounded-lg border border-border bg-muted/20 p-4">
@@ -2357,7 +2479,9 @@ function OutboxSection({
       .filter(job => ["queued", "sending", "failed"].includes(job.status))
       .filter(job => job.attempts < Math.max(1, job.maxRetries || rule?.maxRetries || 1))
       .slice(0, rule?.batchSize || 50);
-    const activeSuppressions = new Set(scoped.suppressions.filter(item => item.status === "Active").map(item => item.email.toLowerCase()));
+    const activeSuppressions = new Set(scoped.suppressions
+      .filter(item => item.status === "Active" && suppressionAppliesToCampaign(item, campaign?.type || "Operational", campaign?.scheduleMode || "Manual"))
+      .map(item => item.email.toLowerCase()));
     const suppressedJobs = candidates.filter(job => activeSuppressions.has(job.recipientEmail.toLowerCase()));
     suppressedJobs.forEach(job => {
       updateCommunicationOutboxJob(job.id, { status: "suppressed", lastError: "Recipient is on the suppression list.", updatedAt: new Date().toISOString() });
@@ -2552,7 +2676,7 @@ function SuppressionSection({
   updateCommunicationSuppression: (id: string, suppression: Partial<CommunicationSuppression>) => void;
   deleteCommunicationSuppression: (id: string) => void;
 }) {
-  const [form, setForm] = useState<Partial<CommunicationSuppression>>({ email: "", reason: "Manual Block", notes: "" });
+  const [form, setForm] = useState<Partial<CommunicationSuppression>>({ email: "", reason: "Manual Block", appliesTo: "All", notes: "" });
   const [error, setError] = useState("");
   const save = () => {
     setError("");
@@ -2565,15 +2689,17 @@ function SuppressionSection({
       id: `comm-suppression-${Date.now()}`,
       email: form.email!.toLowerCase(),
       reason: form.reason || "Manual Block",
+      appliesTo: form.appliesTo || "All",
       notes: form.notes || "",
     });
-    setForm({ email: "", reason: "Manual Block", notes: "" });
+    setForm({ email: "", reason: "Manual Block", appliesTo: "All", notes: "" });
   };
   return (
     <div className="grid gap-5 xl:grid-cols-[380px_1fr]">
       <Panel title="Add Suppression" icon={ShieldAlert}>
         <Field label="Email" info={helpFor("suppressionList")} value={form.email || ""} onChange={value => setForm({ ...form, email: value })} placeholder="guest@example.com" />
         <SelectField label="Reason" value={form.reason || "Manual Block"} onChange={value => setForm({ ...form, reason: value as CommunicationSuppression["reason"] })} options={["Manual Block", "Unsubscribe", "Hard Bounce", "Complaint"].map(item => ({ value: item, label: item }))} />
+        <SelectField label="Applies To" value={form.appliesTo || "All"} onChange={value => setForm({ ...form, appliesTo: value as CommunicationSuppression["appliesTo"] })} options={["All", "Marketing"].map(item => ({ value: item, label: item }))} />
         <div className="mt-4">
           <label className="mb-1 block text-sm font-medium">Notes</label>
           <textarea className="min-h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.notes || ""} onChange={event => setForm({ ...form, notes: event.target.value })} />
@@ -2585,13 +2711,14 @@ function SuppressionSection({
         <div className="overflow-x-auto rounded-md border border-border">
           <table className="w-full text-left text-sm">
             <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-              <tr><th className="p-3">Email</th><th className="p-3">Reason</th><th className="p-3">Source</th><th className="p-3">Notes</th><th className="p-3">Status</th><th className="p-3 text-right">Actions</th></tr>
+              <tr><th className="p-3">Email</th><th className="p-3">Reason</th><th className="p-3">Applies To</th><th className="p-3">Source</th><th className="p-3">Notes</th><th className="p-3">Status</th><th className="p-3 text-right">Actions</th></tr>
             </thead>
             <tbody>
               {scoped.suppressions.map(item => (
                 <tr key={item.id} className="border-t border-border">
                   <td className="p-3">{item.email}</td>
                   <td className="p-3">{item.reason}</td>
+                  <td className="p-3"><Badge tone={(item.appliesTo || "All") === "Marketing" ? "warning" : "neutral"}>{item.appliesTo || "All"}</Badge></td>
                   <td className="p-3">
                     <Badge tone={item.createdBy === "public-unsubscribe" ? "warning" : "neutral"}>
                       {item.createdBy === "public-unsubscribe" ? "Client request" : "Manual / internal"}
@@ -2735,6 +2862,20 @@ function isValidEmailList(value?: string) {
     .map(email => email.trim())
     .filter(Boolean);
   return Boolean(emails.length && emails.every(isValidEmail));
+}
+
+function suppressionAppliesToCampaign(suppression: CommunicationSuppression, campaignType: CommunicationCampaignType, scheduleMode: CommunicationScheduleMode) {
+  if ((suppression.appliesTo || "All") === "All") return true;
+  return campaignType === "Marketing" || scheduleMode === "Birthday";
+}
+
+function hasGlobalSuppression(suppressions: CommunicationSuppression[], email: string) {
+  const normalizedEmail = email.toLowerCase();
+  return suppressions.some(item =>
+    item.email.toLowerCase() === normalizedEmail &&
+    item.status === "Active" &&
+    (item.appliesTo || "All") === "All"
+  );
 }
 
 function findColumn(columns: string[], candidates: string[]) {
@@ -3060,7 +3201,9 @@ function preflightCampaign({
   if (!rule) errors.push("Select a sending rule.");
   if (scheduleMode === "Birthday" && type !== "Marketing") errors.push("Birthday campaigns must be Marketing campaigns because they require guest communication consent.");
 
-  const activeSuppressions = new Set(suppressions.filter(item => item.status === "Active").map(item => item.email.toLowerCase()));
+  const activeSuppressions = new Set(suppressions
+    .filter(item => item.status === "Active" && suppressionAppliesToCampaign(item, type, scheduleMode))
+    .map(item => item.email.toLowerCase()));
   const seen = new Set<string>();
   let suppressedCount = 0;
   const suppressedRecipients: CommunicationRecipient[] = [];
@@ -3131,7 +3274,9 @@ function buildPmsReservationRecipients(
   baseMeta: ReturnType<SharedProps["meta"]>,
   idSeed: string,
 ) {
-  const activeSuppressions = new Set(suppressions.filter(item => item.status === "Active").map(item => item.email.toLowerCase()));
+  const activeSuppressions = new Set(suppressions
+    .filter(item => item.status === "Active" && (item.appliesTo || "All") === "All")
+    .map(item => item.email.toLowerCase()));
   const seen = new Set<string>();
   const output: CommunicationRecipient[] = [];
   reservations

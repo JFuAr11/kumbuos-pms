@@ -1,9 +1,11 @@
+import { useState } from "react";
 import { useAppContext } from "../../context/AppContext";
 import { Button } from "../../components/ui/button";
 import { exportToCSV, exportToExcel, exportToJSON, exportToPDF } from "../../utils/export";
 
 export function CheckInDatabase() {
   const { checkInSubmissions, selectedPropertyId } = useAppContext();
+  const [signaturePreview, setSignaturePreview] = useState<{ name: string; url: string } | null>(null);
   const submissions = checkInSubmissions
     .filter(submission => !selectedPropertyId || submission.propertyId === selectedPropertyId)
     .sort((left, right) => String(right.submissionTime).localeCompare(String(left.submissionTime)));
@@ -87,7 +89,13 @@ export function CheckInDatabase() {
                   </td>
                   <td className="p-4">
                     {submission.guestSignatureUrl ? (
-                      <a className="font-medium text-primary underline-offset-4 hover:underline" href={submission.guestSignatureUrl} target="_blank" rel="noreferrer">View signature</a>
+                      <button
+                        type="button"
+                        className="font-medium text-primary underline-offset-4 hover:underline"
+                        onClick={() => setSignaturePreview({ name: submission.fullName, url: submission.guestSignatureUrl })}
+                      >
+                        View signature
+                      </button>
                     ) : "-"}
                   </td>
                   <td className="p-4 text-muted-foreground">{new Date(submission.submissionTime).toLocaleString()}</td>
@@ -103,6 +111,36 @@ export function CheckInDatabase() {
           </table>
         </div>
       </div>
+
+      {signaturePreview && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4">
+          <div className="w-full max-w-3xl overflow-hidden rounded-xl border border-border bg-card shadow-2xl">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-primary">Guest signature</p>
+                <h2 className="text-xl font-semibold">{signaturePreview.name}</h2>
+              </div>
+              <div className="flex gap-2">
+                <a
+                  className="inline-flex h-9 items-center rounded-md border border-input bg-background px-3 text-sm font-medium"
+                  href={signaturePreview.url}
+                  download={`${signaturePreview.name.replace(/\s+/g, "-").toLowerCase()}-signature.png`}
+                >
+                  Download PNG
+                </a>
+                <Button variant="outline" size="sm" onClick={() => setSignaturePreview(null)}>Close</Button>
+              </div>
+            </div>
+            <div className="bg-white p-5">
+              <img
+                src={signaturePreview.url}
+                alt={`${signaturePreview.name} signature`}
+                className="max-h-[70vh] w-full object-contain"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

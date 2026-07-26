@@ -81,9 +81,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const campaigns = payload.communicationCampaigns as Campaign[];
     const outbox = payload.communicationOutbox as OutboxJob[];
     const events = payload.communicationEvents as Record<string, any>[];
-    const activeSuppressions = new Set((payload.communicationSuppressionList || [])
-      .filter((item: any) => String(item.status || "Active") === "Active")
-      .map((item: any) => String(item.email || "").toLowerCase()));
+    const activeSuppressions = (payload.communicationSuppressionList || [])
+      .filter((item: any) => String(item.status || "Active") === "Active");
     let processed = 0;
     let failed = 0;
     let suppressed = 0;
@@ -136,7 +135,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       if (!jobs.length) continue;
       selectedJobs += jobs.length;
-      const suppressedJobs = jobs.filter((job) => activeSuppressions.has(String(job.recipientEmail || "").toLowerCase()));
+      const suppressedEmails = new Set(activeSuppressions
+        .filter((item: any) => suppressionAppliesToCampaign(item, campaign))
+        .map((item: any) => String(item.email || "").toLowerCase()));
+      const suppressedJobs = jobs.filter((job) => suppressedEmails.has(String(job.recipientEmail || "").toLowerCase()));
       suppressedJobs.forEach((job) => {
         job.status = "suppressed";
         job.lastError = "Recipient is on the suppression list.";
@@ -144,7 +146,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         suppressed += 1;
         events.unshift(buildCronEvent(job, "suppressed", `Cron skipped ${job.recipientEmail} because it is on the suppression list.`));
       });
-      const deliverableJobs = jobs.filter((job) => !activeSuppressions.has(String(job.recipientEmail || "").toLowerCase()));
+      const deliverableJobs = jobs.filter((job) => !suppressedEmails.has(String(job.recipientEmail || "").toLowerCase()));
       if (!deliverableJobs.length) {
         campaign.status = resolveCampaignStatus(campaign, outbox, now);
         campaign.updatedAt = new Date().toISOString();
@@ -383,6 +385,11 @@ function isAuthorized(req: VercelRequest) {
   const auth = getHeader(req, "authorization");
   const querySecret = getQuery(req, "secret");
   return auth === `Bearer ${secret}` || querySecret === secret;
+}
+
+function suppressionAppliesToCampaign(suppression: Record<string, any>, campaign: Campaign) {
+  if (String(suppression.appliesTo || "All") === "All") return true;
+  return String(campaign.type || "Operational") === "Marketing" || String(campaign.scheduleMode || "Manual") === "Birthday";
 }
 
 function isDueOpenJob(job: OutboxJob, now: Date) {

@@ -255,7 +255,7 @@ export type CommunicationRecipient = {
   tenantId?: string;
   companyId: string;
   propertyId: string;
-  source: 'Client' | 'Reservation' | 'Excel' | 'Manual';
+  source: 'Client' | 'Reservation' | 'Excel' | 'Manual' | 'Check-in Database';
   sourceId?: string;
   importListId?: string;
   audienceIds?: string[];
@@ -306,7 +306,7 @@ export type CommunicationAudience = {
   companyId: string;
   propertyId: string;
   name: string;
-  source: 'Clients' | 'Reservations' | 'Import List' | 'Manual Mix';
+  source: 'Clients' | 'Reservations' | 'Import List' | 'Manual Mix' | 'Check-in Database';
   filters?: Record<string, string>;
   recipientIds: string[];
   status: CommunicationStatus;
@@ -462,6 +462,7 @@ export type CommunicationSuppression = {
   propertyId: string;
   email: string;
   reason: 'Manual Block' | 'Unsubscribe' | 'Hard Bounce' | 'Complaint';
+  appliesTo?: 'All' | 'Marketing';
   sourceCampaignId?: string;
   notes?: string;
   status: CommunicationStatus;
@@ -2136,7 +2137,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCommunicationEvents(current => current.filter(item => item.id !== id));
 
   const addCommunicationSuppression = (suppression: CommunicationSuppression) =>
-    setCommunicationSuppressionList(current => [suppression, ...current.filter(item => item.email.toLowerCase() !== suppression.email.toLowerCase() || item.propertyId !== suppression.propertyId)]);
+    setCommunicationSuppressionList(current => [suppression, ...current.filter(item =>
+      item.email.toLowerCase() !== suppression.email.toLowerCase() ||
+      item.propertyId !== suppression.propertyId ||
+      (item.appliesTo || "All") !== (suppression.appliesTo || "All")
+    )]);
   const updateCommunicationSuppression = (id: string, updates: Partial<CommunicationSuppression>) =>
     setCommunicationSuppressionList(current => current.map(item => item.id === id ? { ...item, ...updates } : item));
   const deleteCommunicationSuppression = (id: string) =>
