@@ -27,6 +27,8 @@ const openJobStatuses = new Set(["pending", "queued", "sending", "failed"]);
 const terminalCampaignStatuses = new Set(["paused", "completed", "cancelled", "failed"]);
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
+  const runStartedAt = Date.now();
+
   if (req.method === "OPTIONS") {
     res.status(204);
     res.end?.();
@@ -54,9 +56,23 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
+    const schedulerSource = getHeader(req, "x-kumbuos-scheduler") || getQuery(req, "source") || "external";
+    const maxJobsPerRun = getPositiveInteger(
+      getQuery(req, "maxJobs"),
+      process.env.COMMUNICATIONS_CRON_MAX_JOBS,
+      25,
+    );
     const store = await readPmsStore(req);
     if (!store.exists || !store.data) {
-      res.status(200).json({ ok: true, processed: 0, message: "No PMS data store exists yet." });
+      res.status(200).json({
+        ok: true,
+        source: schedulerSource,
+        processed: 0,
+        failed: 0,
+        maxJobsPerRun,
+        durationMs: Date.now() - runStartedAt,
+        message: "No PMS data store exists yet.",
+      });
       return;
     }
 
@@ -70,14 +86,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       .map((item: any) => String(item.email || "").toLowerCase()));
     let processed = 0;
     let failed = 0;
+    let suppressed = 0;
+    let selectedJobs = 0;
 
     const dueJobs = outbox.filter((job) => isDueOpenJob(job, now));
     if (!dueJobs.length) {
       res.status(200).json({
         ok: true,
+        source: schedulerSource,
         processed: 0,
         failed: 0,
+        suppressed: 0,
         dueJobs: 0,
+        selectedJobs: 0,
+        maxJobsPerRun,
+        durationMs: Date.now() - runStartedAt,
         message: "No due communications jobs. Future scheduled jobs remain queued.",
       });
       return;
@@ -85,6 +108,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const dueCampaignIds = [...new Set(dueJobs.map((job) => String(job.campaignId || "")).filter(Boolean))];
 
     for (const campaignId of dueCampaignIds) {
+      const remainingRunCapacity = Math.max(0, maxJobsPerRun - selectedJobs);
+      if (remainingRunCapacity <= 0) break;
+
       const campaign = campaigns.find((item) => item.id === campaignId);
       if (!campaign || terminalCampaignStatuses.has(String(campaign.status))) continue;
 
@@ -102,18 +128,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         continue;
       }
 
-      const batchSize = Math.min(Math.max(1, Number(rule?.batchSize || 50)), dailyRemaining);
+      const batchSize = Math.min(Math.max(1, Number(rule?.batchSize || 50)), dailyRemaining, remainingRunCapacity);
       const jobs = dueJobs
         .filter((job) => job.campaignId === campaignId)
         .filter((job) => Number(job.attempts || 0) < Math.max(1, Number(job.maxRetries || rule?.maxRetries || 1)))
         .slice(0, batchSize);
 
       if (!jobs.length) continue;
+      selectedJobs += jobs.length;
       const suppressedJobs = jobs.filter((job) => activeSuppressions.has(String(job.recipientEmail || "").toLowerCase()));
       suppressedJobs.forEach((job) => {
         job.status = "suppressed";
         job.lastError = "Recipient is on the suppression list.";
         job.updatedAt = new Date().toISOString();
+        suppressed += 1;
         events.unshift(buildCronEvent(job, "suppressed", `Cron skipped ${job.recipientEmail} because it is on the suppression list.`));
       });
       const deliverableJobs = jobs.filter((job) => !activeSuppressions.has(String(job.recipientEmail || "").toLowerCase()));
@@ -181,11 +209,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       updatedAt: new Date().toISOString(),
     });
 
-    res.status(200).json({ ok: true, processed, failed });
+    const remainingDueJobs = outbox.filter((job) => isDueOpenJob(job, now)).length;
+    res.status(200).json({
+      ok: true,
+      source: schedulerSource,
+      processed,
+      failed,
+      suppressed,
+      dueJobs: dueJobs.length,
+      selectedJobs,
+      remainingDueJobs,
+      maxJobsPerRun,
+      durationMs: Date.now() - runStartedAt,
+    });
   } catch (error) {
     res.status(500).json({
       error: "Communications cron processing failed.",
       detail: error instanceof Error ? error.message : String(error),
+      durationMs: Date.now() - runStartedAt,
     });
   }
 }
@@ -473,6 +514,12 @@ function getHeader(req: VercelRequest, key: string) {
 function getQuery(req: VercelRequest, key: string) {
   const value = req.query?.[key];
   return Array.isArray(value) ? value[0] : value || "";
+}
+
+function getPositiveInteger(primary: string | undefined, fallback: string | undefined, defaultValue: number) {
+  const parsed = Number(primary || fallback || defaultValue);
+  if (!Number.isFinite(parsed) || parsed < 1) return defaultValue;
+  return Math.floor(parsed);
 }
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;

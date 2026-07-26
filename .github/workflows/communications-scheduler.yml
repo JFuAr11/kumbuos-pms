@@ -1,10 +1,10 @@
 name: Communications Queue Scheduler
 
 on:
-  schedule:
-    # GitHub Actions supports 5-minute schedules. This keeps the outbox polling
-    # aligned with campaign times such as 09:00, 09:05, 09:10, and so on.
-    - cron: "*/5 * * * *"
+  # Primary scheduling is handled by cron-job.org calling the Vercel endpoint
+  # directly every 5 minutes. This workflow remains as a manual emergency
+  # fallback so GitHub's non-guaranteed schedule does not create missed or
+  # duplicate production sends.
   workflow_dispatch:
 
 concurrency:
