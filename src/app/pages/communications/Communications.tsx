@@ -743,7 +743,7 @@ function RecipientsSection({
   addCommunicationSuppression: (suppression: CommunicationSuppression) => void;
 }) {
   const today = new Date().toISOString().split("T")[0];
-  const [filters, setFilters] = useState({ category: "All", from: "", to: "", stayStatus: "All" });
+  const [filters, setFilters] = useState({ category: "All", from: "", to: "", stayStatus: "All", checkInSubmittedFrom: "", checkInSubmittedTo: "" });
   const [audienceName, setAudienceName] = useState(`PMS clients ${new Date().toISOString().slice(0, 10)}`);
   const [checkInAudienceName, setCheckInAudienceName] = useState(`Check-in guests ${new Date().toISOString().slice(0, 10)}`);
   const [importName, setImportName] = useState("Imported audience");
@@ -755,6 +755,7 @@ function RecipientsSection({
   const [manualAudienceId, setManualAudienceId] = useState("");
   const [manualRecipient, setManualRecipient] = useState({ name: "", email: "", language: "", reservationCode: "", checkinDate: "", checkoutDate: "", dateOfBirth: "", marketingOptIn: false });
   const [manualError, setManualError] = useState("");
+  const [selectedAudienceId, setSelectedAudienceId] = useState("");
   const [editingAudienceId, setEditingAudienceId] = useState("");
   const [editingAudienceName, setEditingAudienceName] = useState("");
   const [editingRecipientId, setEditingRecipientId] = useState("");
@@ -795,6 +796,12 @@ function RecipientsSection({
     return checkInSubmissions
       .filter(submission => submission.propertyId === selectedPropertyId)
       .filter(submission => isValidEmail(submission.emailAddress))
+      .filter(submission => {
+        const submittedDate = normalizeDateOnly(submission.submissionTime);
+        if (filters.checkInSubmittedFrom && submittedDate < filters.checkInSubmittedFrom) return false;
+        if (filters.checkInSubmittedTo && submittedDate > filters.checkInSubmittedTo) return false;
+        return true;
+      })
       .sort((left, right) => String(right.submissionTime).localeCompare(String(left.submissionTime)))
       .filter(submission => {
         const email = submission.emailAddress.trim().toLowerCase();
@@ -802,7 +809,24 @@ function RecipientsSection({
         seen.add(email);
         return true;
       });
-  }, [checkInSubmissions, selectedPropertyId]);
+  }, [checkInSubmissions, filters.checkInSubmittedFrom, filters.checkInSubmittedTo, selectedPropertyId]);
+
+  const visibleRecipients = useMemo(() => {
+    if (!selectedAudienceId) return scoped.recipients;
+    const audience = scoped.audiences.find(item => item.id === selectedAudienceId);
+    return getAudienceRecipients(audience, scoped.recipients);
+  }, [scoped.audiences, scoped.recipients, selectedAudienceId]);
+
+  const confirmAudienceOverwrite = (name: string) => {
+    const normalizedName = normalizeLookupValue(name);
+    const duplicate = scoped.audiences.find(item => normalizeLookupValue(item.name) === normalizedName);
+    if (!duplicate) return true;
+    const shouldOverwrite = window.confirm(`An audience/group named "${duplicate.name}" already exists for this property. Do you want to overwrite it? This will delete the existing audience and all recipients linked only to that group.`);
+    if (!shouldOverwrite) return false;
+    deleteCommunicationAudience(duplicate.id);
+    if (selectedAudienceId === duplicate.id) setSelectedAudienceId("");
+    return true;
+  };
 
   const parseExcel = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -846,7 +870,12 @@ function RecipientsSection({
     const now = Date.now();
     const listId = `comm-import-${now}`;
     const audienceId = `comm-audience-${now}`;
-    const normalizedAudienceName = importName || fileName;
+    const normalizedAudienceName = (importName || fileName).trim();
+    if (!normalizedAudienceName) {
+      setError("Enter an import list name before saving.");
+      return;
+    }
+    if (!confirmAudienceOverwrite(normalizedAudienceName)) return;
     const seen = new Set<string>();
     const recipients = rows.map((row, index) => {
       const email = String(row[mapping.email] || "").trim().toLowerCase();
@@ -920,6 +949,7 @@ function RecipientsSection({
       setError("Enter an audience name before creating a PMS client audience.");
       return;
     }
+    if (!confirmAudienceOverwrite(name)) return;
     setError("");
     clientCandidates.forEach(({ client, reservation }, index) => {
       const emails = client.emails?.length ? client.emails : client.email ? [client.email] : [];
@@ -983,6 +1013,7 @@ function RecipientsSection({
       setError("No valid Check-in Database emails exist for the active property.");
       return;
     }
+    if (!confirmAudienceOverwrite(name)) return;
     setError("");
     const now = Date.now();
     const audienceId = `comm-audience-checkin-${now}`;
@@ -1050,6 +1081,11 @@ function RecipientsSection({
   const saveAudienceName = (audience: CommunicationAudience) => {
     const name = editingAudienceName.trim();
     if (!name) return;
+    const duplicate = scoped.audiences.find(item => item.id !== audience.id && normalizeLookupValue(item.name) === normalizeLookupValue(name));
+    if (duplicate) {
+      alert(`Another audience/group already uses the name "${duplicate.name}". Audience names must be unique per property.`);
+      return;
+    }
     updateCommunicationAudience(audience.id, { name, updatedAt: new Date().toISOString() });
     setEditingAudienceId("");
     setEditingAudienceName("");
@@ -1283,6 +1319,10 @@ function RecipientsSection({
             <p className="mb-4 text-sm text-muted-foreground">
               Build a recipient audience from official Check-in Database submissions for this property. Date of birth, country, email, and marketing consent are kept synchronized from the Check-in module data.
             </p>
+            <div className="mb-3 grid gap-3 md:grid-cols-2">
+              <Field label="Submitted From" type="date" value={filters.checkInSubmittedFrom} onChange={value => setFilters({ ...filters, checkInSubmittedFrom: value })} />
+              <Field label="Submitted To" type="date" value={filters.checkInSubmittedTo} onChange={value => setFilters({ ...filters, checkInSubmittedTo: value })} />
+            </div>
             <div className="grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-end">
               <Field label="Audience Name" value={checkInAudienceName} onChange={setCheckInAudienceName} placeholder="Checked-in guests July" />
               <div className="rounded-md border border-border bg-muted/30 px-4 py-2 text-sm">
@@ -1365,10 +1405,27 @@ function RecipientsSection({
         )}
         <div className="grid gap-4 lg:grid-cols-[380px_1fr]">
           <div className="space-y-2">
+            {selectedAudienceId && (
+              <Button variant="outline" size="sm" className="w-full" onClick={() => setSelectedAudienceId("")}>
+                Show all recipients
+              </Button>
+            )}
             {scoped.audiences.map(audience => (
-              <div key={audience.id} className="rounded-md border border-border p-3">
+              <div
+                key={audience.id}
+                role="button"
+                tabIndex={0}
+                onClick={() => setSelectedAudienceId(current => current === audience.id ? "" : audience.id)}
+                onKeyDown={event => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    setSelectedAudienceId(current => current === audience.id ? "" : audience.id);
+                  }
+                }}
+                className={`rounded-md border p-3 text-left transition hover:border-primary/60 hover:bg-primary/5 ${selectedAudienceId === audience.id ? "border-primary bg-primary/10 shadow-sm" : "border-border"}`}
+              >
                 {editingAudienceId === audience.id ? (
-                  <div className="space-y-3">
+                  <div className="space-y-3" onClick={event => event.stopPropagation()}>
                     <Field label="Audience Name" value={editingAudienceName} onChange={setEditingAudienceName} />
                     <div className="flex justify-end gap-2">
                       <Button variant="outline" size="sm" onClick={() => { setEditingAudienceId(""); setEditingAudienceName(""); }}>Cancel</Button>
@@ -1382,8 +1439,8 @@ function RecipientsSection({
                       <p className="text-xs text-muted-foreground">{audience.source} - {audience.recipientIds.length} recipients</p>
                     </div>
                     <div className="flex shrink-0 gap-1">
-                      <Button variant="outline" size="sm" disabled={!canEdit} onClick={() => { setEditingAudienceId(audience.id); setEditingAudienceName(audience.name); }}>Edit</Button>
-                      <Button variant="ghost" size="icon" disabled={!canEdit} className="text-destructive" onClick={() => confirm(`Delete "${audience.name}" and all recipients linked to this audience?`) && deleteCommunicationAudience(audience.id)}><Trash2 size={15} /></Button>
+                      <Button variant="outline" size="sm" disabled={!canEdit} onClick={event => { event.stopPropagation(); setEditingAudienceId(audience.id); setEditingAudienceName(audience.name); }}>Edit</Button>
+                      <Button variant="ghost" size="icon" disabled={!canEdit} className="text-destructive" onClick={event => { event.stopPropagation(); if (confirm(`Delete "${audience.name}" and all recipients linked to this audience?`)) deleteCommunicationAudience(audience.id); }}><Trash2 size={15} /></Button>
                     </div>
                   </div>
                 )}
@@ -1397,7 +1454,7 @@ function RecipientsSection({
                 <tr><th className="p-3">Name</th><th className="p-3">Email</th><th className="p-3">Audience / Group</th><th className="p-3">Dates</th><th className="p-3">Source</th><th className="p-3">Status</th><th className="p-3 text-right">Actions</th></tr>
               </thead>
               <tbody>
-                {scoped.recipients.slice(0, 100).map(recipient => (
+                {visibleRecipients.slice(0, 100).map(recipient => (
                   <tr key={recipient.id} className="border-t border-border">
                     <td className="p-3">{recipient.name}</td>
                     <td className="p-3">{recipient.email}</td>
@@ -1417,7 +1474,7 @@ function RecipientsSection({
                 ))}
               </tbody>
             </table>
-            {!scoped.recipients.length && <EmptyState>No recipients saved yet.</EmptyState>}
+            {!visibleRecipients.length && <EmptyState>{selectedAudienceId ? "No recipients in this audience." : "No recipients saved yet."}</EmptyState>}
           </div>
         </div>
       </Panel>
