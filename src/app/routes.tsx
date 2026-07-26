@@ -127,6 +127,8 @@ export const router = createBrowserRouter([
       { path: "templates", Component: Communications },
       { path: "sending-rules", Component: Communications },
       { path: "campaigns", Component: Communications },
+      { path: "calendar", Component: Communications },
+      { path: "journey-builder", Component: Communications },
       { path: "outbox", Component: Communications },
       { path: "logs", Component: Communications },
       { path: "suppression-list", Component: Communications },

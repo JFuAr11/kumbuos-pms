@@ -39,6 +39,13 @@ export function CommunicationsUnsubscribe() {
   const [email, setEmail] = useState(decoded?.email || "");
   const [reason, setReason] = useState("");
   const [confirmed, setConfirmed] = useState(false);
+  const [consentPreferences, setConsentPreferences] = useState({
+    bookingOperational: true,
+    preArrivalOperational: true,
+    marketingOffers: false,
+    birthdayEmails: false,
+    postStayMarketing: false,
+  });
   const [formError, setFormError] = useState("");
   const [submitted, setSubmitted] = useState(false);
 
@@ -73,7 +80,7 @@ export function CommunicationsUnsubscribe() {
     const alreadyUnsubscribed = communicationUnsubscribes.some(
       (item) => item.propertyId === campaign.propertyId && item.email.toLowerCase() === normalizedEmail && item.campaignId === campaign.id,
     );
-    const notes = `Client requested unsubscribe from the public link. Reason: ${reason}.`;
+    const notes = `Client requested unsubscribe from the public link. Reason: ${reason}. Consent center preferences: ${formatConsentPreferences(consentPreferences)}.`;
 
     if (!alreadySuppressed) {
       addCommunicationSuppression({
@@ -103,6 +110,7 @@ export function CommunicationsUnsubscribe() {
         token,
         campaignId: campaign.id,
         reason,
+        consentPreferences,
         status: "Active",
         createdAt: now,
       });
@@ -137,7 +145,7 @@ export function CommunicationsUnsubscribe() {
         </h1>
         <p className="mt-4 text-base leading-7 text-white/75">
           {submitted
-            ? `You have successfully unsubscribed from ${propertyName} communications. We are sorry to see you go and appreciate your feedback.`
+            ? `You have successfully unsubscribed from ${propertyName} communications. Your email has been added to the property's suppression list and will be excluded from future email campaigns.`
             : `We are sorry that you have decided to stop receiving ${propertyName} emails. Please confirm the email address, select the reason, tick the confirmation checkbox, and submit the request below.`}
         </p>
 
@@ -168,6 +176,41 @@ export function CommunicationsUnsubscribe() {
                 {unsubscribeReasons.map((item) => <option key={item} value={item}>{item}</option>)}
               </select>
             </label>
+            <div className="mt-5 rounded-lg border border-[#d18b31]/30 bg-[#2b2721]/70 p-4">
+              <p className="text-sm font-semibold text-[#f7bc6a]">Consent Center</p>
+              <p className="mt-1 text-xs leading-5 text-white/65">
+                You can review communication preferences here. Booking and stay-service emails remain enabled when they are needed for an active reservation; marketing preferences below are disabled by this unsubscribe request.
+              </p>
+              <div className="mt-4 space-y-3">
+                <ConsentOption
+                  label="Booking confirmations and legally required reservation emails"
+                  checked={consentPreferences.bookingOperational}
+                  disabled
+                  onChange={() => undefined}
+                />
+                <ConsentOption
+                  label="Pre-arrival operational information for active stays"
+                  checked={consentPreferences.preArrivalOperational}
+                  disabled
+                  onChange={() => undefined}
+                />
+                <ConsentOption
+                  label="Marketing offers and newsletters"
+                  checked={consentPreferences.marketingOffers}
+                  onChange={(value) => setConsentPreferences(current => ({ ...current, marketingOffers: value }))}
+                />
+                <ConsentOption
+                  label="Birthday greeting emails"
+                  checked={consentPreferences.birthdayEmails}
+                  onChange={(value) => setConsentPreferences(current => ({ ...current, birthdayEmails: value }))}
+                />
+                <ConsentOption
+                  label="Post-stay marketing follow-up"
+                  checked={consentPreferences.postStayMarketing}
+                  onChange={(value) => setConsentPreferences(current => ({ ...current, postStayMarketing: value }))}
+                />
+              </div>
+            </div>
             <label className="mt-5 flex items-start gap-3 text-sm text-white/80">
               <input
                 type="checkbox"
@@ -198,6 +241,37 @@ export function CommunicationsUnsubscribe() {
       </section>
     </main>
   );
+}
+
+function ConsentOption({
+  label,
+  checked,
+  disabled = false,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <label className={`flex items-start gap-3 text-sm ${disabled ? "text-white/45" : "text-white/80"}`}>
+      <input
+        type="checkbox"
+        className="mt-1 h-4 w-4 rounded border-[#d18b31]/60"
+        checked={checked}
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span>{label}</span>
+    </label>
+  );
+}
+
+function formatConsentPreferences(preferences: Record<string, boolean>) {
+  return Object.entries(preferences)
+    .map(([key, value]) => `${key}=${value ? "agree" : "declined"}`)
+    .join(", ");
 }
 
 function decodeToken(token: string): TokenPayload | null {

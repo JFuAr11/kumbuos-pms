@@ -27,6 +27,13 @@ export type DeliveryJob = {
   subject: string;
   html: string;
   plainText: string;
+  attachments?: Array<{
+    name: string;
+    mimeType?: string;
+    size?: number;
+    downloadUrl?: string;
+    embeddedDataUrl?: string;
+  }>;
 };
 
 export type DeliveryResult = {
@@ -99,6 +106,7 @@ export async function processCommunicationDelivery({
         subject: job.subject,
         text: job.plainText || htmlToText(job.html),
         html: job.html || escapeHtml(job.plainText || "").replace(/\n/g, "<br />"),
+        attachments: buildNodemailerAttachments(job.attachments || []),
       });
 
       results.push({
@@ -118,6 +126,36 @@ export async function processCommunicationDelivery({
   }
 
   return { ok: true, mode: "live", results };
+}
+
+function buildNodemailerAttachments(attachments: NonNullable<DeliveryJob["attachments"]>) {
+  return attachments
+    .filter((attachment) => attachment.name && (attachment.downloadUrl || attachment.embeddedDataUrl))
+    .map((attachment) => {
+      const base = {
+        filename: sanitizeAttachmentName(attachment.name),
+        contentType: attachment.mimeType || "application/octet-stream",
+      };
+      if (attachment.embeddedDataUrl) {
+        return {
+          ...base,
+          content: decodeDataUrl(attachment.embeddedDataUrl),
+        };
+      }
+      return {
+        ...base,
+        path: attachment.downloadUrl,
+      };
+    });
+}
+
+function decodeDataUrl(value: string) {
+  const base64 = value.includes(",") ? value.split(",").pop() || "" : value;
+  return Buffer.from(base64, "base64");
+}
+
+function sanitizeAttachmentName(value: string) {
+  return value.replace(/[/\\?%*:|"<>]/g, "-").replace(/\s+/g, " ").trim() || "attachment";
 }
 
 function escapeHeader(value: string) {

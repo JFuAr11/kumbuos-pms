@@ -201,6 +201,7 @@ export type CommunicationTemplateAsset = {
   companyId: string;
   propertyId: string;
   templateId?: string;
+  assetRole?: 'Inline Image' | 'Email Attachment';
   name: string;
   mimeType: string;
   size: number;
@@ -219,6 +220,18 @@ export type CommunicationTemplate = {
   tenantId?: string;
   companyId: string;
   propertyId: string;
+  versionNumber?: number;
+  versionHistory?: Array<{
+    versionNumber: number;
+    subject: string;
+    preheader: string;
+    html: string;
+    plainText: string;
+    assetIds: string[];
+    attachmentIds?: string[];
+    savedAt: string;
+    savedBy: string;
+  }>;
   name: string;
   type: 'Rich Text' | 'HTML';
   subject: string;
@@ -227,6 +240,9 @@ export type CommunicationTemplate = {
   plainText: string;
   variables: string[];
   assetIds: string[];
+  attachmentIds?: string[];
+  deliverabilityScore?: number;
+  deliverabilityWarnings?: string[];
   status: CommunicationStatus;
   createdBy: string;
   updatedBy: string;
@@ -242,6 +258,8 @@ export type CommunicationRecipient = {
   source: 'Client' | 'Reservation' | 'Excel' | 'Manual';
   sourceId?: string;
   importListId?: string;
+  audienceIds?: string[];
+  audienceNames?: string[];
   name: string;
   email: string;
   language?: string;
@@ -326,6 +344,7 @@ export type CommunicationCampaign = {
   tenantId?: string;
   companyId: string;
   propertyId: string;
+  clonedFromCampaignId?: string;
   name: string;
   type: CommunicationCampaignType;
   senderId: string;
@@ -343,6 +362,12 @@ export type CommunicationCampaign = {
   scheduleTimezone?: string;
   repeatCount?: number;
   repeatIntervalMinutes?: number;
+  approvalStatus?: 'Draft' | 'Pending Approval' | 'Approved' | 'Rejected';
+  approvalRequestedBy?: string;
+  approvalRequestedAt?: string;
+  approvedBy?: string;
+  approvedAt?: string;
+  rejectionReason?: string;
   status: CommunicationCampaignStatus;
   preflightErrors: string[];
   finalRecipientCount: number;
@@ -384,6 +409,14 @@ export type CommunicationOutboxJob = {
   subject: string;
   html: string;
   plainText: string;
+  attachmentIds?: string[];
+  attachments?: Array<{
+    name: string;
+    mimeType: string;
+    size: number;
+    downloadUrl?: string;
+    embeddedDataUrl?: string;
+  }>;
   status: CommunicationOutboxStatus;
   attempts: number;
   maxRetries: number;
@@ -445,6 +478,7 @@ export type CommunicationUnsubscribe = {
   token: string;
   campaignId?: string;
   reason?: string;
+  consentPreferences?: Record<string, boolean>;
   createdAt: string;
   status: CommunicationStatus;
 };
@@ -930,6 +964,8 @@ const editAllPermissions: PermissionRule[] = [
   { module: 'Communications', section: 'Templates', access: 'edit' },
   { module: 'Communications', section: 'Sending Rules', access: 'edit' },
   { module: 'Communications', section: 'Campaigns', access: 'edit' },
+  { module: 'Communications', section: 'Campaign Calendar', access: 'edit' },
+  { module: 'Communications', section: 'Guest Journey Builder', access: 'edit' },
   { module: 'Communications', section: 'Outbox Queue', access: 'edit' },
   { module: 'Communications', section: 'Logs', access: 'edit' },
   { module: 'Communications', section: 'Suppression List', access: 'edit' },
@@ -2000,10 +2036,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const addCommunicationAudience = (audience: CommunicationAudience) =>
     setCommunicationAudiences(current => [audience, ...current]);
-  const updateCommunicationAudience = (id: string, updates: Partial<CommunicationAudience>) =>
+  const updateCommunicationAudience = (id: string, updates: Partial<CommunicationAudience>) => {
     setCommunicationAudiences(current => current.map(item => item.id === id ? { ...item, ...updates } : item));
-  const deleteCommunicationAudience = (id: string) =>
-    setCommunicationAudiences(current => current.filter(item => item.id !== id));
+    if (updates.name) {
+      setCommunicationRecipients(current => current.map(item => item.audienceIds?.includes(id)
+        ? {
+          ...item,
+          audienceNames: (item.audienceIds || []).map(audienceId => audienceId === id ? updates.name! : item.audienceNames?.[item.audienceIds?.indexOf(audienceId) || 0] || audienceId),
+          updatedAt: new Date().toISOString(),
+        }
+        : item));
+    }
+  };
+  const deleteCommunicationAudience = (id: string) => {
+    const audience = communicationAudiences.find(item => item.id === id);
+    const recipientIdsToDelete = new Set(audience?.recipientIds || []);
+    setCommunicationRecipients(current => current.filter(item => !recipientIdsToDelete.has(item.id) && !item.audienceIds?.includes(id)));
+    setCommunicationAudiences(current => current
+      .filter(item => item.id !== id)
+      .map(item => ({ ...item, recipientIds: item.recipientIds.filter(recipientId => !recipientIdsToDelete.has(recipientId)) })));
+  };
 
   const addCommunicationCampaign = (campaign: CommunicationCampaign) =>
     setCommunicationCampaigns(current => [campaign, ...current]);

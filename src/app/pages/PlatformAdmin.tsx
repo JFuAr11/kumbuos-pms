@@ -36,7 +36,7 @@ const modules = [
   { module: "Accountancy", sections: ["Overview", "Profit & Loss (P&L)", "Revenues", "Expenses", "Balance", "Assets", "Liabilities", "Depreciation & Amortization", "GenAI Assistant", "Notifications"] },
   { module: "Supply Requests", sections: ["Beverage", "Client Food", "Staff Food", "Shishas", "Housekeeping", "Mechanical", "Fuel & Petrol", "Notifications"] },
   { module: "Check-in", sections: ["Check-in Form", "Database", "Dashboard", "Notifications"] },
-  { module: "Communications", sections: ["Dashboard", "Senders", "Provider Settings", "DNS Verification", "Recipients", "Templates", "Sending Rules", "Campaigns", "Outbox Queue", "Logs", "Suppression List", "Notifications"] },
+  { module: "Communications", sections: ["Dashboard", "Senders", "Provider Settings", "DNS Verification", "Recipients", "Templates", "Sending Rules", "Campaigns", "Campaign Calendar", "Guest Journey Builder", "Outbox Queue", "Logs", "Suppression List", "Notifications"] },
   { module: "Admin Platform", sections: ["Companies", "Manage Users", "Assign Permissions", "Notifications"] },
 ];
 

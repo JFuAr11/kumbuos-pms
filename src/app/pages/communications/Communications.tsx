@@ -1,20 +1,24 @@
-import { ChangeEvent, ReactNode, useMemo, useState } from "react";
+import { ChangeEvent, ReactNode, useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router";
 import * as XLSX from "xlsx";
 import {
   AlertTriangle,
   BarChart3,
+  CalendarDays,
   CheckCircle2,
   Clock,
+  Copy,
   Database,
   Download,
   Eye,
   FileSpreadsheet,
+  GitBranch,
   Info,
   Mail,
   MailCheck,
   Maximize2,
   Minimize2,
+  Paperclip,
   PauseCircle,
   Play,
   Plus,
@@ -62,6 +66,8 @@ type SectionKey =
   | "templates"
   | "sending-rules"
   | "campaigns"
+  | "calendar"
+  | "journey-builder"
   | "outbox"
   | "logs"
   | "suppression-list";
@@ -77,6 +83,8 @@ const sectionTitles: Record<SectionKey, string> = {
   templates: "Templates",
   "sending-rules": "Sending Rules",
   campaigns: "Campaigns",
+  calendar: "Campaign Calendar",
+  "journey-builder": "Guest Journey Builder",
   outbox: "Outbox Queue",
   logs: "Logs",
   "suppression-list": "Suppression List",
@@ -85,7 +93,6 @@ const sectionTitles: Record<SectionKey, string> = {
 const marketingTypes: CommunicationCampaignType[] = ["Operational", "Marketing"];
 const statusOptions: CommunicationStatus[] = ["Draft", "Active", "Paused", "Archived"];
 const scheduleModes: CommunicationScheduleMode[] = ["Manual", "Before Check-in", "After Check-out", "Birthday"];
-const recipientScopes: CommunicationRecipientScope[] = ["Selected Audience", "All PMS Reservation Clients"];
 const clientCategories: Array<Client["category"] | "All"> = ["All", "Tour Operator", "Agency", "Direct Client", "Corporate", "Other"];
 const variables = ["{{name}}", "{{email}}", "{{hotel_name}}", "{{property_name}}", "{{reservation_code}}", "{{checkin_date}}", "{{checkout_date}}", "{{unsubscribe_url}}"];
 const fallbackTimezones = [
@@ -317,9 +324,12 @@ export function Communications() {
           deleteCommunicationCampaign={deleteCommunicationCampaign}
           addCommunicationRecipient={addCommunicationRecipient}
           addCommunicationOutboxJob={addCommunicationOutboxJob}
+          updateCommunicationOutboxJob={updateCommunicationOutboxJob}
           addCommunicationEvent={addCommunicationEvent}
         />
       )}
+      {section === "calendar" && <CampaignCalendarSection {...sharedProps} />}
+      {section === "journey-builder" && <JourneyBuilderSection {...sharedProps} />}
       {section === "outbox" && (
         <OutboxSection
           {...sharedProps}
@@ -764,10 +774,10 @@ function RecipientsSection({
     setFileName(file.name);
     try {
       const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer);
+      const workbook = XLSX.read(buffer, { cellDates: true });
       const sheet = workbook.Sheets[workbook.SheetNames[0]];
-      const parsed = XLSX.utils.sheet_to_json<ImportedRow>(sheet, { defval: "" }).map(row =>
-        Object.fromEntries(Object.entries(row).map(([key, value]) => [String(key).trim(), String(value).trim()]))
+      const parsed = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "", raw: true }).map(row =>
+        Object.fromEntries(Object.entries(row).map(([key, value]) => [String(key).trim(), normalizeImportedCell(value)]))
       );
       const keys = Object.keys(parsed[0] || {});
       setRows(parsed);
@@ -777,9 +787,9 @@ function RecipientsSection({
         email: findColumn(keys, ["email", "mail", "correo"]) || current.email,
         language: findColumn(keys, ["language", "idioma", "lang"]) || current.language,
         reservationCode: findColumn(keys, ["reservation", "booking", "code"]) || current.reservationCode,
-        checkinDate: findColumn(keys, ["check-in", "checkin", "arrival"]) || current.checkinDate,
-        checkoutDate: findColumn(keys, ["check-out", "checkout", "departure"]) || current.checkoutDate,
-        dateOfBirth: findColumn(keys, ["date of birth", "birth", "birthday", "dob"]) || current.dateOfBirth,
+        checkinDate: findColumn(keys, ["check-in", "check_in", "checkin", "arrival"]) || current.checkinDate,
+        checkoutDate: findColumn(keys, ["check-out", "check_out", "checkout", "departure"]) || current.checkoutDate,
+        dateOfBirth: findColumn(keys, ["date of birth", "date_of_birth", "birth", "birthday", "dob"]) || current.dateOfBirth,
       }));
     } catch {
       setError("The Excel file could not be read. Use .xlsx, .xls, .csv, or .tsv with a visible first sheet.");
@@ -796,7 +806,10 @@ function RecipientsSection({
       setError("Map the email column before saving.");
       return;
     }
-    const listId = `comm-import-${Date.now()}`;
+    const now = Date.now();
+    const listId = `comm-import-${now}`;
+    const audienceId = `comm-audience-${now}`;
+    const normalizedAudienceName = importName || fileName;
     const seen = new Set<string>();
     const recipients = rows.map((row, index) => {
       const email = String(row[mapping.email] || "").trim().toLowerCase();
@@ -804,23 +817,30 @@ function RecipientsSection({
       if (email) seen.add(email);
       const valid = isValidEmail(email) && !duplicate;
       const marketingOptIn = extractMarketingConsent(row);
+      const checkinDate = normalizeImportedDate(row[mapping.checkinDate]);
+      const checkoutDate = normalizeImportedDate(row[mapping.checkoutDate]);
+      const dateOfBirth = normalizeImportedDate(row[mapping.dateOfBirth]);
       return {
         ...meta(),
-        id: `comm-recipient-${Date.now()}-${index}`,
+        id: `comm-recipient-${now}-${index}`,
         source: "Excel" as const,
         importListId: listId,
+        audienceIds: [audienceId],
+        audienceNames: [normalizedAudienceName],
         name: String(row[mapping.name] || email || `Recipient ${index + 1}`),
         email,
         language: String(row[mapping.language] || ""),
         reservationCode: String(row[mapping.reservationCode] || ""),
-        checkinDate: String(row[mapping.checkinDate] || ""),
-        checkoutDate: String(row[mapping.checkoutDate] || ""),
-        dateOfBirth: String(row[mapping.dateOfBirth] || ""),
+        checkinDate,
+        checkoutDate,
+        dateOfBirth,
         marketingOptIn,
         variables: {
           ...row,
-          date_of_birth: String(row[mapping.dateOfBirth] || ""),
-          birthday_month_day: getMonthDay(String(row[mapping.dateOfBirth] || "")),
+          checkin_date: checkinDate,
+          checkout_date: checkoutDate,
+          date_of_birth: dateOfBirth,
+          birthday_month_day: getMonthDay(dateOfBirth),
           marketing_opt_in: marketingOptIn ? "true" : "false",
         },
         valid,
@@ -843,8 +863,8 @@ function RecipientsSection({
     });
     addCommunicationAudience({
       ...meta(),
-      id: `comm-audience-${Date.now()}`,
-      name: importName || fileName,
+      id: audienceId,
+      name: normalizedAudienceName,
       source: "Import List",
       filters: { fileName },
       recipientIds: recipients.filter(item => item.valid).map(item => item.id),
@@ -857,6 +877,7 @@ function RecipientsSection({
   const createAudienceFromClients = () => {
     const seen = new Set<string>();
     const recipients: CommunicationRecipient[] = [];
+    const audienceId = `comm-audience-clients-${Date.now()}`;
     const name = audienceName.trim();
     if (!name) {
       setError("Enter an audience name before creating a PMS client audience.");
@@ -874,6 +895,8 @@ function RecipientsSection({
           id: `comm-recipient-client-${Date.now()}-${index}-${recipients.length}`,
           source: "Reservation",
           sourceId: reservation.id,
+          audienceIds: [audienceId],
+          audienceNames: [name],
           name: client.name,
           email,
           reservationCode: reservation.id,
@@ -902,7 +925,7 @@ function RecipientsSection({
     recipients.forEach(addCommunicationRecipient);
     addCommunicationAudience({
       ...meta(),
-      id: `comm-audience-clients-${Date.now()}`,
+      id: audienceId,
       name,
       source: "Reservations",
       filters,
@@ -944,6 +967,8 @@ function RecipientsSection({
       ...meta(),
       id: `comm-recipient-manual-${now}`,
       source: "Manual",
+      audienceIds: [audience.id],
+      audienceNames: [audience.name],
       name: manualRecipient.name.trim(),
       email,
       language: manualRecipient.language.trim(),
@@ -1011,6 +1036,8 @@ function RecipientsSection({
             <SelectField label="Name Column" info={helpFor("nameColumn")} value={mapping.name} onChange={value => setMapping({ ...mapping, name: value })} options={columns.map(column => ({ value: column, label: column }))} />
             <SelectField label="Email Column" info={helpFor("emailColumn")} value={mapping.email} onChange={value => setMapping({ ...mapping, email: value })} options={columns.map(column => ({ value: column, label: column }))} />
             <SelectField label="Language Column" value={mapping.language} onChange={value => setMapping({ ...mapping, language: value })} options={[{ value: "", label: "None" }, ...columns.map(column => ({ value: column, label: column }))]} />
+            <SelectField label="Check-in Column" value={mapping.checkinDate} onChange={value => setMapping({ ...mapping, checkinDate: value })} options={[{ value: "", label: "None" }, ...columns.map(column => ({ value: column, label: column }))]} />
+            <SelectField label="Check-out Column" value={mapping.checkoutDate} onChange={value => setMapping({ ...mapping, checkoutDate: value })} options={[{ value: "", label: "None" }, ...columns.map(column => ({ value: column, label: column }))]} />
             <SelectField label="Date of Birth Column" value={mapping.dateOfBirth} onChange={value => setMapping({ ...mapping, dateOfBirth: value })} options={[{ value: "", label: "None" }, ...columns.map(column => ({ value: column, label: column }))]} />
           </div>
           <div className="mt-4 max-h-72 overflow-auto rounded-md border border-border">
@@ -1021,7 +1048,7 @@ function RecipientsSection({
               <tbody>
                 {rows.slice(0, 12).map((row, index) => (
                   <tr key={index} className="border-t border-border">
-                    {columns.map(column => <td key={column} className="p-2">{row[column]}</td>)}
+                    {columns.map(column => <td key={column} className="p-2">{formatImportedPreviewCell(column, row[column], mapping)}</td>)}
                   </tr>
                 ))}
               </tbody>
@@ -1080,7 +1107,7 @@ function RecipientsSection({
                     </div>
                     <div className="flex shrink-0 gap-1">
                       <Button variant="outline" size="sm" disabled={!canEdit} onClick={() => { setEditingAudienceId(audience.id); setEditingAudienceName(audience.name); }}>Edit</Button>
-                      <Button variant="ghost" size="icon" disabled={!canEdit} className="text-destructive" onClick={() => deleteCommunicationAudience(audience.id)}><Trash2 size={15} /></Button>
+                      <Button variant="ghost" size="icon" disabled={!canEdit} className="text-destructive" onClick={() => confirm(`Delete "${audience.name}" and all recipients linked to this audience?`) && deleteCommunicationAudience(audience.id)}><Trash2 size={15} /></Button>
                     </div>
                   </div>
                 )}
@@ -1091,13 +1118,19 @@ function RecipientsSection({
           <div className="overflow-auto rounded-md border border-border">
             <table className="w-full text-left text-sm">
               <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-                <tr><th className="p-3">Name</th><th className="p-3">Email</th><th className="p-3">Source</th><th className="p-3">Status</th><th className="p-3 text-right">Actions</th></tr>
+                <tr><th className="p-3">Name</th><th className="p-3">Email</th><th className="p-3">Audience / Group</th><th className="p-3">Dates</th><th className="p-3">Source</th><th className="p-3">Status</th><th className="p-3 text-right">Actions</th></tr>
               </thead>
               <tbody>
                 {scoped.recipients.slice(0, 100).map(recipient => (
                   <tr key={recipient.id} className="border-t border-border">
                     <td className="p-3">{recipient.name}</td>
                     <td className="p-3">{recipient.email}</td>
+                    <td className="p-3 text-xs text-muted-foreground">{getRecipientAudienceNames(recipient, scoped.audiences).join(", ") || "-"}</td>
+                    <td className="p-3 text-xs text-muted-foreground">
+                      <div>In: {recipient.checkinDate || "-"}</div>
+                      <div>Out: {recipient.checkoutDate || "-"}</div>
+                      <div>DOB: {recipient.dateOfBirth || "-"}</div>
+                    </td>
                     <td className="p-3">{recipient.source}</td>
                     <td className="p-3"><Badge tone={recipient.valid && !recipient.suppressed ? "positive" : "negative"}>{recipient.suppressed ? "Suppressed" : recipient.valid ? "Valid" : "Invalid"}</Badge></td>
                     <td className="p-3 text-right">
@@ -1134,13 +1167,17 @@ function TemplatesSection({
   deleteCommunicationTemplateAsset: (id: string) => void;
 }) {
   const [editingId, setEditingId] = useState("");
-  const [form, setForm] = useState<Partial<CommunicationTemplate>>({ name: "", type: "Rich Text", subject: "", preheader: "", html: "", plainText: "", variables, assetIds: [], status: "Active" });
+  const [form, setForm] = useState<Partial<CommunicationTemplate>>({ name: "", type: "Rich Text", subject: "", preheader: "", html: "", plainText: "", variables, assetIds: [], attachmentIds: [], status: "Active" });
   const [files, setFiles] = useState<File[]>([]);
+  const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
   const [previewRecipientId, setPreviewRecipientId] = useState("");
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [status, setStatus] = useState("");
   const previewRecipient = scoped.recipients.find(item => item.id === previewRecipientId) || scoped.recipients[0];
   const selectedTemplateAssets = (form.assetIds || [])
+    .map(assetId => scoped.assets.find(asset => asset.id === assetId))
+    .filter((asset): asset is CommunicationTemplateAsset => Boolean(asset && asset.assetRole !== "Email Attachment"));
+  const selectedTemplateAttachments = (form.attachmentIds || [])
     .map(assetId => scoped.assets.find(asset => asset.id === assetId))
     .filter((asset): asset is CommunicationTemplateAsset => Boolean(asset));
   const visibleTemplateVariables = Array.from(new Set([
@@ -1156,20 +1193,49 @@ function TemplatesSection({
     }
     const id = editingId || `comm-template-${Date.now()}`;
     const uploadedAssets: string[] = [];
+    const uploadedAttachments: string[] = [];
     for (const file of files) {
-      const asset = await uploadTemplateAsset(file, id, meta());
+      const asset = await uploadTemplateAsset(file, id, meta(), "Inline Image");
       addCommunicationTemplateAsset(asset);
       uploadedAssets.push(asset.id);
     }
+    for (const file of attachmentFiles) {
+      const asset = await uploadTemplateAsset(file, id, meta(), "Email Attachment");
+      addCommunicationTemplateAsset(asset);
+      uploadedAttachments.push(asset.id);
+    }
     const sanitizedHtml = sanitizeHtml(form.html || richTextToHtml(form.plainText || ""));
     const assetIds = [...(form.assetIds || []), ...uploadedAssets];
+    const attachmentIds = [...(form.attachmentIds || []), ...uploadedAttachments];
     const templateVariables = Array.from(new Set([
       ...extractVariables(`${form.subject || ""} ${form.preheader || ""} ${sanitizedHtml} ${form.plainText || ""}`),
       ...buildAttachedImageVariableNames(assetIds.length),
     ]));
+    const existingTemplate = editingId ? scoped.templates.find(template => template.id === editingId) : undefined;
+    const versionSnapshot = existingTemplate ? {
+      versionNumber: existingTemplate.versionNumber || 1,
+      subject: existingTemplate.subject,
+      preheader: existingTemplate.preheader,
+      html: existingTemplate.html,
+      plainText: existingTemplate.plainText,
+      assetIds: existingTemplate.assetIds || [],
+      attachmentIds: existingTemplate.attachmentIds || [],
+      savedAt: new Date().toISOString(),
+      savedBy: meta().updatedBy,
+    } : undefined;
+    const deliverability = scoreTemplateDeliverability({
+      subject: form.subject || "",
+      preheader: form.preheader || "",
+      html: sanitizedHtml,
+      plainText: form.plainText || htmlToText(sanitizedHtml),
+      inlineImageCount: assetIds.length,
+      attachmentCount: attachmentIds.length,
+    });
     const payload: CommunicationTemplate = {
       ...meta(),
       id,
+      versionNumber: editingId ? (existingTemplate?.versionNumber || 1) + 1 : 1,
+      versionHistory: versionSnapshot ? [...(existingTemplate?.versionHistory || []), versionSnapshot].slice(-20) : [],
       name: form.name || "",
       type: form.type || "Rich Text",
       subject: form.subject || "",
@@ -1178,17 +1244,21 @@ function TemplatesSection({
       plainText: form.plainText || htmlToText(sanitizedHtml),
       variables: templateVariables,
       assetIds,
+      attachmentIds,
+      deliverabilityScore: deliverability.score,
+      deliverabilityWarnings: deliverability.warnings,
       status: form.status || "Active",
     };
     if (editingId) updateCommunicationTemplate(editingId, payload);
     else addCommunicationTemplate(payload);
     setEditingId("");
     setFiles([]);
-    setForm({ name: "", type: "Rich Text", subject: "", preheader: "", html: "", plainText: "", variables, assetIds: [], status: "Active" });
+    setAttachmentFiles([]);
+    setForm({ name: "", type: "Rich Text", subject: "", preheader: "", html: "", plainText: "", variables, assetIds: [], attachmentIds: [], status: "Active" });
   };
   const startEdit = (template: CommunicationTemplate) => {
     setEditingId(template.id);
-    setForm(template);
+    setForm({ ...template, attachmentIds: template.attachmentIds || [] });
     setStatus("");
   };
 
@@ -1214,6 +1284,12 @@ function TemplatesSection({
             <input type="file" accept="image/*" multiple disabled={!canEdit} onChange={event => setFiles(Array.from(event.target.files || []))} />
             <p className="mt-2 text-xs text-muted-foreground">{files.length ? files.map(file => file.name).join(", ") : "No images selected."}</p>
           </label>
+          <label className="md:col-span-2 rounded-lg border border-dashed border-border bg-muted/20 p-4 text-sm">
+            <div className="mb-2 flex items-center gap-2 font-medium"><Paperclip className="h-4 w-4 text-primary" /> Email Attachments / Documents</div>
+            <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,application/pdf" multiple disabled={!canEdit} onChange={event => setAttachmentFiles(Array.from(event.target.files || []))} />
+            <p className="mt-2 text-xs text-muted-foreground">{attachmentFiles.length ? attachmentFiles.map(file => file.name).join(", ") : "No documents selected."}</p>
+            <p className="mt-1 text-xs text-muted-foreground">These files are attached to the email. They are different from image assets inserted inside the email with {"{{attached_image1}}"}.</p>
+          </label>
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           {visibleTemplateVariables.map(variable => <Badge key={variable}>{variable}</Badge>)}
@@ -1223,7 +1299,7 @@ function TemplatesSection({
         </p>
         {status && <FormError message={status} />}
         <div className="mt-5 flex justify-end gap-2">
-          {editingId && <Button variant="outline" onClick={() => { setEditingId(""); setForm({}); }}>Cancel</Button>}
+          {editingId && <Button variant="outline" onClick={() => { setEditingId(""); setFiles([]); setAttachmentFiles([]); setForm({ name: "", type: "Rich Text", subject: "", preheader: "", html: "", plainText: "", variables, assetIds: [], attachmentIds: [], status: "Active" }); }}>Cancel</Button>}
           <Button disabled={!canEdit} onClick={save}><Save className="mr-2 h-4 w-4" />Save Template</Button>
         </div>
       </Panel>
@@ -1244,8 +1320,17 @@ function TemplatesSection({
           <div className="space-y-3">
             {scoped.templates.map(template => (
               <div key={template.id} className="rounded-md border border-border p-3">
-                <p className="font-medium">{template.name}</p>
+                <div className="flex items-start justify-between gap-3">
+                  <p className="font-medium">{template.name}</p>
+                  <Badge tone={(template.deliverabilityScore || 0) >= 80 ? "positive" : (template.deliverabilityScore || 0) >= 60 ? "warning" : "negative"}>{template.deliverabilityScore ?? "-"} deliverability</Badge>
+                </div>
                 <p className="text-sm text-muted-foreground">{template.subject}</p>
+                <p className="mt-1 text-xs text-muted-foreground">Version {template.versionNumber || 1} - {(template.versionHistory || []).length} previous versions - {(template.attachmentIds || []).length} email attachments</p>
+                {!!template.deliverabilityWarnings?.length && (
+                  <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-muted-foreground">
+                    {template.deliverabilityWarnings.slice(0, 3).map(warning => <li key={warning}>{warning}</li>)}
+                  </ul>
+                )}
                 <div className="mt-3 flex justify-end gap-2">
                   <Button size="sm" variant="outline" disabled={!canEdit} onClick={() => startEdit(template)}>Edit</Button>
                   <Button size="icon" variant="ghost" disabled={!canEdit} className="text-destructive" onClick={() => confirm("Delete this template?") && deleteCommunicationTemplate(template.id)}><Trash2 size={15} /></Button>
@@ -1255,19 +1340,32 @@ function TemplatesSection({
             {!scoped.templates.length && <EmptyState>No templates yet.</EmptyState>}
           </div>
         </Panel>
-        <Panel title="Template Assets" icon={Upload}>
+        <Panel title="Template Assets and Attachments" icon={Upload}>
           {scoped.assets.map(asset => {
             const variableIndex = selectedTemplateAssets.findIndex(item => item.id === asset.id);
             return (
             <div key={asset.id} className="mb-2 flex items-center justify-between gap-3 rounded-md border border-border p-2 text-sm">
               <span className="min-w-0">
                 <span className="block truncate">{asset.name}</span>
+                <span className="text-xs text-muted-foreground">{asset.assetRole || (asset.mimeType.startsWith("image/") ? "Inline Image" : "Email Attachment")}</span>
                 {variableIndex >= 0 && <span className="text-xs text-muted-foreground">{`{{attached_image${variableIndex + 1}}}`}</span>}
               </span>
               <Button variant="ghost" size="icon" disabled={!canEdit} className="text-destructive" onClick={() => deleteCommunicationTemplateAsset(asset.id)}><Trash2 size={14} /></Button>
             </div>
           )})}
           {!scoped.assets.length && <EmptyState>No template assets uploaded yet.</EmptyState>}
+        </Panel>
+        <Panel title="Template Version History" icon={Database}>
+          {editingId && (form.versionHistory || []).length ? (
+            <div className="space-y-2">
+              {(form.versionHistory || []).slice().reverse().map(version => (
+                <div key={`${version.versionNumber}-${version.savedAt}`} className="rounded-md border border-border p-3 text-sm">
+                  <p className="font-medium">Version {version.versionNumber}</p>
+                  <p className="text-xs text-muted-foreground">{new Date(version.savedAt).toLocaleString()} - {version.subject}</p>
+                </div>
+              ))}
+            </div>
+          ) : <EmptyState>Edit an existing template to review previous saved versions.</EmptyState>}
         </Panel>
       </div>
     </div>
@@ -1375,6 +1473,7 @@ function CampaignsSection({
   canEdit,
   scoped,
   activeProperty,
+  currentUserId,
   selectedPropertyId,
   clients,
   reservations,
@@ -1385,6 +1484,7 @@ function CampaignsSection({
   deleteCommunicationCampaign,
   addCommunicationRecipient,
   addCommunicationOutboxJob,
+  updateCommunicationOutboxJob,
   addCommunicationEvent,
 }: SharedProps & {
   addCommunicationCampaign: (campaign: CommunicationCampaign) => void;
@@ -1392,6 +1492,7 @@ function CampaignsSection({
   deleteCommunicationCampaign: (id: string) => void;
   addCommunicationRecipient: (recipient: CommunicationRecipient) => void;
   addCommunicationOutboxJob: (job: CommunicationOutboxJob) => void;
+  updateCommunicationOutboxJob: (id: string, job: Partial<CommunicationOutboxJob>) => void;
   addCommunicationEvent: (event: CommunicationEvent) => void;
 }) {
   const [form, setForm] = useState({
@@ -1410,6 +1511,7 @@ function CampaignsSection({
     scheduleTimezone: activeProperty?.timezone || "Africa/Dar_es_Salaam",
     repeatCount: 1,
     repeatIntervalMinutes: 30,
+    requiresApproval: false,
   });
   const [preflight, setPreflight] = useState<string[]>([]);
   const [preflightWarnings, setPreflightWarnings] = useState<string[]>([]);
@@ -1423,6 +1525,43 @@ function CampaignsSection({
   const templateAssets = template?.assetIds
     .map(assetId => scoped.assets.find(asset => asset.id === assetId))
     .filter((asset): asset is CommunicationTemplateAsset => Boolean(asset)) || [];
+  const templateAttachments = (template?.attachmentIds || [])
+    .map(assetId => scoped.assets.find(asset => asset.id === assetId))
+    .filter((asset): asset is CommunicationTemplateAsset => Boolean(asset)) || [];
+  const recipientSourceValue = form.recipientScope === "All PMS Reservation Clients"
+    ? "pms-reservation-clients"
+    : form.audienceId
+      ? `audience:${form.audienceId}`
+      : "";
+  const recipientSourceOptions = [
+    { value: "", label: scoped.audiences.length ? "Select saved audience/list" : "No saved audience/list yet" },
+    ...scoped.audiences.map(item => ({
+      value: `audience:${item.id}`,
+      label: `${item.name} (${getAudienceRecipientCount(item, scoped.recipients)} recipients)`,
+    })),
+    { value: "pms-reservation-clients", label: "All PMS Reservation Clients" },
+  ];
+
+  useEffect(() => {
+    if (scoped.audiences.length && form.recipientScope === "Selected Audience" && !form.audienceId) {
+      setForm(current => ({ ...current, audienceId: scoped.audiences[0].id }));
+    }
+  }, [form.audienceId, form.recipientScope, scoped.audiences]);
+
+  const setRecipientSource = (value: string) => {
+    setPreflight([]);
+    setPreflightWarnings([]);
+    setReadyRecipients([]);
+    if (value === "pms-reservation-clients") {
+      setForm({ ...form, recipientScope: "All PMS Reservation Clients", audienceId: "" });
+      return;
+    }
+    if (value.startsWith("audience:")) {
+      setForm({ ...form, recipientScope: "Selected Audience", audienceId: value.replace("audience:", "") });
+      return;
+    }
+    setForm({ ...form, recipientScope: "Selected Audience", audienceId: "" });
+  };
 
   const runPreflight = () => {
     const selectedRecipients = form.recipientScope === "All PMS Reservation Clients"
@@ -1456,6 +1595,7 @@ function CampaignsSection({
     const now = new Date().toISOString();
     const repeatCount = Math.max(1, Number(form.repeatCount || 1));
     const repeatIntervalMinutes = Math.max(0, Number(form.repeatIntervalMinutes || 0));
+    const requiresApproval = Boolean(form.requiresApproval);
     const launchRecipients = result.recipients;
     if (form.recipientScope === "All PMS Reservation Clients") {
       launchRecipients.forEach(addCommunicationRecipient);
@@ -1480,7 +1620,12 @@ function CampaignsSection({
       scheduleTimezone: campaignTimezone,
       repeatCount,
       repeatIntervalMinutes,
-      status: form.scheduleMode !== "Manual" || form.scheduledAt ? "scheduled" : "sending",
+      approvalStatus: requiresApproval ? "Pending Approval" : "Approved",
+      approvalRequestedBy: requiresApproval ? meta().createdBy : undefined,
+      approvalRequestedAt: requiresApproval ? now : undefined,
+      approvedBy: requiresApproval ? undefined : meta().createdBy,
+      approvedAt: requiresApproval ? undefined : now,
+      status: requiresApproval ? "paused" : form.scheduleMode !== "Manual" || form.scheduledAt ? "scheduled" : "sending",
       preflightErrors: [],
       finalRecipientCount: launchRecipients.length,
       createdAt: now,
@@ -1531,7 +1676,15 @@ function CampaignsSection({
           subject: renderString(template.subject, htmlVars),
           html: renderString(template.html, htmlVars),
           plainText: renderString(template.plainText, textVars),
-          status: "queued",
+          attachmentIds: templateAttachments.map(asset => asset.id),
+          attachments: templateAttachments.map(asset => ({
+            name: asset.name,
+            mimeType: asset.mimeType,
+            size: asset.size,
+            downloadUrl: asset.downloadUrl,
+            embeddedDataUrl: asset.embeddedDataUrl,
+          })),
+          status: requiresApproval ? "pending" : "queued",
           attempts: 0,
           maxRetries: rule.maxRetries,
           repeatIndex: repeatIndex + 1,
@@ -1549,14 +1702,80 @@ function CampaignsSection({
           senderId: sender.id,
           templateId: template.id,
           type: "queued",
-          message: `Queued email ${repeatIndex + 1}/${repeatCount} for ${recipient.email}.`,
+          message: requiresApproval
+            ? `Prepared email ${repeatIndex + 1}/${repeatCount} for ${recipient.email}. Waiting for approval.`
+            : `Queued email ${repeatIndex + 1}/${repeatCount} for ${recipient.email}.`,
         }));
       }
     });
-    setForm({ name: "", type: "Operational", senderId: "", templateId: "", audienceId: "", recipientScope: "Selected Audience", sendingRuleId: "", scheduledAt: "", scheduleMode: "Manual", scheduleOffsetDays: 0, scheduleOffsetHours: 0, scheduleTimeOfDay: "09:00", scheduleTimezone: activeProperty?.timezone || "Africa/Dar_es_Salaam", repeatCount: 1, repeatIntervalMinutes: 30 });
+    setForm({ name: "", type: "Operational", senderId: "", templateId: "", audienceId: scoped.audiences[0]?.id || "", recipientScope: "Selected Audience", sendingRuleId: "", scheduledAt: "", scheduleMode: "Manual", scheduleOffsetDays: 0, scheduleOffsetHours: 0, scheduleTimeOfDay: "09:00", scheduleTimezone: activeProperty?.timezone || "Africa/Dar_es_Salaam", repeatCount: 1, repeatIntervalMinutes: 30, requiresApproval: false });
     setPreflight([]);
     setPreflightWarnings([]);
     setReadyRecipients([]);
+  };
+
+  const cloneCampaign = (campaign: CommunicationCampaign) => {
+    setForm({
+      name: `${campaign.name} copy`,
+      type: campaign.type,
+      senderId: campaign.senderId,
+      templateId: campaign.templateId,
+      audienceId: campaign.audienceId || "",
+      recipientScope: campaign.recipientScope || "Selected Audience",
+      sendingRuleId: campaign.sendingRuleId,
+      scheduledAt: campaign.scheduledAt || "",
+      scheduleMode: campaign.scheduleMode || "Manual",
+      scheduleOffsetDays: campaign.scheduleOffsetDays || 0,
+      scheduleOffsetHours: campaign.scheduleOffsetHours || 0,
+      scheduleTimeOfDay: campaign.scheduleTimeOfDay || "09:00",
+      scheduleTimezone: campaign.scheduleTimezone || campaignTimezone,
+      repeatCount: campaign.repeatCount || 1,
+      repeatIntervalMinutes: campaign.repeatIntervalMinutes || 30,
+      requiresApproval: Boolean(campaign.approvalStatus === "Pending Approval"),
+    });
+    setPreflight([]);
+    setPreflightWarnings([`Campaign "${campaign.name}" has been cloned into the form. Review timing and launch when ready.`]);
+    setReadyRecipients([]);
+  };
+
+  const approveCampaign = (campaign: CommunicationCampaign) => {
+    const relatedJobs = scoped.outbox.filter(job => job.campaignId === campaign.id);
+    const now = new Date().toISOString();
+    relatedJobs
+      .filter(job => job.status === "pending")
+      .forEach(job => updateCommunicationOutboxJob(job.id, { status: "queued", updatedAt: now }));
+    const hasFutureJobs = relatedJobs.some(job => new Date(job.scheduledFor) > new Date());
+    updateCommunicationCampaign(campaign.id, {
+      approvalStatus: "Approved",
+      approvedBy: currentUserId,
+      approvedAt: now,
+      status: hasFutureJobs ? "scheduled" : "sending",
+      updatedAt: now,
+    });
+    addCommunicationEvent(buildEvent(meta(), {
+      campaignId: campaign.id,
+      type: "created",
+      message: `Campaign "${campaign.name}" was approved and queued for delivery.`,
+    }));
+  };
+
+  const rejectCampaign = (campaign: CommunicationCampaign) => {
+    const reason = window.prompt("Reason for rejecting this campaign") || "Rejected by approver.";
+    const now = new Date().toISOString();
+    scoped.outbox
+      .filter(job => job.campaignId === campaign.id && job.status === "pending")
+      .forEach(job => updateCommunicationOutboxJob(job.id, { status: "cancelled", lastError: reason, updatedAt: now }));
+    updateCommunicationCampaign(campaign.id, {
+      approvalStatus: "Rejected",
+      rejectionReason: reason,
+      status: "cancelled",
+      updatedAt: now,
+    });
+    addCommunicationEvent(buildEvent(meta(), {
+      campaignId: campaign.id,
+      type: "cancelled",
+      message: `Campaign "${campaign.name}" was rejected. ${reason}`,
+    }));
   };
 
   return (
@@ -1567,15 +1786,27 @@ function CampaignsSection({
           <SelectField label="Campaign Type" info={helpFor("campaignType")} value={form.type} onChange={value => setForm({ ...form, type: value as CommunicationCampaignType })} options={marketingTypes.map(item => ({ value: item, label: item }))} />
           <SelectField label="Sender" value={form.senderId} onChange={value => setForm({ ...form, senderId: value })} options={[{ value: "", label: "Select sender" }, ...scoped.senders.map(item => ({ value: item.id, label: `${item.fromName} - ${item.fromEmail}` }))]} />
           <SelectField label="Template" value={form.templateId} onChange={value => setForm({ ...form, templateId: value })} options={[{ value: "", label: "Select template" }, ...scoped.templates.map(item => ({ value: item.id, label: item.name }))]} />
-          <SelectField label="Recipient Scope" info={helpFor("audience")} value={form.recipientScope} onChange={value => setForm({ ...form, recipientScope: value as CommunicationRecipientScope, audienceId: value === "All PMS Reservation Clients" ? "" : form.audienceId })} options={recipientScopes.map(item => ({ value: item, label: item }))} />
-          {form.recipientScope === "Selected Audience" ? (
-            <SelectField label="Audience" info={helpFor("audience")} value={form.audienceId} onChange={value => setForm({ ...form, audienceId: value })} options={[{ value: "", label: "Select audience" }, ...scoped.audiences.map(item => ({ value: item.id, label: `${item.name} (${item.recipientIds.length})` }))]} />
-          ) : (
-            <div className="rounded-md border border-border bg-muted/20 p-3 text-sm text-muted-foreground">
-              The campaign will build recipients from all current PMS reservations for the active property. Operational check-in/check-out emails do not require marketing consent; Marketing campaigns automatically exclude guests without consent.
-            </div>
-          )}
+          <SelectField label="Recipient List / Source" info={helpFor("audience")} value={recipientSourceValue} onChange={setRecipientSource} options={recipientSourceOptions} />
+          <div className="rounded-md border border-border bg-muted/20 p-3 text-sm text-muted-foreground">
+            {form.recipientScope === "All PMS Reservation Clients"
+              ? "The campaign will build recipients from current PMS reservations for the active property. Operational pre-arrival and post-stay emails do not require marketing consent; Marketing and Birthday campaigns automatically exclude guests without consent."
+              : audience
+                ? `This campaign will use the saved audience "${audience.name}". If you rename this audience in Recipients, linked recipients keep the new group name automatically.`
+                : "Select one saved audience/list or choose all PMS reservation clients before running preflight."}
+          </div>
           <SelectField label="Sending Rule" value={form.sendingRuleId} onChange={value => setForm({ ...form, sendingRuleId: value })} options={[{ value: "", label: "Select sending rule" }, ...scoped.rules.map(item => ({ value: item.id, label: item.name }))]} />
+          <label className="flex items-start gap-3 rounded-md border border-border bg-muted/20 p-3 text-sm">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={Boolean(form.requiresApproval)}
+              onChange={event => setForm({ ...form, requiresApproval: event.target.checked })}
+            />
+            <span>
+              <span className="block font-medium">Require Admin approval before sending</span>
+              <span className="block text-xs text-muted-foreground">The campaign will be prepared and visible in approvals, but outbox jobs remain pending until approved.</span>
+            </span>
+          </label>
           <SelectField label="Delivery Timing" value={form.scheduleMode} onChange={value => setForm({ ...form, scheduleMode: value as CommunicationScheduleMode })} options={scheduleModes.map(item => ({ value: item, label: item }))} />
           {rule && (
             <div className="rounded-md border border-[#c98736]/25 bg-[#c98736]/10 p-3 text-xs text-muted-foreground">
@@ -1619,7 +1850,7 @@ function CampaignsSection({
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
             <Button variant="outline" disabled={!canEdit} onClick={runPreflight}>Preflight Check</Button>
-            <Button disabled={!canEdit || preflight.length > 0} onClick={launch}><Play className="mr-2 h-4 w-4" />Launch Campaign</Button>
+            <Button disabled={!canEdit} onClick={launch}><Play className="mr-2 h-4 w-4" />{form.requiresApproval ? "Request Approval" : "Launch Campaign"}</Button>
           </div>
           {preflight.length > 0 && <FormError message={`Preflight blocked launch:\n${preflight.map(item => `- ${item}`).join("\n")}`} />}
           {preflightWarnings.length > 0 && !preflight.length && <InfoMessage message={preflightWarnings.join("\n")} />}
@@ -1631,7 +1862,7 @@ function CampaignsSection({
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-              <tr><th className="p-3">Campaign</th><th className="p-3">Type</th><th className="p-3">Timing</th><th className="p-3">Repeat</th><th className="p-3">Status</th><th className="p-3">Recipients</th><th className="p-3 text-right">Actions</th></tr>
+              <tr><th className="p-3">Campaign</th><th className="p-3">Type</th><th className="p-3">Timing</th><th className="p-3">Repeat</th><th className="p-3">Approval</th><th className="p-3">Status</th><th className="p-3">Recipients</th><th className="p-3 text-right">Actions</th></tr>
             </thead>
             <tbody>
               {scoped.campaigns.map(campaign => (
@@ -1640,9 +1871,17 @@ function CampaignsSection({
                   <td className="p-3">{campaign.type}</td>
                   <td className="p-3 text-xs text-muted-foreground">{formatCampaignTiming(campaign)}</td>
                   <td className="p-3 text-xs text-muted-foreground">{formatCampaignRepeat(campaign)}</td>
+                  <td className="p-3"><Badge tone={campaign.approvalStatus === "Pending Approval" ? "warning" : campaign.approvalStatus === "Rejected" ? "negative" : "positive"}>{campaign.approvalStatus || "Approved"}</Badge></td>
                   <td className="p-3"><Badge>{campaign.status}</Badge></td>
                   <td className="p-3">{campaign.finalRecipientCount}</td>
                   <td className="p-3 text-right">
+                    {campaign.approvalStatus === "Pending Approval" && (
+                      <>
+                        <Button variant="outline" size="sm" disabled={!canEdit} onClick={() => approveCampaign(campaign)}>Approve & Queue</Button>
+                        <Button variant="outline" size="sm" disabled={!canEdit} onClick={() => rejectCampaign(campaign)}>Reject</Button>
+                      </>
+                    )}
+                    <Button variant="outline" size="sm" disabled={!canEdit} onClick={() => cloneCampaign(campaign)}><Copy className="mr-1 h-3.5 w-3.5" />Clone</Button>
                     <Button variant="outline" size="sm" disabled={!canEdit || ["completed", "cancelled"].includes(campaign.status)} onClick={() => updateCommunicationCampaign(campaign.id, { status: campaign.status === "paused" ? "sending" : "paused", updatedAt: new Date().toISOString() })}>
                       {campaign.status === "paused" ? "Resume" : "Pause"}
                     </Button>
@@ -1653,6 +1892,108 @@ function CampaignsSection({
             </tbody>
           </table>
           {!scoped.campaigns.length && <EmptyState>No campaigns yet.</EmptyState>}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function CampaignCalendarSection({ scoped }: SharedProps) {
+  const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const monthJobs = scoped.outbox
+    .filter(job => (job.scheduledFor || "").slice(0, 7) === month)
+    .sort((left, right) => String(left.scheduledFor).localeCompare(String(right.scheduledFor)));
+  const grouped = monthJobs.reduce<Record<string, CommunicationOutboxJob[]>>((acc, job) => {
+    const key = (job.scheduledFor || "").slice(0, 10) || "Unscheduled";
+    acc[key] = [...(acc[key] || []), job];
+    return acc;
+  }, {});
+  const daysInMonth = getDaysInMonth(month);
+
+  return (
+    <div className="space-y-5">
+      <Panel title="Scheduled Campaign Calendar" icon={CalendarDays}>
+        <div className="mb-4 max-w-xs">
+          <Field label="Month" type="month" value={month} onChange={setMonth} />
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {daysInMonth.map(day => {
+            const jobs = grouped[day] || [];
+            return (
+              <div key={day} className="min-h-32 rounded-md border border-border bg-background p-3">
+                <p className="text-sm font-semibold">{day}</p>
+                <div className="mt-2 space-y-2">
+                  {jobs.slice(0, 5).map(job => (
+                    <div key={job.id} className="rounded border border-[#c98736]/20 bg-[#c98736]/10 p-2 text-xs">
+                      <p className="font-medium">{formatTime(job.scheduledFor)} - {scoped.campaigns.find(campaign => campaign.id === job.campaignId)?.name || "Campaign"}</p>
+                      <p className="truncate text-muted-foreground">{job.recipientEmail}</p>
+                      <Badge tone={job.status === "sent" ? "positive" : job.status === "failed" ? "negative" : "warning"}>{job.status}</Badge>
+                    </div>
+                  ))}
+                  {jobs.length > 5 && <p className="text-xs text-muted-foreground">+{jobs.length - 5} more jobs</p>}
+                  {!jobs.length && <p className="text-xs text-muted-foreground">No scheduled emails.</p>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function JourneyBuilderSection({ scoped }: SharedProps) {
+  const journeys = [
+    {
+      title: "Pre-arrival Welcome",
+      description: "Operational email before check-in with booking details, arrival guidance, and guest preferences.",
+      modes: ["Before Check-in"],
+    },
+    {
+      title: "On-property Communication",
+      description: "Manual or scheduled operational emails during the stay, useful for experiences and service information.",
+      modes: ["Manual"],
+    },
+    {
+      title: "Post-stay Follow-up",
+      description: "Checkout follow-up, review requests, or marketing only when consent exists.",
+      modes: ["After Check-out"],
+    },
+    {
+      title: "Birthday Greeting",
+      description: "Annual marketing journey using Date of Birth and Marketing Consent = Agree.",
+      modes: ["Birthday"],
+    },
+  ];
+  return (
+    <div className="space-y-5">
+      <Panel title="Automatic Guest Journey Builder" icon={GitBranch}>
+        <div className="grid gap-4 xl:grid-cols-4">
+          {journeys.map((journey, index) => {
+            const campaigns = scoped.campaigns.filter(campaign => journey.modes.includes(campaign.scheduleMode || "Manual"));
+            return (
+              <div key={journey.title} className="relative rounded-lg border border-border bg-background p-4">
+                <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-full bg-[#c98736]/15 text-primary">{index + 1}</div>
+                <h3 className="font-semibold">{journey.title}</h3>
+                <p className="mt-2 text-sm text-muted-foreground">{journey.description}</p>
+                <div className="mt-4 space-y-2">
+                  {campaigns.slice(0, 3).map(campaign => (
+                    <div key={campaign.id} className="rounded-md border border-[#c98736]/20 bg-[#c98736]/10 p-2 text-xs">
+                      <p className="font-medium">{campaign.name}</p>
+                      <p className="text-muted-foreground">{formatCampaignTiming(campaign)}</p>
+                    </div>
+                  ))}
+                  {!campaigns.length && <p className="text-xs text-muted-foreground">No campaigns mapped to this journey step yet.</p>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Panel>
+      <Panel title="Journey Configuration Guide" icon={Info}>
+        <div className="grid gap-3 md:grid-cols-2">
+          <InfoMessage message="Create templates first, then audiences, sending rules, and campaigns. Each campaign automatically appears in the journey stage that matches its Delivery Timing." />
+          <InfoMessage message="Operational pre-arrival emails can go to booking guests. Birthday and marketing emails require Date of Birth and Marketing Consent." />
         </div>
       </Panel>
     </div>
@@ -1683,6 +2024,10 @@ function OutboxSection({
   const processNextBatch = async () => {
     setProcessing("");
     const campaign = scoped.campaigns.find(item => item.id === (campaignId === "All" ? filtered[0]?.campaignId : campaignId));
+    if (campaign?.approvalStatus === "Pending Approval") {
+      setProcessing("This campaign is waiting for approval. Approve it before processing any outbox jobs.");
+      return;
+    }
     const rule = scoped.rules.find(item => item.id === campaign?.sendingRuleId);
     const candidates = filtered
       .filter(job => !campaign?.id || job.campaignId === campaign.id)
@@ -2036,7 +2381,8 @@ function getSection(pathname: string): SectionKey {
   if (segment === "dns-verification") return "dns-verification";
   if (segment === "sending-rules") return "sending-rules";
   if (segment === "suppression-list") return "suppression-list";
-  if (segment === "senders" || segment === "recipients" || segment === "templates" || segment === "campaigns" || segment === "outbox" || segment === "logs") return segment;
+  if (segment === "journey-builder") return "journey-builder";
+  if (segment === "senders" || segment === "recipients" || segment === "templates" || segment === "campaigns" || segment === "calendar" || segment === "outbox" || segment === "logs") return segment;
   return "dashboard";
 }
 
@@ -2046,6 +2392,60 @@ function isValidEmail(value?: string) {
 
 function findColumn(columns: string[], candidates: string[]) {
   return columns.find(column => candidates.some(candidate => column.toLowerCase().includes(candidate.toLowerCase()))) || "";
+}
+
+function normalizeImportedCell(value: unknown) {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : "";
+  return String(value ?? "").trim();
+}
+
+function normalizeImportedDate(value: unknown) {
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  const serial = Number(raw.replace(",", "."));
+  if (Number.isFinite(serial) && serial > 25000 && serial < 80000) {
+    const parsed = XLSX.SSF.parse_date_code(serial);
+    if (parsed?.y && parsed?.m && parsed?.d) {
+      return `${String(parsed.y).padStart(4, "0")}-${String(parsed.m).padStart(2, "0")}-${String(parsed.d).padStart(2, "0")}`;
+    }
+  }
+  const match = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})$/);
+  if (match) {
+    const year = Number(match[3].length === 2 ? `20${match[3]}` : match[3]);
+    const month = Number(match[2]);
+    const day = Number(match[1]);
+    if (year && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? raw : parsed.toISOString().slice(0, 10);
+}
+
+function formatImportedPreviewCell(column: string, value: unknown, mapping: { checkinDate: string; checkoutDate: string; dateOfBirth: string }) {
+  if ([mapping.checkinDate, mapping.checkoutDate, mapping.dateOfBirth].includes(column)) {
+    return normalizeImportedDate(value);
+  }
+  return String(value ?? "");
+}
+
+function getRecipientAudienceNames(recipient: CommunicationRecipient, audiences: CommunicationAudience[]) {
+  const fromRecipient = (recipient.audienceNames || []).filter(Boolean);
+  if (fromRecipient.length) return fromRecipient;
+  return audiences.filter(audience => audience.recipientIds.includes(recipient.id)).map(audience => audience.name);
+}
+
+function getAudienceRecipients(audience: CommunicationAudience | undefined, recipients: CommunicationRecipient[]) {
+  if (!audience) return [];
+  const ids = new Set(audience.recipientIds || []);
+  return recipients.filter(recipient => ids.has(recipient.id) || recipient.audienceIds?.includes(audience.id));
+}
+
+function getAudienceRecipientCount(audience: CommunicationAudience, recipients: CommunicationRecipient[]) {
+  return getAudienceRecipients(audience, recipients).length;
 }
 
 function extractMarketingConsent(row: ImportedRow) {
@@ -2125,6 +2525,58 @@ function getAttachedImageVariables(assets: CommunicationTemplateAsset[], mode: "
   }));
 }
 
+function scoreTemplateDeliverability({
+  subject,
+  preheader,
+  html,
+  plainText,
+  inlineImageCount,
+  attachmentCount,
+}: {
+  subject: string;
+  preheader: string;
+  html: string;
+  plainText: string;
+  inlineImageCount: number;
+  attachmentCount: number;
+}) {
+  let score = 100;
+  const warnings: string[] = [];
+  if (!subject.trim()) {
+    score -= 25;
+    warnings.push("Subject is empty.");
+  }
+  if (subject.length > 78) {
+    score -= 10;
+    warnings.push("Subject is long; keep it under 78 characters when possible.");
+  }
+  if (!preheader.trim()) {
+    score -= 8;
+    warnings.push("Preheader is empty; add a short inbox preview.");
+  }
+  if (!plainText.trim()) {
+    score -= 15;
+    warnings.push("Plain text version is missing.");
+  }
+  if (/<script|<iframe|javascript:/i.test(html)) {
+    score -= 30;
+    warnings.push("Unsafe HTML was detected and will be sanitized.");
+  }
+  if (inlineImageCount > 6) {
+    score -= 8;
+    warnings.push("Many inline images can hurt deliverability.");
+  }
+  if (attachmentCount > 3) {
+    score -= 10;
+    warnings.push("Many attachments can increase spam filtering risk.");
+  }
+  if (html.length > 120000) {
+    score -= 12;
+    warnings.push("HTML body is very large; some inboxes may clip it.");
+  }
+  return { score: Math.max(0, Math.min(100, score)), warnings };
+}
+
 function preflightCampaign({
   sender,
   provider,
@@ -2163,6 +2615,7 @@ function preflightCampaign({
   if (!template) errors.push("Select a template.");
   if (template && !template.subject.trim()) errors.push("Template subject is required.");
   if (template && !template.html.trim() && !template.plainText.trim()) errors.push("Template body is required.");
+  if (template?.deliverabilityScore !== undefined && template.deliverabilityScore < 60) warnings.push(`Template deliverability score is ${template.deliverabilityScore}/100. Review warnings before sending.`);
   if (recipientScope === "Selected Audience" && !audience) errors.push("Select an audience.");
   if (recipientScope === "All PMS Reservation Clients" && !selectedRecipients?.length) errors.push("No reservation-linked PMS recipients exist for the active property.");
   if (!rule) errors.push("Select a sending rule.");
@@ -2172,7 +2625,11 @@ function preflightCampaign({
   const seen = new Set<string>();
   let suppressedCount = 0;
   const suppressedRecipients: CommunicationRecipient[] = [];
-  let finalRecipients = (selectedRecipients || (audience?.recipientIds || []).map(id => recipients.find(item => item.id === id)))
+  const audienceRecipients = getAudienceRecipients(audience, recipients);
+  if (recipientScope === "Selected Audience" && audience && !audienceRecipients.length) {
+    errors.push(`Audience "${audience.name}" has no linked recipients.`);
+  }
+  let finalRecipients = (selectedRecipients || audienceRecipients)
     .filter((item): item is CommunicationRecipient => Boolean(item))
     .filter(item => {
       const email = item.email.toLowerCase();
@@ -2508,6 +2965,22 @@ function formatDateTime(value?: string) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
+function formatTime(value?: string) {
+  if (!value) return "--:--";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.slice(11, 16) || value;
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function getDaysInMonth(monthValue: string) {
+  const match = monthValue.match(/^(\d{4})-(\d{2})$/);
+  const now = new Date();
+  const year = match ? Number(match[1]) : now.getFullYear();
+  const month = match ? Number(match[2]) : now.getMonth() + 1;
+  const days = new Date(year, month, 0).getDate();
+  return Array.from({ length: days }, (_, index) => `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(index + 1).padStart(2, "0")}`);
+}
+
 function buildUnsubscribeToken(email: string, campaignId: string) {
   return btoa(`${email}|${campaignId}|${Date.now()}`).replace(/=+$/g, "");
 }
@@ -2525,7 +2998,7 @@ function buildEvent(
   };
 }
 
-async function uploadTemplateAsset(file: File, templateId: string, meta: ReturnType<SharedProps["meta"]>): Promise<CommunicationTemplateAsset> {
+async function uploadTemplateAsset(file: File, templateId: string, meta: ReturnType<SharedProps["meta"]>, assetRole: CommunicationTemplateAsset["assetRole"]): Promise<CommunicationTemplateAsset> {
   const embeddedDataUrl = await fileToDataUrl(file);
   try {
     const response = await fetch("/api/communications-template-asset", {
@@ -2543,6 +3016,7 @@ async function uploadTemplateAsset(file: File, templateId: string, meta: ReturnT
         ...meta,
         ...payload.asset,
         templateId,
+        assetRole,
         status: "Active",
       };
     }
@@ -2553,6 +3027,7 @@ async function uploadTemplateAsset(file: File, templateId: string, meta: ReturnT
     ...meta,
     id: `comm-asset-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     templateId,
+    assetRole,
     name: file.name,
     mimeType: file.type || "application/octet-stream",
     size: file.size,
