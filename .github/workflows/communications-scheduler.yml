@@ -1,0 +1,75 @@
+name: Communications Queue Scheduler
+
+on:
+  schedule:
+    # GitHub Actions supports 5-minute schedules. This keeps the outbox polling
+    # aligned with campaign times such as 09:00, 09:05, 09:10, and so on.
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: communications-queue-scheduler
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  process-communications-queue:
+    name: Process due communications jobs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Call KumbuOS communications cron endpoint
+        shell: bash
+        env:
+          COMMUNICATIONS_CRON_URL: ${{ vars.COMMUNICATIONS_CRON_URL }}
+          COMMUNICATIONS_CRON_SECRET: ${{ secrets.COMMUNICATIONS_CRON_SECRET }}
+        run: |
+          set -euo pipefail
+
+          cron_url="${COMMUNICATIONS_CRON_URL:-https://kumbuos-pms.vercel.app/api/communications-cron}"
+
+          echo "Processing KumbuOS communications queue through ${cron_url}"
+
+          last_status=""
+          last_body=""
+
+          for attempt in 1 2 3; do
+            echo "Attempt ${attempt}/3"
+
+            if [ -n "${COMMUNICATIONS_CRON_SECRET:-}" ]; then
+              response="$(curl --silent --show-error --request POST \
+                --connect-timeout 20 \
+                --max-time 180 \
+                --write-out '\n%{http_code}' \
+                --header "Authorization: Bearer ${COMMUNICATIONS_CRON_SECRET}" \
+                --header "X-KumbuOS-Scheduler: github-actions" \
+                "${cron_url}" || true)"
+            else
+              response="$(curl --silent --show-error --request POST \
+                --connect-timeout 20 \
+                --max-time 180 \
+                --write-out '\n%{http_code}' \
+                --header "X-KumbuOS-Scheduler: github-actions" \
+                "${cron_url}" || true)"
+            fi
+
+            last_status="$(printf '%s' "${response}" | tail -n 1)"
+            last_body="$(printf '%s' "${response}" | sed '$d')"
+
+            echo "HTTP status: ${last_status}"
+            echo "${last_body}"
+
+            if [ "${last_status}" -ge 200 ] && [ "${last_status}" -lt 300 ]; then
+              echo "KumbuOS communications queue processed successfully."
+              exit 0
+            fi
+
+            if [ "${attempt}" -lt 3 ]; then
+              sleep 20
+            fi
+          done
+
+          echo "::error::KumbuOS communications scheduler failed after 3 attempts. Last status: ${last_status}. Last body: ${last_body}"
+          exit 1

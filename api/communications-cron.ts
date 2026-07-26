@@ -63,7 +63,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       if (!campaign || terminalCampaignStatuses.has(String(campaign.status))) continue;
 
       const rule = payload.communicationSendingRules.find((item: any) => item.id === campaign.sendingRuleId);
-      const batchSize = Math.max(1, Number(rule?.batchSize || 50));
+      if (rule && !isWithinAllowedWindow(rule, now)) {
+        campaign.status = "scheduled";
+        campaign.updatedAt = new Date().toISOString();
+        continue;
+      }
+
+      const dailyRemaining = getDailyRemainingCapacity(outbox, campaigns, rule, now);
+      if (dailyRemaining <= 0) {
+        campaign.status = "scheduled";
+        campaign.updatedAt = new Date().toISOString();
+        continue;
+      }
+
+      const batchSize = Math.min(Math.max(1, Number(rule?.batchSize || 50)), dailyRemaining);
       const jobs = dueJobs
         .filter((job) => job.campaignId === campaignId)
         .filter((job) => Number(job.attempts || 0) < Math.max(1, Number(job.maxRetries || rule?.maxRetries || 1)))
@@ -108,6 +121,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           job.updatedAt = sentAt;
           processed += 1;
           if (result.status === "failed") failed += 1;
+          if (result.status === "sent" && String(campaign.scheduleMode || "") === "Birthday") {
+            const nextJob = buildNextBirthdayJob(job, sentAt);
+            outbox.push(nextJob);
+            events.unshift(buildCronEvent(nextJob, "queued", `Queued next annual birthday email for ${nextJob.recipientEmail}.`));
+          }
           events.unshift(buildCronEvent(job, result.status === "sent" ? "sent" : "failed", result.status === "sent"
             ? `Cron sent email to ${job.recipientEmail}.`
             : `Cron failed email to ${job.recipientEmail}. ${canRetry ? "Queued for retry." : "Retry limit reached."}`, result.providerMessageId, result.error));
@@ -169,7 +187,7 @@ function resolveCampaignStatus(campaign: Campaign, outbox: OutboxJob[], now: Dat
   return "scheduled";
 }
 
-function buildCronEvent(job: OutboxJob, type: "sent" | "failed" | "suppressed", message: string, providerMessageId?: string, errorDetail?: string) {
+function buildCronEvent(job: OutboxJob, type: "sent" | "failed" | "suppressed" | "queued", message: string, providerMessageId?: string, errorDetail?: string) {
   return {
     id: `comm-event-cron-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     tenantId: job.tenantId,
@@ -189,6 +207,96 @@ function buildCronEvent(job: OutboxJob, type: "sent" | "failed" | "suppressed", 
     createdAt: new Date().toISOString(),
     status: "Active",
   };
+}
+
+function getDailyRemainingCapacity(outbox: OutboxJob[], campaigns: Campaign[], rule: Record<string, any> | undefined, now: Date) {
+  const dailyLimit = Math.max(1, Number(rule?.dailyLimit || Number.MAX_SAFE_INTEGER));
+  if (!Number.isFinite(dailyLimit) || dailyLimit >= Number.MAX_SAFE_INTEGER) return Number.MAX_SAFE_INTEGER;
+  const timezone = String(rule?.timezone || "UTC");
+  const todayKey = getDateKey(now, timezone);
+  const campaignIdsForRule = new Set(campaigns
+    .filter((campaign) => !rule?.id || campaign.sendingRuleId === rule.id)
+    .map((campaign) => campaign.id));
+  const sentToday = outbox.filter((job) => {
+    if (job.status !== "sent" || !job.sentAt) return false;
+    if (!campaignIdsForRule.has(job.campaignId)) return false;
+    return getDateKey(new Date(job.sentAt), timezone) === todayKey;
+  }).length;
+  return Math.max(0, dailyLimit - sentToday);
+}
+
+function isWithinAllowedWindow(rule: Record<string, any>, now: Date) {
+  const from = parseTimeToMinutes(String(rule.allowedFromTime || ""));
+  const to = parseTimeToMinutes(String(rule.allowedToTime || ""));
+  if (from === null || to === null || from === to) return true;
+  const current = getMinutesInTimezone(now, String(rule.timezone || "UTC"));
+  if (from < to) return current >= from && current <= to;
+  return current >= from || current <= to;
+}
+
+function parseTimeToMinutes(value: string) {
+  const match = value.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (!Number.isFinite(hour) || !Number.isFinite(minute)) return null;
+  return Math.max(0, Math.min(23, hour)) * 60 + Math.max(0, Math.min(59, minute));
+}
+
+function getMinutesInTimezone(date: Date, timezone: string) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: timezone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(date);
+    const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return Number(lookup.hour || 0) * 60 + Number(lookup.minute || 0);
+  } catch {
+    return date.getUTCHours() * 60 + date.getUTCMinutes();
+  }
+}
+
+function getDateKey(date: Date, timezone: string) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(date);
+    const lookup = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+    return `${lookup.year}-${lookup.month}-${lookup.day}`;
+  } catch {
+    return date.toISOString().slice(0, 10);
+  }
+}
+
+function buildNextBirthdayJob(job: OutboxJob, nowIso: string) {
+  return {
+    ...job,
+    id: `comm-job-birthday-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    status: "queued",
+    attempts: 0,
+    providerMessageId: "",
+    lastError: "",
+    sentAt: "",
+    scheduledFor: addYearsToIso(String(job.scheduledFor || nowIso), 1),
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  };
+}
+
+function addYearsToIso(value: string, years: number) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    const fallback = new Date();
+    fallback.setUTCFullYear(fallback.getUTCFullYear() + years);
+    return fallback.toISOString();
+  }
+  date.setUTCFullYear(date.getUTCFullYear() + years);
+  return date.toISOString();
 }
 
 function normalizePmsPayload(data: PmsPayload): PmsPayload {
