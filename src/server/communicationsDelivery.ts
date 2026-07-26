@@ -1,5 +1,3 @@
-import nodemailer from "nodemailer";
-
 export type ProviderAccount = {
   id?: string;
   name?: string;
@@ -85,6 +83,7 @@ export async function processCommunicationDelivery({
     throw new Error("Live SMTP delivery requires smtpHost, smtpPort, smtpUsername, and smtpPassword.");
   }
 
+  const nodemailer = await loadNodemailer();
   const transporter = nodemailer.createTransport({
     host: provider.smtpHost,
     port: Number(provider.smtpPort),
@@ -126,6 +125,11 @@ export async function processCommunicationDelivery({
   }
 
   return { ok: true, mode: "live", results };
+}
+
+async function loadNodemailer() {
+  const module = await import("nodemailer");
+  return module.default || module;
 }
 
 function buildNodemailerAttachments(attachments: NonNullable<DeliveryJob["attachments"]>) {

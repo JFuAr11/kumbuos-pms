@@ -56,6 +56,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     let failed = 0;
 
     const dueJobs = outbox.filter((job) => isDueOpenJob(job, now));
+    if (!dueJobs.length) {
+      res.status(200).json({
+        ok: true,
+        processed: 0,
+        failed: 0,
+        dueJobs: 0,
+        message: "No due communications jobs. Future scheduled jobs remain queued.",
+      });
+      return;
+    }
     const dueCampaignIds = [...new Set(dueJobs.map((job) => String(job.campaignId || "")).filter(Boolean))];
 
     for (const campaignId of dueCampaignIds) {
