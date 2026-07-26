@@ -1,4 +1,3 @@
-import { processCommunicationDelivery } from "../src/server/communicationsDelivery";
 import { readFirebaseStore, writeFirebaseStore } from "./firebase-store";
 
 type VercelRequest = {
@@ -16,6 +15,15 @@ type VercelResponse = {
 type PmsPayload = Record<string, any>;
 type OutboxJob = Record<string, any>;
 type Campaign = Record<string, any>;
+type ProviderAccount = Record<string, any>;
+type Sender = Record<string, any>;
+type DeliveryResult = {
+  jobId: string;
+  recipientEmail: string;
+  status: "sent" | "failed";
+  providerMessageId?: string;
+  error?: string;
+};
 
 const openJobStatuses = new Set(["pending", "queued", "sending", "failed"]);
 const terminalCampaignStatuses = new Set(["paused", "completed", "cancelled", "failed"]);
@@ -331,4 +339,142 @@ function getHeader(req: VercelRequest, key: string) {
 function getQuery(req: VercelRequest, key: string) {
   const value = req.query?.[key];
   return Array.isArray(value) ? value[0] : value || "";
+}
+
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+async function processCommunicationDelivery({
+  jobs,
+  sender,
+  provider,
+}: {
+  jobs: OutboxJob[];
+  sender: Sender;
+  provider?: ProviderAccount | null;
+}) {
+  if (!jobs.length) {
+    throw new Error("At least one outbox job is required.");
+  }
+
+  if (!sender.fromEmail || !emailPattern.test(String(sender.fromEmail))) {
+    throw new Error("A valid sender fromEmail is required.");
+  }
+
+  const invalidRecipient = jobs.find((job) => !emailPattern.test(String(job.recipientEmail || "")));
+  if (invalidRecipient) {
+    throw new Error(`Invalid recipient email: ${invalidRecipient.recipientEmail}`);
+  }
+
+  if (!provider || provider.mode === "test" || provider.provider === "Mock/Test") {
+    return {
+      ok: true,
+      mode: "test",
+      results: jobs.map((job): DeliveryResult => ({
+        jobId: String(job.id),
+        recipientEmail: String(job.recipientEmail),
+        status: "sent",
+        providerMessageId: `mock-${Date.now()}-${job.id}`,
+      })),
+    };
+  }
+
+  if (!provider.smtpHost || !provider.smtpPort || !provider.smtpUsername || !provider.smtpPassword) {
+    throw new Error("Live SMTP delivery requires smtpHost, smtpPort, smtpUsername, and smtpPassword.");
+  }
+
+  const nodemailer = await import("nodemailer");
+  const transporter = nodemailer.default.createTransport({
+    host: String(provider.smtpHost),
+    port: Number(provider.smtpPort),
+    secure: Boolean(provider.secure),
+    auth: {
+      user: String(provider.smtpUsername),
+      pass: String(provider.smtpPassword),
+    },
+  });
+
+  const results: DeliveryResult[] = [];
+
+  for (const job of jobs) {
+    try {
+      const info = await transporter.sendMail({
+        from: `"${escapeHeader(String(sender.fromName || "KumbuOS"))}" <${sender.fromEmail}>`,
+        replyTo: sender.replyToEmail && emailPattern.test(String(sender.replyToEmail)) ? String(sender.replyToEmail) : undefined,
+        to: String(job.recipientEmail),
+        subject: String(job.subject || ""),
+        text: String(job.plainText || "") || htmlToText(String(job.html || "")),
+        html: String(job.html || "") || escapeHtml(String(job.plainText || "")).replace(/\n/g, "<br />"),
+        attachments: buildNodemailerAttachments(Array.isArray(job.attachments) ? job.attachments : []),
+      });
+
+      results.push({
+        jobId: String(job.id),
+        recipientEmail: String(job.recipientEmail),
+        status: "sent",
+        providerMessageId: String(info.messageId || ""),
+      });
+    } catch (error) {
+      results.push({
+        jobId: String(job.id),
+        recipientEmail: String(job.recipientEmail),
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return { ok: true, mode: "live", results };
+}
+
+function buildNodemailerAttachments(attachments: any[]) {
+  return attachments
+    .filter((attachment) => attachment?.name && (attachment.downloadUrl || attachment.embeddedDataUrl))
+    .map((attachment) => {
+      const base = {
+        filename: sanitizeAttachmentName(String(attachment.name)),
+        contentType: String(attachment.mimeType || "application/octet-stream"),
+      };
+      if (attachment.embeddedDataUrl) {
+        return {
+          ...base,
+          content: decodeDataUrl(String(attachment.embeddedDataUrl)),
+        };
+      }
+      return {
+        ...base,
+        path: String(attachment.downloadUrl),
+      };
+    });
+}
+
+function decodeDataUrl(value: string) {
+  const base64 = value.includes(",") ? value.split(",").pop() || "" : value;
+  return Buffer.from(base64, "base64");
+}
+
+function sanitizeAttachmentName(value: string) {
+  return value.replace(/[/\\?%*:|"<>]/g, "-").replace(/\s+/g, " ").trim() || "attachment";
+}
+
+function escapeHeader(value: string) {
+  return value.replace(/[\r\n"]/g, "");
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function htmlToText(value: string) {
+  return value
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[\s\S]*?<\/script>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
