@@ -416,6 +416,8 @@ export type CommunicationOutboxJob = {
     size: number;
     downloadUrl?: string;
     embeddedDataUrl?: string;
+    cid?: string;
+    inline?: boolean;
   }>;
   status: CommunicationOutboxStatus;
   attempts: number;

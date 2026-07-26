@@ -31,6 +31,8 @@ export type DeliveryJob = {
     size?: number;
     downloadUrl?: string;
     embeddedDataUrl?: string;
+    cid?: string;
+    inline?: boolean;
   }>;
 };
 
@@ -139,6 +141,8 @@ function buildNodemailerAttachments(attachments: NonNullable<DeliveryJob["attach
       const base = {
         filename: sanitizeAttachmentName(attachment.name),
         contentType: attachment.mimeType || "application/octet-stream",
+        cid: attachment.inline && attachment.cid ? attachment.cid : undefined,
+        contentDisposition: attachment.inline ? "inline" : "attachment",
       };
       if (attachment.embeddedDataUrl) {
         return {

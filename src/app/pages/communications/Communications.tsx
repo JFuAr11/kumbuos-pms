@@ -2808,6 +2808,15 @@ function materializeOutboxJobForDelivery(
     .map(assetId => scoped.assets.find(asset => asset.id === assetId))
     .filter((asset): asset is CommunicationTemplateAsset => Boolean(asset));
   const unsubscribeUrl = `${appOrigin}/unsubscribe/${encodeURIComponent(buildUnsubscribeToken(job.recipientEmail, job.campaignId))}`;
+  const inlineAttachments = inlineAssets.map((asset, index) => ({
+    name: asset.name,
+    mimeType: asset.mimeType,
+    size: asset.size,
+    downloadUrl: asset.downloadUrl,
+    embeddedDataUrl: asset.embeddedDataUrl,
+    cid: buildInlineAssetCid(asset, index, job.id),
+    inline: true,
+  }));
   const htmlVars = {
     ...getRecipientVariables(recipient || {
       id: job.recipientId,
@@ -2823,7 +2832,7 @@ function materializeOutboxJobForDelivery(
       createdAt: job.createdAt,
       updatedAt: job.updatedAt,
     }, propertyName, unsubscribeUrl, "html"),
-    ...getAttachedImageVariables(inlineAssets, "html"),
+    ...getAttachedImageVariables(inlineAttachments, "html", "cid"),
   };
   const textVars = {
     ...getRecipientVariables(recipient || {
@@ -2840,7 +2849,7 @@ function materializeOutboxJobForDelivery(
       createdAt: job.createdAt,
       updatedAt: job.updatedAt,
     }, propertyName, unsubscribeUrl, "text"),
-    ...getAttachedImageVariables(inlineAssets, "text"),
+    ...getAttachedImageVariables(inlineAttachments, "text", "url"),
   };
 
   return {
@@ -2848,13 +2857,17 @@ function materializeOutboxJobForDelivery(
     subject: renderString(template?.subject || job.subject || "", textVars),
     html: renderString(template?.html || job.html || "", htmlVars),
     plainText: renderString(template?.plainText || job.plainText || htmlToText(template?.html || job.html || ""), textVars),
-    attachments: attachmentAssets.map(asset => ({
-      name: asset.name,
-      mimeType: asset.mimeType,
-      size: asset.size,
-      downloadUrl: asset.downloadUrl,
-      embeddedDataUrl: asset.embeddedDataUrl,
-    })),
+    attachments: [
+      ...inlineAttachments,
+      ...attachmentAssets.map(asset => ({
+        name: asset.name,
+        mimeType: asset.mimeType,
+        size: asset.size,
+        downloadUrl: asset.downloadUrl,
+        embeddedDataUrl: asset.embeddedDataUrl,
+        inline: false,
+      })),
+    ],
   };
 }
 
@@ -2885,9 +2898,15 @@ function buildAttachedImageVariableNames(count: number) {
   return Array.from({ length: count }, (_, index) => `{{attached_image${index + 1}}}`);
 }
 
-function getAttachedImageVariables(assets: CommunicationTemplateAsset[], mode: "html" | "text") {
+function getAttachedImageVariables(
+  assets: Array<CommunicationTemplateAsset | (CommunicationTemplateAsset & { cid?: string; inline?: boolean })>,
+  mode: "html" | "text",
+  sourceMode: "url" | "cid" = "url",
+) {
   return Object.fromEntries(assets.map((asset, index) => {
-    const source = asset.downloadUrl || asset.embeddedDataUrl || "";
+    const source = sourceMode === "cid" && "cid" in asset && asset.cid
+      ? `cid:${asset.cid}`
+      : asset.downloadUrl || asset.embeddedDataUrl || "";
     const alt = escapeAttribute(asset.name || `Attached image ${index + 1}`);
     const value = mode === "html"
       ? source
@@ -2898,6 +2917,12 @@ function getAttachedImageVariables(assets: CommunicationTemplateAsset[], mode: "
         : `[Image: ${asset.name}]`;
     return [`attached_image${index + 1}`, value];
   }));
+}
+
+function buildInlineAssetCid(asset: CommunicationTemplateAsset, index: number, jobId: string) {
+  const basis = `${jobId || "job"}-${asset.id || asset.name || index + 1}`;
+  const safe = basis.replace(/[^a-zA-Z0-9.-]/g, "-").slice(0, 96) || `image-${index + 1}`;
+  return `${safe}@kumbuos-inline`;
 }
 
 function scoreTemplateDeliverability({

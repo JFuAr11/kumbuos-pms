@@ -277,6 +277,15 @@ function materializeCronJob(job: OutboxJob, payload: PmsPayload, campaign: Campa
     .map((assetId: string) => assets.find((asset: any) => asset.id === assetId))
     .filter(Boolean);
   const unsubscribeUrl = `${appOrigin}/unsubscribe/${encodeURIComponent(buildUnsubscribeToken(String(job.recipientEmail || ""), String(job.campaignId || campaign?.id || "")))}`;
+  const inlineAttachments = inlineAssets.map((asset: any, index: number) => ({
+    name: String(asset.name || `inline-image-${index + 1}`),
+    mimeType: String(asset.mimeType || "image/png"),
+    size: Number(asset.size || 0),
+    downloadUrl: asset.downloadUrl,
+    embeddedDataUrl: asset.embeddedDataUrl,
+    cid: buildInlineAssetCid(asset, index, job),
+    inline: true,
+  }));
   const fallbackRecipient = {
     name: job.recipientName,
     email: job.recipientEmail,
@@ -288,11 +297,11 @@ function materializeCronJob(job: OutboxJob, payload: PmsPayload, campaign: Campa
   };
   const htmlVars = {
     ...getRecipientVariables(recipient || fallbackRecipient, property?.name || "", unsubscribeUrl, "html"),
-    ...getAttachedImageVariables(inlineAssets, "html"),
+    ...getAttachedImageVariables(inlineAttachments, "html", "cid"),
   };
   const textVars = {
     ...getRecipientVariables(recipient || fallbackRecipient, property?.name || "", unsubscribeUrl, "text"),
-    ...getAttachedImageVariables(inlineAssets, "text"),
+    ...getAttachedImageVariables(inlineAttachments, "text", "url"),
   };
   const sourceHtml = String(template?.html || job.html || "");
   const sourceText = String(template?.plainText || job.plainText || htmlToText(sourceHtml));
@@ -301,13 +310,17 @@ function materializeCronJob(job: OutboxJob, payload: PmsPayload, campaign: Campa
     subject: renderString(String(template?.subject || job.subject || ""), textVars),
     html: renderString(sourceHtml, htmlVars),
     plainText: renderString(sourceText, textVars),
-    attachments: attachmentAssets.map((asset: any) => ({
-      name: String(asset.name || "attachment"),
-      mimeType: String(asset.mimeType || "application/octet-stream"),
-      size: Number(asset.size || 0),
-      downloadUrl: asset.downloadUrl,
-      embeddedDataUrl: asset.embeddedDataUrl,
-    })),
+    attachments: [
+      ...inlineAttachments,
+      ...attachmentAssets.map((asset: any) => ({
+        name: String(asset.name || "attachment"),
+        mimeType: String(asset.mimeType || "application/octet-stream"),
+        size: Number(asset.size || 0),
+        downloadUrl: asset.downloadUrl,
+        embeddedDataUrl: asset.embeddedDataUrl,
+        inline: false,
+      })),
+    ],
   };
 }
 
@@ -333,9 +346,11 @@ function getRecipientVariables(recipient: Record<string, any>, propertyName: str
   };
 }
 
-function getAttachedImageVariables(assets: any[], mode: "html" | "text") {
+function getAttachedImageVariables(assets: any[], mode: "html" | "text", sourceMode: "url" | "cid" = "url") {
   return Object.fromEntries((assets || []).map((asset, index) => {
-    const source = String(asset.downloadUrl || asset.embeddedDataUrl || "");
+    const source = sourceMode === "cid" && asset.cid
+      ? `cid:${asset.cid}`
+      : String(asset.downloadUrl || asset.embeddedDataUrl || "");
     const alt = escapeAttribute(String(asset.name || `Attached image ${index + 1}`));
     const value = mode === "html"
       ? source
@@ -346,6 +361,12 @@ function getAttachedImageVariables(assets: any[], mode: "html" | "text") {
         : `[Image: ${asset.name}]`;
     return [`attached_image${index + 1}`, value];
   }));
+}
+
+function buildInlineAssetCid(asset: Record<string, any>, index: number, job: Record<string, any>) {
+  const basis = `${job.id || "job"}-${asset.id || asset.name || index + 1}`;
+  const safe = basis.replace(/[^a-zA-Z0-9.-]/g, "-").slice(0, 96) || `image-${index + 1}`;
+  return `${safe}@kumbuos-inline`;
 }
 
 function buildUnsubscribeToken(email: string, campaignId: string) {
@@ -614,6 +635,8 @@ function buildNodemailerAttachments(attachments: any[]) {
       const base = {
         filename: sanitizeAttachmentName(String(attachment.name)),
         contentType: String(attachment.mimeType || "application/octet-stream"),
+        cid: attachment.inline && attachment.cid ? String(attachment.cid) : undefined,
+        contentDisposition: attachment.inline ? "inline" : "attachment",
       };
       if (attachment.embeddedDataUrl) {
         return {
