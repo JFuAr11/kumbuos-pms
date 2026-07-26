@@ -544,6 +544,13 @@ function getPositiveInteger(primary: string | undefined, fallback: string | unde
 }
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const normalizeReplyToEmails = (value?: unknown) => {
+  const emails = String(value || "")
+    .split(",")
+    .map((email) => email.trim())
+    .filter(Boolean);
+  return emails.length && emails.every((email) => emailPattern.test(email)) ? emails.join(", ") : undefined;
+};
 
 async function processCommunicationDelivery({
   jobs,
@@ -601,7 +608,7 @@ async function processCommunicationDelivery({
     try {
       const info = await transporter.sendMail({
         from: `"${escapeHeader(String(sender.fromName || "KumbuOS"))}" <${sender.fromEmail}>`,
-        replyTo: sender.replyToEmail && emailPattern.test(String(sender.replyToEmail)) ? String(sender.replyToEmail) : undefined,
+        replyTo: normalizeReplyToEmails(sender.replyToEmail),
         to: String(job.recipientEmail),
         subject: String(job.subject || ""),
         text: String(job.plainText || "") || htmlToText(String(job.html || "")),

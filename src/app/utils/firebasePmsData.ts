@@ -1,6 +1,7 @@
 import type {
   AccountancyEntry,
   BookingPayment,
+  CheckInSubmission,
   Client,
   CommunicationAudience,
   CommunicationCampaign,
@@ -39,6 +40,7 @@ export type PmsDataPayload = {
   notifications: NotificationAutomation[];
   notificationEmailConfigs: NotificationEmailConfig[];
   clients: Client[];
+  checkInSubmissions: CheckInSubmission[];
   rooms: Room[];
   rates: Rate[];
   rateAdjustments: RateAdjustment[];
@@ -171,6 +173,7 @@ function normalizePayload(data: Partial<PmsDataPayload>): PmsDataPayload {
     notifications: data.notifications || [],
     notificationEmailConfigs: data.notificationEmailConfigs || [],
     clients: data.clients || [],
+    checkInSubmissions: data.checkInSubmissions || [],
     rooms: data.rooms || [],
     rates: data.rates || [],
     rateAdjustments: data.rateAdjustments || [],

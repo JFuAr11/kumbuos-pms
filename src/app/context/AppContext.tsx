@@ -507,6 +507,32 @@ export type Client = {
   marketingOptIn: boolean;
 };
 
+export type CheckInSubmission = {
+  id: string;
+  uuid: string;
+  propertyId: string;
+  fullName: string;
+  countryOfNationality: string;
+  documentType: 'Passport' | 'National ID' | "Driver's License" | 'Other';
+  documentNumber: string;
+  dateOfBirth: string;
+  permanentAddress: string;
+  emailAddress: string;
+  marketingConsentText: string;
+  unsubscribeText: string;
+  privacyPolicyText: string;
+  marketingConsent: boolean;
+  marketingConsentAgree: 'Agree' | 'Not agreed';
+  guestSignatureName?: string;
+  guestSignatureUrl: string;
+  validationStatus: 'Valid' | 'Needs Review';
+  notes: string;
+  status: 'Submitted' | 'Reviewed' | 'Archived';
+  submittedBy: string;
+  submissionTime: string;
+  version: string;
+};
+
 export type Room = {
   id: string;
   propertyId: string;
@@ -748,6 +774,9 @@ type AppContextType = {
   addClient: (c: Client) => void;
   updateClient: (id: string, c: Partial<Client>) => void;
   deleteClient: (id: string) => void;
+  checkInSubmissions: CheckInSubmission[];
+  addCheckInSubmission: (submission: CheckInSubmission) => void;
+  updateCheckInSubmission: (id: string, submission: Partial<CheckInSubmission>) => void;
 
   rooms: Room[];
   addRoom: (r: Room) => void;
@@ -903,7 +932,7 @@ const initialNotifications: NotificationAutomation[] = [];
 
 const initialCommunicationHelpTooltips: CommunicationHelpTooltip[] = [
   { id: 'help-from-email', fieldKey: 'fromEmail', title: 'From Email', body: 'Email address that recipients will see as the sender. Use a mailbox controlled by this company or property.', example: 'reservations@hotel.com', warning: 'Do not use public or unverified addresses for live campaigns.' },
-  { id: 'help-reply-to', fieldKey: 'replyToEmail', title: 'Reply-To', body: 'Mailbox where guest replies should arrive. It can be different from the technical sending mailbox.', example: 'guestrelations@hotel.com' },
+  { id: 'help-reply-to', fieldKey: 'replyToEmail', title: 'Reply-To', body: 'Mailbox or mailboxes where guest replies should arrive. Use one email or several valid emails separated by commas.', example: 'guestrelations@hotel.com, reservations@hotel.com' },
   { id: 'help-provider', fieldKey: 'provider', title: 'Provider', body: 'Email sending method used by this property. Mock/Test records delivery without sending real emails; SMTP uses the configured mailbox.', example: 'Mock/Test for testing, SMTP for live sending.' },
   { id: 'help-api-key', fieldKey: 'apiKey', title: 'API Key', body: 'Secret token supplied by an email provider. This first version stores SMTP credentials through the secure server bridge and keeps API provider support ready for later.', warning: 'Never paste provider secrets in campaign copy or templates.' },
   { id: 'help-spf', fieldKey: 'spf', title: 'SPF', body: 'DNS TXT record authorizing a mail server to send emails for your domain.', example: 'v=spf1 include:zoho.eu ~all' },
@@ -1131,6 +1160,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const applyingRemotePmsData = useRef(false);
 
   const [clients, setClients] = usePersistentState<Client[]>('pms-clients', []);
+  const [checkInSubmissions, setCheckInSubmissions] = usePersistentState<CheckInSubmission[]>('pms-check-in-submissions', []);
 
   const [rooms, setRooms] = usePersistentState<Room[]>('pms-rooms', []);
 
@@ -1303,6 +1333,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setNotifications(payload.notifications);
       setNotificationEmailConfigs(payload.notificationEmailConfigs);
       setClients(payload.clients);
+      setCheckInSubmissions(payload.checkInSubmissions);
       setRooms(payload.rooms);
       setRates(payload.rates);
       setRateAdjustments(payload.rateAdjustments);
@@ -1343,6 +1374,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setNotifications,
     setNotificationEmailConfigs,
     setClients,
+    setCheckInSubmissions,
     setRooms,
     setRates,
     setRateAdjustments,
@@ -1380,6 +1412,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       notifications,
       notificationEmailConfigs,
       clients,
+      checkInSubmissions,
       rooms,
       rates,
       rateAdjustments,
@@ -1423,6 +1456,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     notifications,
     notificationEmailConfigs,
     clients,
+    checkInSubmissions,
     rooms,
     rates,
     rateAdjustments,
@@ -1791,6 +1825,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const deleteClient = (id: string) =>
     setClients(current => current.filter(c => c.id !== id));
 
+  const addCheckInSubmission = (submission: CheckInSubmission) =>
+    setCheckInSubmissions(current => [submission, ...current]);
+  const updateCheckInSubmission = (id: string, updates: Partial<CheckInSubmission>) =>
+    setCheckInSubmissions(current => current.map(submission => submission.id === id ? { ...submission, ...updates } : submission));
+
   const addRoom = (r: Room) => setRooms(current => [...current, r]);
   const updateRoom = (id: string, updates: Partial<Room>) =>
     setRooms(current => current.map(r => r.id === id ? { ...r, ...updates } : r));
@@ -2122,6 +2161,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       notifications, addNotification, updateNotification, deleteNotification,
       notificationEmailConfigs, addNotificationEmailConfig, updateNotificationEmailConfig, deleteNotificationEmailConfig,
       clients, addClient, updateClient, deleteClient,
+      checkInSubmissions, addCheckInSubmission, updateCheckInSubmission,
       rooms, addRoom, updateRoom, deleteRoom,
       rates, addRate, updateRate, deleteRate,
       rateAdjustments, addRateAdjustment, updateRateAdjustment, deleteRateAdjustment,

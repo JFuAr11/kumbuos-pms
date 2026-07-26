@@ -36,6 +36,7 @@ import { Input } from "../../components/ui/input";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
 import {
   Client,
+  CheckInSubmission,
   CommunicationAudience,
   CommunicationCampaign,
   CommunicationCampaignType,
@@ -138,6 +139,7 @@ export function Communications() {
     selectedCompanyId,
     selectedPropertyId,
     clients,
+    checkInSubmissions,
     reservations,
     communicationSenders,
     addCommunicationSender,
@@ -255,6 +257,7 @@ export function Communications() {
     selectedCompanyId,
     selectedPropertyId,
     clients,
+    checkInSubmissions,
     reservations,
     canEdit,
     scoped,
@@ -401,6 +404,7 @@ type SharedProps = {
   selectedCompanyId: string;
   selectedPropertyId: string;
   clients: Client[];
+  checkInSubmissions: CheckInSubmission[];
   reservations: Reservation[];
   canEdit: boolean;
   scoped: ScopedData;
@@ -502,7 +506,7 @@ function SendersSection({
     const errors = [];
     if (!form.fromName) errors.push("From name is required.");
     if (!isValidEmail(form.fromEmail)) errors.push("From email must be valid.");
-    if (form.replyToEmail && !isValidEmail(form.replyToEmail)) errors.push("Reply-to email must be valid.");
+    if (form.replyToEmail && !isValidEmailList(form.replyToEmail)) errors.push("Reply-to email must contain valid email addresses separated by commas.");
     if (errors.length) {
       setError(errors.join(" "));
       return;
@@ -532,7 +536,7 @@ function SendersSection({
         <div className="space-y-4">
           <Field label="From Name" info={helpFor("fromEmail")} value={form.fromName || ""} onChange={value => setForm({ ...form, fromName: value })} placeholder="Kumbukumbu Reservations" />
           <Field label="From Email" info={helpFor("fromEmail")} value={form.fromEmail || ""} onChange={value => setForm({ ...form, fromEmail: value })} placeholder="reservations@hotel.com" />
-          <Field label="Reply-To Email" info={helpFor("replyToEmail")} value={form.replyToEmail || ""} onChange={value => setForm({ ...form, replyToEmail: value })} placeholder="guestrelations@hotel.com" />
+          <Field label="Reply-To Email(s)" info={helpFor("replyToEmail")} value={form.replyToEmail || ""} onChange={value => setForm({ ...form, replyToEmail: value })} placeholder="guestrelations@hotel.com, reservations@hotel.com" />
           <SelectField label="Provider" info={helpFor("provider")} value={form.providerAccountId || ""} onChange={value => setForm({ ...form, providerAccountId: value })} options={[{ value: "", label: "No provider / use default" }, ...scoped.providers.map(provider => ({ value: provider.id, label: `${provider.name} (${provider.provider} - ${provider.mode})` }))]} />
           <SelectField label="Status" value={form.status || "Active"} onChange={value => setForm({ ...form, status: value as CommunicationStatus })} options={statusOptions.map(value => ({ value, label: value }))} />
           <label className="flex items-center gap-2 rounded-md border border-border p-3 text-sm">
@@ -710,6 +714,7 @@ function RecipientsSection({
   selectedPropertyId,
   scoped,
   clients,
+  checkInSubmissions,
   reservations,
   helpFor,
   meta,
@@ -723,6 +728,7 @@ function RecipientsSection({
   deleteCommunicationAudience,
 }: SharedProps & {
   clients: Client[];
+  checkInSubmissions: CheckInSubmission[];
   reservations: { id: string; propertyId: string; clientId: string; checkIn: string; checkOut: string; status: string }[];
   addCommunicationRecipient: (recipient: CommunicationRecipient) => void;
   updateCommunicationRecipient: (id: string, recipient: Partial<CommunicationRecipient>) => void;
@@ -903,6 +909,9 @@ function RecipientsSection({
         const email = emailValue.trim().toLowerCase();
         if (!isValidEmail(email) || seen.has(email)) return;
         seen.add(email);
+        const checkInSubmission = findCheckInSubmissionForClient(client, email, checkInSubmissions, selectedPropertyId);
+        const dateOfBirth = checkInSubmission?.dateOfBirth || client.dateOfBirth || "";
+        const marketingOptIn = checkInSubmission?.marketingConsent ?? client.marketingOptIn;
         recipients.push({
           ...meta(),
           id: `comm-recipient-client-${Date.now()}-${index}-${recipients.length}`,
@@ -915,9 +924,9 @@ function RecipientsSection({
           reservationCode: reservation.id,
           checkinDate: reservation.checkIn,
           checkoutDate: reservation.checkOut,
-          dateOfBirth: client.dateOfBirth || "",
+          dateOfBirth,
           clientCategory: client.category,
-          marketingOptIn: client.marketingOptIn,
+          marketingOptIn,
           valid: true,
           suppressed: scoped.suppressions.some(item => item.email.toLowerCase() === email),
           variables: {
@@ -925,12 +934,12 @@ function RecipientsSection({
             email,
             client_id: client.id,
             client_category: client.category || "",
-            marketing_opt_in: client.marketingOptIn ? "true" : "false",
+            marketing_opt_in: marketingOptIn ? "true" : "false",
             reservation_code: reservation.id,
             checkin_date: reservation.checkIn,
             checkout_date: reservation.checkOut,
-            date_of_birth: client.dateOfBirth || "",
-            birthday_month_day: getMonthDay(client.dateOfBirth || ""),
+            date_of_birth: dateOfBirth,
+            birthday_month_day: getMonthDay(dateOfBirth),
           },
         });
       });
@@ -1622,6 +1631,7 @@ function CampaignsSection({
   currentUserId,
   selectedPropertyId,
   clients,
+  checkInSubmissions,
   reservations,
   helpFor,
   meta,
@@ -1712,7 +1722,7 @@ function CampaignsSection({
 
   const runPreflight = () => {
     const selectedRecipients = form.recipientScope === "All PMS Reservation Clients"
-      ? buildPmsReservationRecipients(clients, reservations, selectedPropertyId, scoped.suppressions, meta(), "preview")
+      ? buildPmsReservationRecipients(clients, checkInSubmissions, reservations, selectedPropertyId, scoped.suppressions, meta(), "preview")
       : undefined;
     const result = preflightCampaign({
       sender,
@@ -1724,6 +1734,7 @@ function CampaignsSection({
       selectedRecipients,
       suppressions: scoped.suppressions,
       clients,
+      checkInSubmissions,
       reservations,
       type: form.type,
       scheduleMode: form.scheduleMode,
@@ -2155,11 +2166,14 @@ function CampaignsSection({
 
 function CampaignCalendarSection({ scoped }: SharedProps) {
   const [month, setMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [calendarStatus, setCalendarStatus] = useState("queued");
   const [selectedDay, setSelectedDay] = useState("");
   const [daySearch, setDaySearch] = useState("");
   const [dayStatus, setDayStatus] = useState("All");
+  const calendarStatuses = ["All", "pending", "queued", "sending", "sent", "delivered", "failed", "suppressed", "cancelled"];
   const monthJobs = scoped.outbox
     .filter(job => (job.scheduledFor || "").slice(0, 7) === month)
+    .filter(job => calendarStatus === "All" || job.status === calendarStatus)
     .sort((left, right) => String(left.scheduledFor).localeCompare(String(right.scheduledFor)));
   const grouped = monthJobs.reduce<Record<string, CommunicationOutboxJob[]>>((acc, job) => {
     const key = (job.scheduledFor || "").slice(0, 10) || "Unscheduled";
@@ -2172,13 +2186,13 @@ function CampaignCalendarSection({ scoped }: SharedProps) {
     const haystack = `${campaignName} ${job.recipientName} ${job.recipientEmail} ${job.status} ${job.subject}`.toLowerCase();
     return (dayStatus === "All" || job.status === dayStatus) && (!daySearch.trim() || haystack.includes(daySearch.trim().toLowerCase()));
   });
-  const calendarStatuses = ["All", "pending", "queued", "sending", "sent", "delivered", "failed", "suppressed", "cancelled"];
 
   return (
     <div className="space-y-5">
       <Panel title="Scheduled Campaign Calendar" icon={CalendarDays}>
-        <div className="mb-4 max-w-xs">
+        <div className="mb-4 grid gap-3 md:grid-cols-[260px_220px]">
           <Field label="Month" type="month" value={month} onChange={setMonth} />
+          <SelectField label="Status" value={calendarStatus} onChange={setCalendarStatus} options={calendarStatuses.map(status => ({ value: status, label: status }))} />
         </div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {daysInMonth.map(day => {
@@ -2214,7 +2228,7 @@ function CampaignCalendarSection({ scoped }: SharedProps) {
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wider text-primary">Scheduled Campaign Calendar</p>
                 <h3 className="text-xl font-semibold">{selectedDay} Jobs</h3>
-                <p className="text-sm text-muted-foreground">{(grouped[selectedDay] || []).length} total jobs scheduled for this day.</p>
+                <p className="text-sm text-muted-foreground">{(grouped[selectedDay] || []).length} total jobs scheduled for this day with calendar status filter "{calendarStatus}".</p>
               </div>
               <Button variant="outline" size="sm" onClick={() => setSelectedDay("")}><Minimize2 className="mr-2 h-4 w-4" />Minimize</Button>
             </div>
@@ -2329,7 +2343,7 @@ function OutboxSection({
   const filtered = scoped.outbox.filter(job =>
     (campaignId === "All" || job.campaignId === campaignId) &&
     (status === "All" || job.status === status)
-  );
+  ).sort(compareOutboxJobsBySchedule);
   const processNextBatch = async () => {
     setProcessing("");
     const campaign = scoped.campaigns.find(item => item.id === (campaignId === "All" ? filtered[0]?.campaignId : campaignId));
@@ -2472,6 +2486,21 @@ function OutboxSection({
       </div>
     </Panel>
   );
+}
+
+function compareOutboxJobsBySchedule(left: CommunicationOutboxJob, right: CommunicationOutboxJob) {
+  const leftTime = Date.parse(left.scheduledFor || left.updatedAt || left.createdAt || "");
+  const rightTime = Date.parse(right.scheduledFor || right.updatedAt || right.createdAt || "");
+  const safeLeft = Number.isNaN(leftTime) ? 0 : leftTime;
+  const safeRight = Number.isNaN(rightTime) ? 0 : rightTime;
+
+  if (left.status === "queued" && right.status === "queued") {
+    return safeLeft - safeRight;
+  }
+  if (left.status !== "queued" && right.status !== "queued") {
+    return safeRight - safeLeft;
+  }
+  return left.status === "queued" ? -1 : 1;
 }
 
 function LogsSection({ scoped }: SharedProps) {
@@ -2698,6 +2727,14 @@ function getSection(pathname: string): SectionKey {
 
 function isValidEmail(value?: string) {
   return Boolean(value && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value));
+}
+
+function isValidEmailList(value?: string) {
+  const emails = String(value || "")
+    .split(",")
+    .map(email => email.trim())
+    .filter(Boolean);
+  return Boolean(emails.length && emails.every(isValidEmail));
 }
 
 function findColumn(columns: string[], candidates: string[]) {
@@ -2987,6 +3024,7 @@ function preflightCampaign({
   selectedRecipients,
   suppressions,
   clients,
+  checkInSubmissions,
   reservations,
   type,
   scheduleMode,
@@ -3001,6 +3039,7 @@ function preflightCampaign({
   selectedRecipients?: CommunicationRecipient[];
   suppressions: CommunicationSuppression[];
   clients: Client[];
+  checkInSubmissions: CheckInSubmission[];
   reservations: Reservation[];
   type: CommunicationCampaignType;
   scheduleMode: CommunicationScheduleMode;
@@ -3048,15 +3087,15 @@ function preflightCampaign({
   }
   if (type === "Marketing" || scheduleMode === "Birthday") {
     const beforeConsent = finalRecipients.length;
-    finalRecipients = finalRecipients.filter(recipient => hasMarketingConsent(recipient, clients, reservations));
+    finalRecipients = finalRecipients.filter(recipient => hasMarketingConsent(recipient, clients, checkInSubmissions, reservations));
     const removed = beforeConsent - finalRecipients.length;
     if (removed > 0) warnings.push(`${removed} recipient${removed === 1 ? "" : "s"} excluded because Marketing campaigns require guest communication consent.`);
   }
   if (scheduleMode === "Birthday") {
     const beforeBirthday = finalRecipients.length;
-    finalRecipients = finalRecipients.filter(recipient => hasRecipientBirthDate(recipient, clients, reservations));
+    finalRecipients = finalRecipients.filter(recipient => hasRecipientBirthDate(recipient, clients, checkInSubmissions, reservations));
     finalRecipients = finalRecipients.map(recipient => {
-      const dateOfBirth = getRecipientBirthDate(recipient, clients, reservations);
+      const dateOfBirth = getRecipientBirthDate(recipient, clients, checkInSubmissions, reservations);
       return {
         ...recipient,
         dateOfBirth,
@@ -3085,6 +3124,7 @@ function preflightCampaign({
 
 function buildPmsReservationRecipients(
   clients: Client[],
+  checkInSubmissions: CheckInSubmission[],
   reservations: Reservation[],
   selectedPropertyId: string,
   suppressions: CommunicationSuppression[],
@@ -3104,6 +3144,9 @@ function buildPmsReservationRecipients(
         const email = emailValue.trim().toLowerCase();
         if (!isValidEmail(email) || seen.has(email)) return;
         seen.add(email);
+        const checkInSubmission = findCheckInSubmissionForClient(client, email, checkInSubmissions, selectedPropertyId);
+        const dateOfBirth = checkInSubmission?.dateOfBirth || client?.dateOfBirth || "";
+        const marketingOptIn = checkInSubmission?.marketingConsent ?? Boolean(client?.marketingOptIn);
         output.push({
           ...baseMeta,
           id: `comm-recipient-${idSeed}-${reservationIndex}-${output.length}`,
@@ -3114,9 +3157,9 @@ function buildPmsReservationRecipients(
           reservationCode: reservation.id,
           checkinDate: reservation.checkIn,
           checkoutDate: reservation.checkOut,
-          dateOfBirth: client?.dateOfBirth || "",
+          dateOfBirth,
           clientCategory: client?.category,
-          marketingOptIn: Boolean(client?.marketingOptIn),
+          marketingOptIn,
           valid: true,
           suppressed: activeSuppressions.has(email),
           variables: {
@@ -3124,12 +3167,12 @@ function buildPmsReservationRecipients(
             email,
             client_id: client?.id || "",
             client_category: client?.category || "",
-            marketing_opt_in: client?.marketingOptIn ? "true" : "false",
+            marketing_opt_in: marketingOptIn ? "true" : "false",
             reservation_code: reservation.id,
             checkin_date: reservation.checkIn,
             checkout_date: reservation.checkOut,
-            date_of_birth: client?.dateOfBirth || "",
-            birthday_month_day: getMonthDay(client?.dateOfBirth || ""),
+            date_of_birth: dateOfBirth,
+            birthday_month_day: getMonthDay(dateOfBirth),
           },
         });
       });
@@ -3137,42 +3180,66 @@ function buildPmsReservationRecipients(
   return output;
 }
 
-function hasMarketingConsent(recipient: CommunicationRecipient, clients: Client[], reservations: Reservation[]) {
+function findCheckInSubmissionForClient(client: Client | undefined, email: string, checkInSubmissions: CheckInSubmission[] = [], propertyId?: string) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const normalizedName = normalizeLookupValue(client?.name || "");
+  return checkInSubmissions
+    .filter(submission => !propertyId || submission.propertyId === propertyId)
+    .sort((left, right) => String(right.submissionTime).localeCompare(String(left.submissionTime)))
+    .find(submission =>
+      submission.emailAddress.trim().toLowerCase() === normalizedEmail ||
+      (normalizedName && normalizeLookupValue(submission.fullName) === normalizedName)
+    );
+}
+
+function findSourceClientForRecipient(recipient: CommunicationRecipient, clients: Client[], reservations: Reservation[]) {
+  const sourceReservation = recipient.source === "Reservation" && recipient.sourceId
+    ? reservations.find(reservation => reservation.id === recipient.sourceId)
+    : undefined;
+  return sourceReservation
+    ? clients.find(client => client.id === sourceReservation.clientId)
+    : clients.find(client =>
+      client.id === recipient.sourceId ||
+      client.email.toLowerCase() === recipient.email.toLowerCase() ||
+      (client.emails || []).some(email => email.toLowerCase() === recipient.email.toLowerCase())
+    );
+}
+
+function findCheckInSubmissionForRecipient(
+  recipient: CommunicationRecipient,
+  clients: Client[] = [],
+  checkInSubmissions: CheckInSubmission[] = [],
+  reservations: Reservation[] = [],
+) {
+  const sourceClient = findSourceClientForRecipient(recipient, clients, reservations);
+  return findCheckInSubmissionForClient(sourceClient, recipient.email, checkInSubmissions, recipient.propertyId);
+}
+
+function normalizeLookupValue(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function hasMarketingConsent(recipient: CommunicationRecipient, clients: Client[], checkInSubmissions: CheckInSubmission[], reservations: Reservation[]) {
+  const checkInSubmission = findCheckInSubmissionForRecipient(recipient, clients, checkInSubmissions, reservations);
+  if (checkInSubmission) return checkInSubmission.marketingConsent;
   if (recipient.marketingOptIn) return true;
   const rawConsent = String(recipient.variables?.marketing_opt_in || recipient.variables?.marketingOptIn || "").toLowerCase();
   if (["true", "yes", "1", "accepted", "consented"].includes(rawConsent)) return true;
 
-  const sourceReservation = recipient.source === "Reservation" && recipient.sourceId
-    ? reservations.find(reservation => reservation.id === recipient.sourceId)
-    : undefined;
-  const sourceClient = sourceReservation
-    ? clients.find(client => client.id === sourceReservation.clientId)
-    : clients.find(client =>
-      client.id === recipient.sourceId ||
-      client.email.toLowerCase() === recipient.email.toLowerCase() ||
-      (client.emails || []).some(email => email.toLowerCase() === recipient.email.toLowerCase())
-    );
-
+  const sourceClient = findSourceClientForRecipient(recipient, clients, reservations);
   return Boolean(sourceClient?.marketingOptIn);
 }
 
-function hasRecipientBirthDate(recipient: CommunicationRecipient, clients: Client[] = [], reservations: Reservation[] = []) {
-  return Boolean(getRecipientBirthDate(recipient, clients, reservations));
+function hasRecipientBirthDate(recipient: CommunicationRecipient, clients: Client[] = [], checkInSubmissions: CheckInSubmission[] = [], reservations: Reservation[] = []) {
+  return Boolean(getRecipientBirthDate(recipient, clients, checkInSubmissions, reservations));
 }
 
-function getRecipientBirthDate(recipient: CommunicationRecipient, clients: Client[] = [], reservations: Reservation[] = []) {
+function getRecipientBirthDate(recipient: CommunicationRecipient, clients: Client[] = [], checkInSubmissions: CheckInSubmission[] = [], reservations: Reservation[] = []) {
+  const checkInSubmission = findCheckInSubmissionForRecipient(recipient, clients, checkInSubmissions, reservations);
+  if (checkInSubmission?.dateOfBirth) return checkInSubmission.dateOfBirth;
   const ownValue = recipient.dateOfBirth || recipient.variables?.date_of_birth || recipient.variables?.dateOfBirth || "";
   if (ownValue) return ownValue;
-  const sourceReservation = recipient.source === "Reservation" && recipient.sourceId
-    ? reservations.find(reservation => reservation.id === recipient.sourceId)
-    : undefined;
-  const sourceClient = sourceReservation
-    ? clients.find(client => client.id === sourceReservation.clientId)
-    : clients.find(client =>
-      client.id === recipient.sourceId ||
-      client.email.toLowerCase() === recipient.email.toLowerCase() ||
-      (client.emails || []).some(email => email.toLowerCase() === recipient.email.toLowerCase())
-    );
+  const sourceClient = findSourceClientForRecipient(recipient, clients, reservations);
   return sourceClient?.dateOfBirth || "";
 }
 

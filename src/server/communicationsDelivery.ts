@@ -45,6 +45,13 @@ export type DeliveryResult = {
 };
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const normalizeReplyToEmails = (value?: string) => {
+  const emails = String(value || "")
+    .split(",")
+    .map((email) => email.trim())
+    .filter(Boolean);
+  return emails.length && emails.every((email) => emailPattern.test(email)) ? emails.join(", ") : undefined;
+};
 
 export async function processCommunicationDelivery({
   jobs,
@@ -102,7 +109,7 @@ export async function processCommunicationDelivery({
     try {
       const info = await transporter.sendMail({
         from: `"${escapeHeader(sender.fromName || "KumbuOS")}" <${sender.fromEmail}>`,
-        replyTo: sender.replyToEmail && emailPattern.test(sender.replyToEmail) ? sender.replyToEmail : undefined,
+        replyTo: normalizeReplyToEmails(sender.replyToEmail),
         to: job.recipientEmail,
         subject: job.subject,
         text: job.plainText || htmlToText(job.html),
