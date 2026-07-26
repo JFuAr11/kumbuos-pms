@@ -134,7 +134,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
 
       try {
-        const delivery = await processCommunicationDelivery({ jobs: deliverableJobs as any, sender: sender || {}, provider: provider || null });
+        const deliveryJobs = deliverableJobs.map((job) => materializeCronJob(job, payload, campaign, getRequestBaseUrl(req)));
+        const delivery = await processCommunicationDelivery({ jobs: deliveryJobs as any, sender: sender || {}, provider: provider || null });
         delivery.results.forEach((result) => {
           const job = deliverableJobs.find((item) => item.id === result.jobId);
           if (!job) return;
@@ -222,6 +223,98 @@ function getRequestBaseUrl(req: VercelRequest) {
   const protocol = forwardedProto || (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
   return `${protocol}://${host}`;
 }
+
+function materializeCronJob(job: OutboxJob, payload: PmsPayload, campaign: Campaign | undefined, appOrigin: string): OutboxJob {
+  const template = (payload.communicationTemplates || []).find((item: any) => item.id === job.templateId);
+  const recipient = (payload.communicationRecipients || []).find((item: any) => item.id === job.recipientId);
+  const property = (payload.properties || []).find((item: any) => item.id === job.propertyId);
+  const assets = payload.communicationTemplateAssets || [];
+  const inlineAssets = (template?.assetIds || [])
+    .map((assetId: string) => assets.find((asset: any) => asset.id === assetId))
+    .filter(Boolean);
+  const attachmentAssets = (template?.attachmentIds || job.attachmentIds || [])
+    .map((assetId: string) => assets.find((asset: any) => asset.id === assetId))
+    .filter(Boolean);
+  const unsubscribeUrl = `${appOrigin}/unsubscribe/${encodeURIComponent(buildUnsubscribeToken(String(job.recipientEmail || ""), String(job.campaignId || campaign?.id || "")))}`;
+  const fallbackRecipient = {
+    name: job.recipientName,
+    email: job.recipientEmail,
+    reservationCode: "",
+    checkinDate: "",
+    checkoutDate: "",
+    dateOfBirth: "",
+    variables: {},
+  };
+  const htmlVars = {
+    ...getRecipientVariables(recipient || fallbackRecipient, property?.name || "", unsubscribeUrl, "html"),
+    ...getAttachedImageVariables(inlineAssets, "html"),
+  };
+  const textVars = {
+    ...getRecipientVariables(recipient || fallbackRecipient, property?.name || "", unsubscribeUrl, "text"),
+    ...getAttachedImageVariables(inlineAssets, "text"),
+  };
+  const sourceHtml = String(template?.html || job.html || "");
+  const sourceText = String(template?.plainText || job.plainText || htmlToText(sourceHtml));
+  return {
+    ...job,
+    subject: renderString(String(template?.subject || job.subject || ""), textVars),
+    html: renderString(sourceHtml, htmlVars),
+    plainText: renderString(sourceText, textVars),
+    attachments: attachmentAssets.map((asset: any) => ({
+      name: String(asset.name || "attachment"),
+      mimeType: String(asset.mimeType || "application/octet-stream"),
+      size: Number(asset.size || 0),
+      downloadUrl: asset.downloadUrl,
+      embeddedDataUrl: asset.embeddedDataUrl,
+    })),
+  };
+}
+
+function renderString(value: string, variablesMap: Record<string, string>) {
+  return String(value || "").replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (_, key) => variablesMap[key] ?? "");
+}
+
+function getRecipientVariables(recipient: Record<string, any>, propertyName: string, unsubscribeUrl: string, mode: "html" | "text") {
+  const unsubscribeValue = mode === "html"
+    ? `<a href="${escapeAttribute(unsubscribeUrl)}" target="_blank" rel="noopener noreferrer">Click here to unsubscribe communications</a>`
+    : `Click here to unsubscribe communications: ${unsubscribeUrl}`;
+  return {
+    ...(recipient.variables || {}),
+    name: String(recipient.name || ""),
+    email: String(recipient.email || ""),
+    hotel_name: propertyName,
+    property_name: propertyName,
+    reservation_code: String(recipient.reservationCode || ""),
+    checkin_date: String(recipient.checkinDate || ""),
+    checkout_date: String(recipient.checkoutDate || ""),
+    date_of_birth: String(recipient.dateOfBirth || ""),
+    unsubscribe_url: unsubscribeValue,
+  };
+}
+
+function getAttachedImageVariables(assets: any[], mode: "html" | "text") {
+  return Object.fromEntries((assets || []).map((asset, index) => {
+    const source = String(asset.downloadUrl || asset.embeddedDataUrl || "");
+    const alt = escapeAttribute(String(asset.name || `Attached image ${index + 1}`));
+    const value = mode === "html"
+      ? source
+        ? `<img src="${escapeAttribute(source)}" alt="${alt}" style="max-width:100%;height:auto;display:block;border:0;" />`
+        : ""
+      : source
+        ? `[Image: ${asset.name}] ${source}`
+        : `[Image: ${asset.name}]`;
+    return [`attached_image${index + 1}`, value];
+  }));
+}
+
+function buildUnsubscribeToken(email: string, campaignId: string) {
+  return Buffer.from(`${email}|${campaignId}|${Date.now()}`).toString("base64url");
+}
+
+function escapeAttribute(value: string) {
+  return escapeHtml(value).replace(/`/g, "&#96;");
+}
+
 function isAuthorized(req: VercelRequest) {
   const secret = process.env.CRON_SECRET || "";
   if (!secret) return true;

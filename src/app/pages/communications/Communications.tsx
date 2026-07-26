@@ -1766,14 +1766,7 @@ function CampaignsSection({
   }) => {
     recipients.forEach((recipient, index) => {
       const unsubscribeUrl = `${window.location.origin}/unsubscribe/${encodeURIComponent(buildUnsubscribeToken(recipient.email, campaignId))}`;
-      const htmlVars = {
-        ...getRecipientVariables(recipient, activeProperty?.name || "", unsubscribeUrl, "html"),
-        ...getAttachedImageVariables(templateAssets, "html"),
-      };
-      const textVars = {
-        ...getRecipientVariables(recipient, activeProperty?.name || "", unsubscribeUrl, "text"),
-        ...getAttachedImageVariables(templateAssets, "text"),
-      };
+      const subjectVars = getRecipientVariables(recipient, activeProperty?.name || "", unsubscribeUrl, "text");
       const firstScheduledFor = resolveCampaignScheduleForRecipient(recipient, index, rule, {
         scheduleMode: form.scheduleMode,
         scheduledAt: form.scheduledAt,
@@ -1796,17 +1789,11 @@ function CampaignsSection({
           senderId: sender.id,
           templateId: template.id,
           providerAccountId: provider?.id,
-          subject: renderString(template.subject, htmlVars),
-          html: renderString(template.html, htmlVars),
-          plainText: renderString(template.plainText, textVars),
+          subject: renderString(template.subject, subjectVars),
+          html: "",
+          plainText: "",
           attachmentIds: templateAttachments.map(asset => asset.id),
-          attachments: templateAttachments.map(asset => ({
-            name: asset.name,
-            mimeType: asset.mimeType,
-            size: asset.size,
-            downloadUrl: asset.downloadUrl,
-            embeddedDataUrl: asset.embeddedDataUrl,
-          })),
+          attachments: [],
           status: requiresApproval ? "pending" : "queued",
           attempts: 0,
           maxRetries: rule.maxRetries,
@@ -2324,6 +2311,7 @@ function JourneyBuilderSection({ scoped }: SharedProps) {
 function OutboxSection({
   canEdit,
   scoped,
+  activeProperty,
   updateCommunicationOutboxJob,
   deleteCommunicationOutboxJob,
   updateCommunicationCampaign,
@@ -2381,10 +2369,11 @@ function OutboxSection({
     const provider = scoped.providers.find(item => item.id === jobs[0].providerAccountId);
     try {
       jobs.forEach(job => updateCommunicationOutboxJob(job.id, { status: "sending", attempts: job.attempts + 1, updatedAt: new Date().toISOString() }));
+      const deliveryJobs = jobs.map(job => materializeOutboxJobForDelivery(job, scoped, activeProperty?.name || "", window.location.origin));
       const response = await fetch("/api/communications-process-queue", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jobs, sender, provider }),
+        body: JSON.stringify({ jobs: deliveryJobs, sender, provider }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok || !payload?.ok) throw new Error(payload?.error || "Queue processing failed.");
@@ -2802,6 +2791,71 @@ function renderTemplate(html: string, recipient?: CommunicationRecipient, proper
     ...getRecipientVariables(recipient, propertyName, "#unsubscribe", "html"),
     ...getAttachedImageVariables(assets, "html"),
   });
+}
+
+function materializeOutboxJobForDelivery(
+  job: CommunicationOutboxJob,
+  scoped: ScopedData,
+  propertyName: string,
+  appOrigin: string,
+): CommunicationOutboxJob {
+  const template = scoped.templates.find(item => item.id === job.templateId);
+  const recipient = scoped.recipients.find(item => item.id === job.recipientId);
+  const inlineAssets = (template?.assetIds || [])
+    .map(assetId => scoped.assets.find(asset => asset.id === assetId))
+    .filter((asset): asset is CommunicationTemplateAsset => Boolean(asset));
+  const attachmentAssets = (template?.attachmentIds || job.attachmentIds || [])
+    .map(assetId => scoped.assets.find(asset => asset.id === assetId))
+    .filter((asset): asset is CommunicationTemplateAsset => Boolean(asset));
+  const unsubscribeUrl = `${appOrigin}/unsubscribe/${encodeURIComponent(buildUnsubscribeToken(job.recipientEmail, job.campaignId))}`;
+  const htmlVars = {
+    ...getRecipientVariables(recipient || {
+      id: job.recipientId,
+      companyId: job.companyId,
+      propertyId: job.propertyId,
+      source: "Manual",
+      name: job.recipientName,
+      email: job.recipientEmail,
+      valid: true,
+      status: "Active",
+      createdBy: job.createdBy,
+      updatedBy: job.updatedBy,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+    }, propertyName, unsubscribeUrl, "html"),
+    ...getAttachedImageVariables(inlineAssets, "html"),
+  };
+  const textVars = {
+    ...getRecipientVariables(recipient || {
+      id: job.recipientId,
+      companyId: job.companyId,
+      propertyId: job.propertyId,
+      source: "Manual",
+      name: job.recipientName,
+      email: job.recipientEmail,
+      valid: true,
+      status: "Active",
+      createdBy: job.createdBy,
+      updatedBy: job.updatedBy,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+    }, propertyName, unsubscribeUrl, "text"),
+    ...getAttachedImageVariables(inlineAssets, "text"),
+  };
+
+  return {
+    ...job,
+    subject: renderString(template?.subject || job.subject || "", textVars),
+    html: renderString(template?.html || job.html || "", htmlVars),
+    plainText: renderString(template?.plainText || job.plainText || htmlToText(template?.html || job.html || ""), textVars),
+    attachments: attachmentAssets.map(asset => ({
+      name: asset.name,
+      mimeType: asset.mimeType,
+      size: asset.size,
+      downloadUrl: asset.downloadUrl,
+      embeddedDataUrl: asset.embeddedDataUrl,
+    })),
+  };
 }
 
 function renderString(value: string, variablesMap: Record<string, string>) {
