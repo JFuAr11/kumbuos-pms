@@ -66,6 +66,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
+  if (req.method === "GET") {
+    res.status(200).json({
+      ok: true,
+      service: "communications-process-queue",
+      version: "health-e72c25e-plus",
+      timestamp: new Date().toISOString(),
+    });
+    return;
+  }
+
   if (req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
     return;

@@ -1,5 +1,3 @@
-import { readFirebaseStore, writeFirebaseStore } from "./firebase-store";
-
 type VercelRequest = {
   method?: string;
   headers?: Record<string, string | string[] | undefined>;
@@ -35,6 +33,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
+  if (getQuery(req, "health") === "1") {
+    res.status(200).json({
+      ok: true,
+      service: "communications-cron",
+      version: "health-e72c25e-plus",
+      timestamp: new Date().toISOString(),
+    });
+    return;
+  }
+
   if (req.method !== "GET" && req.method !== "POST") {
     res.status(405).json({ error: "Method not allowed" });
     return;
@@ -46,7 +54,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   try {
-    const store = await readFirebaseStore("pms");
+    const store = await readPmsStore(req);
     if (!store.exists || !store.data) {
       res.status(200).json({ ok: true, processed: 0, message: "No PMS data store exists yet." });
       return;
@@ -164,7 +172,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       campaign.updatedAt = new Date().toISOString();
     }
 
-    await writeFirebaseStore("pms", {
+    await writePmsStore(req, {
       ...payload,
       communicationCampaigns: campaigns,
       communicationOutbox: outbox,
@@ -181,6 +189,39 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 }
 
+async function readPmsStore(req: VercelRequest) {
+  const response = await fetch(`${getRequestBaseUrl(req)}/api/firebase-store?store=pms`, {
+    headers: { Accept: "application/json" },
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(`Firebase PMS store read failed: ${response.status} ${payload?.detail || payload?.error || response.statusText}`);
+  }
+  return payload as { exists?: boolean; data?: PmsPayload | null };
+}
+
+async function writePmsStore(req: VercelRequest, payload: PmsPayload) {
+  const response = await fetch(`${getRequestBaseUrl(req)}/api/firebase-store?store=pms`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ payload }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(`Firebase PMS store write failed: ${response.status} ${result?.detail || result?.error || response.statusText}`);
+  }
+}
+
+function getRequestBaseUrl(req: VercelRequest) {
+  const forwardedHost = getHeader(req, "x-forwarded-host");
+  const host = forwardedHost || getHeader(req, "host") || process.env.VERCEL_URL || "localhost:5173";
+  const forwardedProto = getHeader(req, "x-forwarded-proto");
+  const protocol = forwardedProto || (host.startsWith("localhost") || host.startsWith("127.0.0.1") ? "http" : "https");
+  return `${protocol}://${host}`;
+}
 function isAuthorized(req: VercelRequest) {
   const secret = process.env.CRON_SECRET || "";
   if (!secret) return true;
@@ -478,3 +519,4 @@ function htmlToText(value: string) {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
 }
+
