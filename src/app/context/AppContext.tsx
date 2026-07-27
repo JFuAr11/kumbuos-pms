@@ -1159,6 +1159,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [pmsDataSyncReady, setPmsDataSyncReady] = useState(!firebasePmsDataEnabled());
   const latestPmsDataSnapshot = useRef('');
   const applyingRemotePmsData = useRef(false);
+  const pendingLocalPmsDataSnapshot = useRef('');
+  const pendingLocalPmsDataSnapshotAt = useRef(0);
+  const queuedPmsDataPublish = useRef<{ payload: Record<string, unknown>; snapshot: string } | null>(null);
+  const pmsDataPublishInFlight = useRef(false);
+  const pmsDataPublishTimer = useRef<number | null>(null);
 
   const [clients, setClients] = usePersistentState<Client[]>('pms-clients', []);
   const [checkInSubmissions, setCheckInSubmissions] = usePersistentState<CheckInSubmission[]>('pms-check-in-submissions', []);
@@ -1326,6 +1331,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return subscribePmsData(payload => {
       setPmsDataSyncReady(true);
       const snapshot = JSON.stringify(payload);
+      const hasRecentLocalChanges =
+        Boolean(pendingLocalPmsDataSnapshot.current) &&
+        Date.now() - pendingLocalPmsDataSnapshotAt.current < 60_000;
+
+      if (hasRecentLocalChanges && snapshot !== pendingLocalPmsDataSnapshot.current) {
+        setPmsDataSyncStatus('Firebase PMS data store is saving local changes. Older remote snapshots are temporarily ignored.');
+        return;
+      }
+
+      if (snapshot === pendingLocalPmsDataSnapshot.current) {
+        pendingLocalPmsDataSnapshot.current = '';
+        pendingLocalPmsDataSnapshotAt.current = 0;
+      } else if (pendingLocalPmsDataSnapshot.current && !hasRecentLocalChanges) {
+        pendingLocalPmsDataSnapshot.current = '';
+        pendingLocalPmsDataSnapshotAt.current = 0;
+      }
 
       applyingRemotePmsData.current = true;
       latestPmsDataSnapshot.current = snapshot;
@@ -1404,6 +1425,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCommunicationHelpTooltips,
   ]);
 
+  const flushQueuedPmsDataPublish = () => {
+    if (pmsDataPublishInFlight.current) return;
+    const queued = queuedPmsDataPublish.current;
+    if (!queued) return;
+
+    queuedPmsDataPublish.current = null;
+    pmsDataPublishInFlight.current = true;
+
+    publishPmsData(queued.payload as any)
+      .then(() => {
+        if (firebasePmsDataEnabled()) {
+          setPmsDataSyncStatus('Firebase PMS data store is synced in real time.');
+        }
+      })
+      .catch(error => {
+        if (!queuedPmsDataPublish.current) {
+          queuedPmsDataPublish.current = queued;
+        }
+        setPmsDataSyncStatus(`Firebase PMS data publish failed: ${error.message}`);
+      })
+      .finally(() => {
+        pmsDataPublishInFlight.current = false;
+        if (queuedPmsDataPublish.current) {
+          if (pmsDataPublishTimer.current) window.clearTimeout(pmsDataPublishTimer.current);
+          pmsDataPublishTimer.current = window.setTimeout(() => {
+            pmsDataPublishTimer.current = null;
+            flushQueuedPmsDataPublish();
+          }, 500);
+        }
+      });
+  };
+
   useEffect(() => {
     if (!pmsDataSyncReady || applyingRemotePmsData.current) return;
 
@@ -1445,11 +1498,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (snapshot === latestPmsDataSnapshot.current) return;
 
     latestPmsDataSnapshot.current = snapshot;
-    publishPmsData(payload)
-      .then(() => {
-        if (firebasePmsDataEnabled()) setPmsDataSyncStatus('Firebase PMS data store is synced in real time.');
-      })
-      .catch(error => setPmsDataSyncStatus(`Firebase PMS data publish failed: ${error.message}`));
+    pendingLocalPmsDataSnapshot.current = snapshot;
+    pendingLocalPmsDataSnapshotAt.current = Date.now();
+    queuedPmsDataPublish.current = { payload, snapshot };
+    if (firebasePmsDataEnabled()) {
+      setPmsDataSyncStatus('Firebase PMS data store is saving local changes...');
+    }
+
+    if (pmsDataPublishTimer.current) window.clearTimeout(pmsDataPublishTimer.current);
+    pmsDataPublishTimer.current = window.setTimeout(() => {
+      pmsDataPublishTimer.current = null;
+      flushQueuedPmsDataPublish();
+    }, 500);
+
+    return () => {
+      if (pmsDataPublishTimer.current) {
+        window.clearTimeout(pmsDataPublishTimer.current);
+        pmsDataPublishTimer.current = null;
+      }
+    };
   }, [
     pmsDataSyncReady,
     companies,
