@@ -28,6 +28,9 @@ const stores: Record<StoreKey, { collection: string; documentEnv: string; fallba
 };
 
 const firestoreScope = "https://www.googleapis.com/auth/datastore";
+const chunkCollection = "payloadChunks";
+const chunkSize = 700_000;
+const singleDocumentStringLimit = 700_000;
 let cachedAccessToken = "";
 let cachedAccessTokenExpiresAt = 0;
 
@@ -89,13 +92,20 @@ export async function readFirebaseStore(store: StoreKey) {
     throw new Error(`${response.status} ${payload?.error?.message || response.statusText}`);
   }
 
-  return { exists: true, data: decodeStoreDocument(payload) };
+  return { exists: true, data: await decodeStoreDocument(store, payload, accessToken) };
 }
 
 export async function writeFirebaseStore(store: StoreKey, payload: Record<string, unknown>) {
   const accessToken = await getServiceAccountAccessToken();
   const url = getFirestoreDocumentUrl(store);
-  const response = await fetch(`${url}?updateMask.fieldPaths=payloadJson&updateMask.fieldPaths=schemaVersion&updateMask.fieldPaths=updatedAt`, {
+
+  const payloadJson = JSON.stringify(payload);
+  if (Buffer.byteLength(payloadJson, "utf8") > singleDocumentStringLimit) {
+    await writeChunkedFirebaseStore(store, payloadJson, accessToken);
+    return;
+  }
+
+  const response = await fetch(`${url}?updateMask.fieldPaths=payloadJson&updateMask.fieldPaths=storageMode&updateMask.fieldPaths=chunkCount&updateMask.fieldPaths=chunkSize&updateMask.fieldPaths=payloadBytes&updateMask.fieldPaths=schemaVersion&updateMask.fieldPaths=updatedAt`, {
     method: "PATCH",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -103,7 +113,11 @@ export async function writeFirebaseStore(store: StoreKey, payload: Record<string
     },
     body: JSON.stringify({
       fields: {
-        payloadJson: { stringValue: JSON.stringify(payload) },
+        payloadJson: { stringValue: payloadJson },
+        storageMode: { stringValue: "single" },
+        chunkCount: { integerValue: "0" },
+        chunkSize: { integerValue: "0" },
+        payloadBytes: { integerValue: String(Buffer.byteLength(payloadJson, "utf8")) },
         schemaVersion: { stringValue: String(payload.schemaVersion || "") },
         updatedAt: { timestampValue: new Date().toISOString() },
       },
@@ -114,6 +128,8 @@ export async function writeFirebaseStore(store: StoreKey, payload: Record<string
   if (!response.ok) {
     throw new Error(`${response.status} ${result?.error?.message || response.statusText}`);
   }
+
+  await deleteExistingChunkDocuments(store, accessToken);
 }
 
 function getStoreKey(value?: string): StoreKey | null {
@@ -130,6 +146,18 @@ function getFirestoreDocumentUrl(store: StoreKey) {
     config.fallbackDocument;
 
   return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(projectId)}/databases/(default)/documents/${config.collection}/${encodeURIComponent(documentId)}`;
+}
+
+function getFirestoreChunkDocumentUrl(store: StoreKey, index: number) {
+  return `${getFirestoreDocumentUrl(store)}/${chunkCollection}/${getChunkDocumentId(index)}`;
+}
+
+function getFirestoreChunkCollectionUrl(store: StoreKey) {
+  return `${getFirestoreDocumentUrl(store)}/${chunkCollection}`;
+}
+
+function getChunkDocumentId(index: number) {
+  return `chunk-${String(index).padStart(5, "0")}`;
 }
 
 function getFirebaseProjectId() {
@@ -222,8 +250,14 @@ function base64Url(value: string) {
   return Buffer.from(value).toString("base64url");
 }
 
-function decodeStoreDocument(document: any) {
+async function decodeStoreDocument(store: StoreKey, document: any, accessToken: string) {
   const fields = document?.fields || {};
+  const storageMode = fields.storageMode?.stringValue;
+  const chunkCount = Number(fields.chunkCount?.integerValue || fields.chunkCount?.stringValue || 0);
+  if (storageMode === "chunked" || chunkCount > 0) {
+    return readChunkedFirebaseStore(store, chunkCount, accessToken);
+  }
+
   const payloadJson = fields.payloadJson?.stringValue;
   if (payloadJson) {
     try {
@@ -238,6 +272,109 @@ function decodeStoreDocument(document: any) {
     return decoded.payload;
   }
   return decoded;
+}
+
+async function writeChunkedFirebaseStore(store: StoreKey, payloadJson: string, accessToken: string) {
+  const chunks = splitString(payloadJson, chunkSize);
+  const updatedAt = new Date().toISOString();
+
+  for (let index = 0; index < chunks.length; index += 1) {
+    const response = await fetch(getFirestoreChunkDocumentUrl(store, index), {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        fields: {
+          index: { integerValue: String(index) },
+          payloadChunk: { stringValue: chunks[index] },
+          updatedAt: { timestampValue: updatedAt },
+        },
+      }),
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(`Chunk ${index + 1}/${chunks.length} write failed: ${response.status} ${result?.error?.message || response.statusText}`);
+    }
+  }
+
+  await deleteExistingChunkDocuments(store, accessToken, chunks.length);
+
+  const url = getFirestoreDocumentUrl(store);
+  const response = await fetch(`${url}?updateMask.fieldPaths=payloadJson&updateMask.fieldPaths=storageMode&updateMask.fieldPaths=chunkCount&updateMask.fieldPaths=chunkSize&updateMask.fieldPaths=payloadBytes&updateMask.fieldPaths=schemaVersion&updateMask.fieldPaths=updatedAt`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      fields: {
+        storageMode: { stringValue: "chunked" },
+        chunkCount: { integerValue: String(chunks.length) },
+        chunkSize: { integerValue: String(chunkSize) },
+        payloadBytes: { integerValue: String(Buffer.byteLength(payloadJson, "utf8")) },
+        schemaVersion: { stringValue: String(JSON.parse(payloadJson).schemaVersion || "") },
+        updatedAt: { timestampValue: updatedAt },
+      },
+    }),
+  });
+  const result = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(`${response.status} ${result?.error?.message || response.statusText}`);
+  }
+}
+
+async function readChunkedFirebaseStore(store: StoreKey, chunkCount: number, accessToken: string) {
+  if (!chunkCount || chunkCount < 1) return {};
+  const chunks: string[] = [];
+  for (let index = 0; index < chunkCount; index += 1) {
+    const response = await fetch(getFirestoreChunkDocumentUrl(store, index), {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(`Chunk ${index + 1}/${chunkCount} read failed: ${response.status} ${payload?.error?.message || response.statusText}`);
+    }
+    chunks.push(String(payload?.fields?.payloadChunk?.stringValue || ""));
+  }
+
+  try {
+    return JSON.parse(chunks.join(""));
+  } catch {
+    return {};
+  }
+}
+
+async function deleteExistingChunkDocuments(store: StoreKey, accessToken: string, keepFirst = 0) {
+  const response = await fetch(getFirestoreChunkCollectionUrl(store), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (response.status === 404) return;
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) return;
+
+  const documents = Array.isArray(payload.documents) ? payload.documents : [];
+  await Promise.all(documents.map(async (document: any) => {
+    const name = String(document.name || "");
+    const id = name.split("/").pop() || "";
+    const match = id.match(/^chunk-(\d+)$/);
+    const index = match ? Number(match[1]) : Number.POSITIVE_INFINITY;
+    if (Number.isFinite(index) && index < keepFirst) return;
+    await fetch(`https://firestore.googleapis.com/v1/${name}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }).catch(() => undefined);
+  }));
+}
+
+function splitString(value: string, size: number) {
+  const chunks: string[] = [];
+  for (let index = 0; index < value.length; index += size) {
+    chunks.push(value.slice(index, index + size));
+  }
+  return chunks;
 }
 
 function decodeFirestoreFields(fields: Record<string, any>) {

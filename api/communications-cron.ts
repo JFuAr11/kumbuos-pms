@@ -23,7 +23,8 @@ type DeliveryResult = {
   error?: string;
 };
 
-const openJobStatuses = new Set(["pending", "queued", "sending", "failed"]);
+const deliverableJobStatuses = new Set(["pending", "queued", "failed"]);
+const activeJobStatuses = new Set(["pending", "queued", "sending", "failed"]);
 const terminalCampaignStatuses = new Set(["paused", "completed", "cancelled", "failed"]);
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -161,6 +162,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         job.status = "sending";
         job.attempts = Number(job.attempts || 0) + 1;
         job.updatedAt = sentAt;
+      });
+      campaign.status = "sending";
+      campaign.updatedAt = sentAt;
+
+      await writePmsStore(req, {
+        ...payload,
+        communicationCampaigns: campaigns,
+        communicationOutbox: outbox,
+        communicationEvents: events.slice(0, 5000),
+        updatedAt: sentAt,
       });
 
       try {
@@ -393,7 +404,7 @@ function suppressionAppliesToCampaign(suppression: Record<string, any>, campaign
 }
 
 function isDueOpenJob(job: OutboxJob, now: Date) {
-  if (!openJobStatuses.has(String(job.status))) return false;
+  if (!deliverableJobStatuses.has(String(job.status))) return false;
   if (Number(job.attempts || 0) >= Math.max(1, Number(job.maxRetries || 1))) return false;
   if (!job.scheduledFor) return true;
   const scheduledFor = new Date(job.scheduledFor);
@@ -402,8 +413,9 @@ function isDueOpenJob(job: OutboxJob, now: Date) {
 
 function resolveCampaignStatus(campaign: Campaign, outbox: OutboxJob[], now: Date) {
   const jobs = outbox.filter((job) => job.campaignId === campaign.id);
-  const openJobs = jobs.filter((job) => openJobStatuses.has(String(job.status)) && Number(job.attempts || 0) < Math.max(1, Number(job.maxRetries || 1)));
+  const openJobs = jobs.filter((job) => activeJobStatuses.has(String(job.status)) && Number(job.attempts || 0) < Math.max(1, Number(job.maxRetries || 1)));
   if (!openJobs.length) return "completed";
+  if (openJobs.some((job) => String(job.status) === "sending")) return "sending";
   if (openJobs.some((job) => isDueOpenJob(job, now))) return "sending";
   return "scheduled";
 }
