@@ -181,6 +181,8 @@ export function Communications() {
     deleteCommunicationOutboxJob,
     communicationEvents,
     addCommunicationEvent,
+    deleteCommunicationEvent,
+    deleteCommunicationEvents,
     communicationSuppressionList,
     addCommunicationSuppression,
     updateCommunicationSuppression,
@@ -343,7 +345,13 @@ export function Communications() {
           addCommunicationEvent={addCommunicationEvent}
         />
       )}
-      {section === "logs" && <LogsSection {...sharedProps} />}
+      {section === "logs" && (
+        <LogsSection
+          {...sharedProps}
+          deleteCommunicationEvent={deleteCommunicationEvent}
+          deleteCommunicationEvents={deleteCommunicationEvents}
+        />
+      )}
       {section === "suppression-list" && (
         <SuppressionSection
           {...sharedProps}
@@ -2684,23 +2692,42 @@ function compareOutboxJobsBySchedule(left: CommunicationOutboxJob, right: Commun
   return left.status === "queued" ? -1 : 1;
 }
 
-function LogsSection({ scoped }: SharedProps) {
+function LogsSection({
+  canEdit,
+  scoped,
+  deleteCommunicationEvent,
+  deleteCommunicationEvents,
+}: SharedProps & {
+  deleteCommunicationEvent: (id: string) => void;
+  deleteCommunicationEvents: (ids: string[]) => void;
+}) {
   const [type, setType] = useState("All");
   const [campaignId, setCampaignId] = useState("All");
   const filtered = scoped.events.filter(event =>
     (type === "All" || event.type === type) &&
     (campaignId === "All" || event.campaignId === campaignId)
-  );
+  ).sort((left, right) => Date.parse(right.createdAt || "") - Date.parse(left.createdAt || ""));
+  const deleteFiltered = () => {
+    if (!filtered.length) return;
+    deleteCommunicationEvents(filtered.map(event => event.id));
+  };
   return (
     <Panel title="Delivery and Campaign Logs" icon={Database}>
-      <div className="mb-4 grid gap-3 md:grid-cols-3">
+      <div className="mb-4 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
         <SelectField label="Event Type" value={type} onChange={setType} options={["All", "created", "queued", "sent", "delivered", "failed", "suppressed", "unsubscribed", "paused", "cancelled", "test"].map(item => ({ value: item, label: item }))} />
         <SelectField label="Campaign" value={campaignId} onChange={setCampaignId} options={[{ value: "All", label: "All campaigns" }, ...scoped.campaigns.map(item => ({ value: item.id, label: item.name }))]} />
+        <div className="flex items-end">
+          <Button variant="outline" className="w-full text-destructive" disabled={!canEdit || !filtered.length} onClick={deleteFiltered}>
+            <Trash2 className="mr-2 h-4 w-4" />
+            Delete Filtered Logs
+          </Button>
+        </div>
       </div>
+      <InfoMessage message={`Automatic retention is active: when Communications logs reach 1,000 rows, KumbuOS keeps only the latest 50 rows and removes the oldest 950 to prevent infinite log storage. Current visible logs: ${filtered.length}.`} />
       <div className="overflow-x-auto rounded-md border border-border">
         <table className="w-full text-left text-sm">
           <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-            <tr><th className="p-3">Time</th><th className="p-3">Type</th><th className="p-3">Recipient</th><th className="p-3">Message</th><th className="p-3">Provider ID</th></tr>
+            <tr><th className="p-3">Time</th><th className="p-3">Type</th><th className="p-3">Recipient</th><th className="p-3">Message</th><th className="p-3">Provider ID</th><th className="p-3 text-right">Actions</th></tr>
           </thead>
           <tbody>
             {filtered.map(event => (
@@ -2710,6 +2737,11 @@ function LogsSection({ scoped }: SharedProps) {
                 <td className="p-3">{event.recipientEmail || "-"}</td>
                 <td className="p-3">{event.errorDetail || event.message}</td>
                 <td className="p-3">{event.providerMessageId || "-"}</td>
+                <td className="p-3 text-right">
+                  <Button variant="ghost" size="icon" disabled={!canEdit} className="text-destructive" onClick={() => deleteCommunicationEvent(event.id)}>
+                    <Trash2 size={15} />
+                  </Button>
+                </td>
               </tr>
             ))}
           </tbody>

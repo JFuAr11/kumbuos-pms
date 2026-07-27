@@ -882,6 +882,7 @@ type AppContextType = {
   addCommunicationEvent: (event: CommunicationEvent) => void;
   updateCommunicationEvent: (id: string, event: Partial<CommunicationEvent>) => void;
   deleteCommunicationEvent: (id: string) => void;
+  deleteCommunicationEvents: (ids: string[]) => void;
   communicationSuppressionList: CommunicationSuppression[];
   addCommunicationSuppression: (suppression: CommunicationSuppression) => void;
   updateCommunicationSuppression: (id: string, suppression: Partial<CommunicationSuppression>) => void;
@@ -898,6 +899,20 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 const ROOT_OWNER_ID = 'usr-owner';
 const ROOT_OWNER_EMAIL = 'jorge@luxurytentedcamp.com';
 const ROOT_OWNER_PASSWORD = 'Owner2026!';
+const COMMUNICATION_LOG_PRUNE_TRIGGER = 1000;
+const COMMUNICATION_LOG_RETAIN_COUNT = 50;
+
+function communicationEventTime(event: CommunicationEvent) {
+  const time = Date.parse(event.createdAt || event.updatedAt || '');
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function pruneCommunicationEvents(events: CommunicationEvent[]) {
+  if (events.length < COMMUNICATION_LOG_PRUNE_TRIGGER) return events;
+  return [...events]
+    .sort((left, right) => communicationEventTime(right) - communicationEventTime(left))
+    .slice(0, COMMUNICATION_LOG_RETAIN_COUNT);
+}
 const OWNER_CONSOLE_COMPANY_ID = 'owner-console';
 
 const initialCompanies: Company[] = [];
@@ -1378,7 +1393,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setCommunicationCampaignSteps(payload.communicationCampaignSteps);
       setCommunicationSendingRules(payload.communicationSendingRules);
       setCommunicationOutbox(payload.communicationOutbox);
-      setCommunicationEvents(payload.communicationEvents);
+      setCommunicationEvents(pruneCommunicationEvents(payload.communicationEvents));
       setCommunicationSuppressionList(payload.communicationSuppressionList);
       setCommunicationUnsubscribes(payload.communicationUnsubscribes);
       setCommunicationHelpTooltips(payload.communicationHelpTooltips.length ? payload.communicationHelpTooltips : initialCommunicationHelpTooltips);
@@ -2197,11 +2212,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCommunicationOutbox(current => current.filter(item => item.id !== id));
 
   const addCommunicationEvent = (event: CommunicationEvent) =>
-    setCommunicationEvents(current => [event, ...current]);
+    setCommunicationEvents(current => pruneCommunicationEvents([event, ...current]));
   const updateCommunicationEvent = (id: string, updates: Partial<CommunicationEvent>) =>
     setCommunicationEvents(current => current.map(item => item.id === id ? { ...item, ...updates } : item));
   const deleteCommunicationEvent = (id: string) =>
     setCommunicationEvents(current => current.filter(item => item.id !== id));
+  const deleteCommunicationEvents = (ids: string[]) =>
+    setCommunicationEvents(current => {
+      const idsToDelete = new Set(ids);
+      return current.filter(item => !idsToDelete.has(item.id));
+    });
 
   const addCommunicationSuppression = (suppression: CommunicationSuppression) =>
     setCommunicationSuppressionList(current => [suppression, ...current.filter(item =>
@@ -2256,7 +2276,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       communicationCampaignSteps, addCommunicationCampaignStep, updateCommunicationCampaignStep, deleteCommunicationCampaignStep,
       communicationSendingRules, addCommunicationSendingRule, updateCommunicationSendingRule, deleteCommunicationSendingRule,
       communicationOutbox, addCommunicationOutboxJob, updateCommunicationOutboxJob, deleteCommunicationOutboxJob,
-      communicationEvents, addCommunicationEvent, updateCommunicationEvent, deleteCommunicationEvent,
+      communicationEvents, addCommunicationEvent, updateCommunicationEvent, deleteCommunicationEvent, deleteCommunicationEvents,
       communicationSuppressionList, addCommunicationSuppression, updateCommunicationSuppression, deleteCommunicationSuppression,
       communicationUnsubscribes, addCommunicationUnsubscribe, updateCommunicationUnsubscribe, deleteCommunicationUnsubscribe,
       communicationHelpTooltips,
