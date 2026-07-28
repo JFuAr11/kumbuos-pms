@@ -1,9 +1,14 @@
-import { ChangeEvent, ReactNode, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router";
 import * as XLSX from "xlsx";
 import {
   AlertTriangle,
+  AlignCenter,
+  AlignJustify,
+  AlignLeft,
+  AlignRight,
   BarChart3,
+  Bold,
   CalendarDays,
   CheckCircle2,
   Clock,
@@ -13,7 +18,12 @@ import {
   Eye,
   FileSpreadsheet,
   GitBranch,
+  Highlighter,
   Info,
+  Italic,
+  Link,
+  List,
+  ListOrdered,
   Mail,
   MailCheck,
   Maximize2,
@@ -26,7 +36,10 @@ import {
   Send,
   ShieldAlert,
   Sparkles,
+  Strikethrough,
   Trash2,
+  Type,
+  Underline,
   Upload,
   Users,
   XCircle,
@@ -46,6 +59,8 @@ import {
   CommunicationProviderAccount,
   CommunicationRecipient,
   CommunicationRecipientScope,
+  CommunicationRecurrenceFrequency,
+  CommunicationRepeatIntervalUnit,
   CommunicationScheduleMode,
   CommunicationSender,
   CommunicationSendingRule,
@@ -94,6 +109,31 @@ const sectionTitles: Record<SectionKey, string> = {
 const marketingTypes: CommunicationCampaignType[] = ["Operational", "Marketing"];
 const statusOptions: CommunicationStatus[] = ["Draft", "Active", "Paused", "Archived"];
 const scheduleModes: CommunicationScheduleMode[] = ["Manual", "Before Check-in", "After Check-out", "Birthday"];
+const repeatIntervalUnits: CommunicationRepeatIntervalUnit[] = ["Minutes", "Hours", "Days", "Weeks", "Months", "Years"];
+const recurrenceFrequencies: CommunicationRecurrenceFrequency[] = ["Daily", "Weekly", "Monthly", "Yearly"];
+const weekDayOptions = [
+  { value: "0", label: "Sunday" },
+  { value: "1", label: "Monday" },
+  { value: "2", label: "Tuesday" },
+  { value: "3", label: "Wednesday" },
+  { value: "4", label: "Thursday" },
+  { value: "5", label: "Friday" },
+  { value: "6", label: "Saturday" },
+];
+const monthOptions = [
+  { value: "1", label: "January" },
+  { value: "2", label: "February" },
+  { value: "3", label: "March" },
+  { value: "4", label: "April" },
+  { value: "5", label: "May" },
+  { value: "6", label: "June" },
+  { value: "7", label: "July" },
+  { value: "8", label: "August" },
+  { value: "9", label: "September" },
+  { value: "10", label: "October" },
+  { value: "11", label: "November" },
+  { value: "12", label: "December" },
+];
 const clientCategories: Array<Client["category"] | "All"> = ["All", "Tour Operator", "Agency", "Direct Client", "Corporate", "Other"];
 const variables = ["{{name}}", "{{email}}", "{{hotel_name}}", "{{property_name}}", "{{reservation_code}}", "{{checkin_date}}", "{{checkout_date}}", "{{unsubscribe_url}}"];
 const fallbackTimezones = [
@@ -277,6 +317,8 @@ export function Communications() {
           addCommunicationSender={addCommunicationSender}
           updateCommunicationSender={updateCommunicationSender}
           deleteCommunicationSender={deleteCommunicationSender}
+          addCommunicationTemplateAsset={addCommunicationTemplateAsset}
+          deleteCommunicationTemplateAsset={deleteCommunicationTemplateAsset}
         />
       )}
       {section === "provider-settings" && (
@@ -497,20 +539,36 @@ function SendersSection({
   addCommunicationSender,
   updateCommunicationSender,
   deleteCommunicationSender,
+  addCommunicationTemplateAsset,
+  deleteCommunicationTemplateAsset,
 }: SharedProps & {
   addCommunicationSender: (sender: CommunicationSender) => void;
   updateCommunicationSender: (id: string, sender: Partial<CommunicationSender>) => void;
   deleteCommunicationSender: (id: string) => void;
+  addCommunicationTemplateAsset: (asset: CommunicationTemplateAsset) => void;
+  deleteCommunicationTemplateAsset: (id: string) => void;
 }) {
   const [editingId, setEditingId] = useState("");
-  const [form, setForm] = useState<Partial<CommunicationSender>>({ fromName: "", fromEmail: "", replyToEmail: "", verified: false, defaultSender: false, status: "Active" });
+  const [form, setForm] = useState<Partial<CommunicationSender>>({ fromName: "", fromEmail: "", replyToEmail: "", verified: false, defaultSender: false, signatureName: "", signatureHtml: "", signaturePlainText: "", signatureAssetIds: [], signaturePosition: "After Body", status: "Active" });
+  const [signatureFiles, setSignatureFiles] = useState<File[]>([]);
   const [error, setError] = useState("");
+  const signatureAssets = (form.signatureAssetIds || [])
+    .map(assetId => scoped.assets.find(asset => asset.id === assetId))
+    .filter((asset): asset is CommunicationTemplateAsset => Boolean(asset && asset.assetRole === "Sender Signature Image"));
+  const signatureVariables = buildSenderSignatureImageVariableNames(signatureAssets.length + signatureFiles.length);
+  const renderedSignature = renderSenderSignature(form.signatureHtml || "", signatureAssets);
   const startEdit = (sender: CommunicationSender) => {
     setEditingId(sender.id);
-    setForm(sender);
+    setForm({ ...sender, signatureAssetIds: sender.signatureAssetIds || [], signaturePosition: sender.signaturePosition || "After Body" });
+    setSignatureFiles([]);
     setError("");
   };
-  const save = () => {
+  const resetSenderForm = () => {
+    setEditingId("");
+    setSignatureFiles([]);
+    setForm({ fromName: "", fromEmail: "", replyToEmail: "", verified: false, defaultSender: false, signatureName: "", signatureHtml: "", signaturePlainText: "", signatureAssetIds: [], signaturePosition: "After Body", status: "Active" });
+  };
+  const save = async () => {
     setError("");
     const errors = [];
     if (!form.fromName) errors.push("From name is required.");
@@ -521,26 +579,38 @@ function SendersSection({
       return;
     }
     const now = new Date().toISOString();
+    const id = editingId || `comm-sender-${Date.now()}`;
+    const uploadedSignatureAssets: string[] = [];
+    for (const file of signatureFiles) {
+      const asset = await uploadTemplateAsset(file, id, meta(), "Sender Signature Image");
+      addCommunicationTemplateAsset(asset);
+      uploadedSignatureAssets.push(asset.id);
+    }
+    const signatureHtml = sanitizeHtml(form.signatureHtml || "");
     const payload: CommunicationSender = {
       ...meta(),
-      id: editingId || `comm-sender-${Date.now()}`,
+      id,
       providerAccountId: form.providerAccountId || "",
       fromName: form.fromName || "",
       fromEmail: form.fromEmail || "",
       replyToEmail: form.replyToEmail || form.fromEmail || "",
       verified: Boolean(form.verified),
       defaultSender: Boolean(form.defaultSender),
+      signatureName: form.signatureName || "",
+      signatureHtml,
+      signaturePlainText: form.signaturePlainText || htmlToText(signatureHtml),
+      signatureAssetIds: [...(form.signatureAssetIds || []), ...uploadedSignatureAssets],
+      signaturePosition: form.signaturePosition || "After Body",
       status: form.status || "Active",
       updatedAt: now,
     };
     if (editingId) updateCommunicationSender(editingId, payload);
     else addCommunicationSender(payload);
-    setEditingId("");
-    setForm({ fromName: "", fromEmail: "", replyToEmail: "", verified: false, defaultSender: false, status: "Active" });
+    resetSenderForm();
   };
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[420px_1fr]">
+    <div className="grid gap-5 xl:grid-cols-[520px_1fr]">
       <Panel title={editingId ? "Edit Sender" : "Create Sender"} icon={Mail}>
         <div className="space-y-4">
           <Field label="From Name" info={helpFor("fromEmail")} value={form.fromName || ""} onChange={value => setForm({ ...form, fromName: value })} placeholder="Kumbukumbu Reservations" />
@@ -556,9 +626,54 @@ function SendersSection({
             <input type="checkbox" checked={Boolean(form.defaultSender)} onChange={event => setForm({ ...form, defaultSender: event.target.checked })} />
             Default sender for this property
           </label>
+          <div className="rounded-lg border border-border bg-muted/20 p-4">
+            <div className="mb-3">
+              <p className="font-semibold">Email Signature</p>
+              <p className="text-xs text-muted-foreground">This signature is appended automatically to every email sent with this sender, unless signature position is disabled.</p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Field label="Signature Name" value={form.signatureName || ""} onChange={value => setForm({ ...form, signatureName: value })} placeholder="Jorge Kumbukumbu" />
+              <SelectField label="Signature Position" value={form.signaturePosition || "After Body"} onChange={value => setForm({ ...form, signaturePosition: value as CommunicationSender["signaturePosition"] })} options={[
+                { value: "After Body", label: "After email body" },
+                { value: "Before Body", label: "Before email body" },
+                { value: "Disabled", label: "Do not append signature" },
+              ]} />
+            </div>
+            <div className="mt-3">
+              <RichTextComposer
+                label="Signature Body"
+                value={form.signatureHtml || ""}
+                imageVariables={signatureVariables}
+                onChange={(html, text) => setForm({ ...form, signatureHtml: html, signaturePlainText: text })}
+              />
+            </div>
+            <label className="mt-3 block rounded-lg border border-dashed border-border bg-background p-3 text-sm">
+              <div className="mb-2 flex items-center gap-2 font-medium"><Upload className="h-4 w-4 text-primary" /> Signature Images</div>
+              <input type="file" accept="image/*" multiple disabled={!canEdit} onChange={event => setSignatureFiles(current => mergeFiles(current, Array.from(event.target.files || [])))} />
+              <p className="mt-2 text-xs text-muted-foreground">Upload images, then insert them with variables like {"{{sender_signature_image1}}"} or link them from the toolbar.</p>
+              <SelectedFilesList files={signatureFiles} onRemove={index => setSignatureFiles(current => current.filter((_, itemIndex) => itemIndex !== index))} />
+            </label>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {signatureVariables.map(variable => <Badge key={variable}>{variable}</Badge>)}
+            </div>
+            {!!signatureAssets.length && (
+              <div className="mt-3 space-y-2">
+                {signatureAssets.map((asset, index) => (
+                  <div key={asset.id} className="flex items-center justify-between gap-2 rounded-md border border-border bg-background p-2 text-xs">
+                    <span className="min-w-0 truncate">{asset.name} - {`{{sender_signature_image${index + 1}}}`}</span>
+                    <Button variant="ghost" size="icon" disabled={!canEdit} className="text-destructive" onClick={() => {
+                      setForm(current => ({ ...current, signatureAssetIds: (current.signatureAssetIds || []).filter(id => id !== asset.id) }));
+                      deleteCommunicationTemplateAsset(asset.id);
+                    }}><Trash2 size={14} /></Button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="mt-3 rounded-md border border-border bg-white p-3 text-sm text-[#2d2924]" dangerouslySetInnerHTML={{ __html: renderedSignature || "<p>No signature preview yet.</p>" }} />
+          </div>
           {error && <FormError message={error} />}
           <div className="flex justify-end gap-2">
-            {editingId && <Button variant="outline" onClick={() => { setEditingId(""); setForm({}); }}>Cancel</Button>}
+            {editingId && <Button variant="outline" onClick={resetSenderForm}>Cancel</Button>}
             <Button disabled={!canEdit} onClick={save}><Save className="mr-2 h-4 w-4" />Save Sender</Button>
           </div>
         </div>
@@ -573,6 +688,7 @@ function SendersSection({
                   <p className="font-semibold">{sender.fromName}</p>
                   <p className="text-sm text-muted-foreground">{sender.fromEmail}</p>
                   <p className="mt-1 text-xs text-muted-foreground">Reply-to: {sender.replyToEmail}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Signature: {sender.signaturePosition === "Disabled" || !sender.signatureHtml ? "Not appended" : `${sender.signatureName || "Configured"} (${sender.signaturePosition || "After Body"})`}</p>
                 </div>
                 <Badge tone={sender.verified ? "positive" : "warning"}>{sender.verified ? "Verified" : "Not verified"}</Badge>
               </div>
@@ -1527,6 +1643,14 @@ function TemplatesSection({
     ...buildAttachedImageVariableNames(selectedTemplateAssets.length + files.length),
   ]));
   const renderedHtml = renderTemplate(form.html || richTextToHtml(form.plainText || ""), previewRecipient, activeProperty?.name || "", selectedTemplateAssets);
+  const updateTemplateType = (value: string) => {
+    const nextType = value as CommunicationTemplate["type"];
+    setForm(current => ({
+      ...current,
+      type: nextType,
+      html: nextType === "Rich Text" && !current.html ? richTextToHtml(current.plainText || "") : current.html,
+    }));
+  };
   const save = async () => {
     setStatus("");
     if (!form.name || !form.subject || (!form.html && !form.plainText)) {
@@ -1610,26 +1734,38 @@ function TemplatesSection({
       <Panel title={editingId ? "Edit Template" : "Create Template"} icon={Mail}>
         <div className="grid gap-4 md:grid-cols-2">
           <Field label="Template Name" value={form.name || ""} onChange={value => setForm({ ...form, name: value })} placeholder="Pre-arrival email" />
-          <SelectField label="Template Type" value={form.type || "Rich Text"} onChange={value => setForm({ ...form, type: value as CommunicationTemplate["type"] })} options={[{ value: "Rich Text", label: "Rich Text" }, { value: "HTML", label: "HTML" }]} />
+          <SelectField label="Template Type" value={form.type || "Rich Text"} onChange={updateTemplateType} options={[{ value: "Rich Text", label: "Rich Text" }, { value: "HTML", label: "HTML" }]} />
           <Field label="Subject" info={helpFor("subject")} value={form.subject || ""} onChange={value => setForm({ ...form, subject: value })} placeholder="Welcome to {{property_name}}, {{name}}" />
           <Field label="Preheader" info={helpFor("preheader")} value={form.preheader || ""} onChange={value => setForm({ ...form, preheader: value })} placeholder="Your pre-arrival details are inside." />
-          <div className="md:col-span-2">
-            <label className="mb-1 flex items-center gap-2 text-sm font-medium">HTML Body <InfoTip info={helpFor("html")} /></label>
-            <textarea className="min-h-44 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.html || ""} onChange={event => setForm({ ...form, html: event.target.value })} placeholder="<h1>Hello {{name}}</h1>" />
-          </div>
+          {form.type === "HTML" ? (
+            <div className="md:col-span-2">
+              <label className="mb-1 flex items-center gap-2 text-sm font-medium">HTML Body <InfoTip info={helpFor("html")} /></label>
+              <textarea className="min-h-44 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.html || ""} onChange={event => setForm({ ...form, html: event.target.value })} placeholder="<h1>Hello {{name}}</h1>" />
+            </div>
+          ) : (
+            <div className="md:col-span-2">
+              <RichTextComposer
+                label="Rich Text Body"
+                info={helpFor("plainText")}
+                value={form.html || richTextToHtml(form.plainText || "")}
+                imageVariables={visibleTemplateVariables.filter(variable => variable.includes("attached_image"))}
+                onChange={(html, text) => setForm({ ...form, html, plainText: text })}
+              />
+            </div>
+          )}
           <div className="md:col-span-2">
             <label className="mb-1 flex items-center gap-2 text-sm font-medium">Plain Text <InfoTip info={helpFor("plainText")} /></label>
             <textarea className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.plainText || ""} onChange={event => setForm({ ...form, plainText: event.target.value })} placeholder="Hello {{name}}, ..." />
           </div>
           <label className="md:col-span-2 rounded-lg border border-dashed border-border bg-muted/20 p-4 text-sm">
             <div className="mb-2 flex items-center gap-2 font-medium"><Upload className="h-4 w-4 text-primary" /> Images / Assets <InfoTip info={helpFor("images")} /></div>
-            <input type="file" accept="image/*" multiple disabled={!canEdit} onChange={event => setFiles(Array.from(event.target.files || []))} />
-            <p className="mt-2 text-xs text-muted-foreground">{files.length ? files.map(file => file.name).join(", ") : "No images selected."}</p>
+            <input type="file" accept="image/*" multiple disabled={!canEdit} onChange={event => setFiles(current => mergeFiles(current, Array.from(event.target.files || [])))} />
+            <SelectedFilesList files={files} onRemove={index => setFiles(current => current.filter((_, itemIndex) => itemIndex !== index))} />
           </label>
           <label className="md:col-span-2 rounded-lg border border-dashed border-border bg-muted/20 p-4 text-sm">
             <div className="mb-2 flex items-center gap-2 font-medium"><Paperclip className="h-4 w-4 text-primary" /> Email Attachments / Documents</div>
-            <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,application/pdf" multiple disabled={!canEdit} onChange={event => setAttachmentFiles(Array.from(event.target.files || []))} />
-            <p className="mt-2 text-xs text-muted-foreground">{attachmentFiles.length ? attachmentFiles.map(file => file.name).join(", ") : "No documents selected."}</p>
+            <input type="file" accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,application/pdf" multiple disabled={!canEdit} onChange={event => setAttachmentFiles(current => mergeFiles(current, Array.from(event.target.files || [])))} />
+            <SelectedFilesList files={attachmentFiles} onRemove={index => setAttachmentFiles(current => current.filter((_, itemIndex) => itemIndex !== index))} />
             <p className="mt-1 text-xs text-muted-foreground">These files are attached to the email. They are different from image assets inserted inside the email with {"{{attached_image1}}"}.</p>
           </label>
         </div>
@@ -1854,6 +1990,15 @@ function CampaignsSection({
     scheduleTimezone: activeProperty?.timezone || "Africa/Dar_es_Salaam",
     repeatCount: 1,
     repeatIntervalMinutes: 30,
+    repeatIntervalValue: 30,
+    repeatIntervalUnit: "Minutes" as CommunicationRepeatIntervalUnit,
+    recurrenceEnabled: false,
+    recurrenceFrequency: "Monthly" as CommunicationRecurrenceFrequency,
+    recurrenceInterval: 1,
+    recurrenceDayOfWeek: new Date().getDay(),
+    recurrenceDayOfMonth: new Date().getDate(),
+    recurrenceMonth: new Date().getMonth() + 1,
+    recurrenceOccurrences: 12,
     requiresApproval: false,
   });
   const [editingCampaignId, setEditingCampaignId] = useState("");
@@ -1935,7 +2080,7 @@ function CampaignsSection({
 
   const resetCampaignForm = () => {
     setEditingCampaignId("");
-    setForm({ name: "", type: "Operational", senderId: "", templateId: "", audienceId: scoped.audiences[0]?.id || "", recipientScope: "Selected Audience", sendingRuleId: "", scheduledAt: "", scheduleMode: "Manual", scheduleOffsetDays: 0, scheduleOffsetHours: 0, scheduleTimeOfDay: "09:00", scheduleTimezone: activeProperty?.timezone || "Africa/Dar_es_Salaam", repeatCount: 1, repeatIntervalMinutes: 30, requiresApproval: false });
+    setForm({ name: "", type: "Operational", senderId: "", templateId: "", audienceId: scoped.audiences[0]?.id || "", recipientScope: "Selected Audience", sendingRuleId: "", scheduledAt: "", scheduleMode: "Manual", scheduleOffsetDays: 0, scheduleOffsetHours: 0, scheduleTimeOfDay: "09:00", scheduleTimezone: activeProperty?.timezone || "Africa/Dar_es_Salaam", repeatCount: 1, repeatIntervalMinutes: 30, repeatIntervalValue: 30, repeatIntervalUnit: "Minutes", recurrenceEnabled: false, recurrenceFrequency: "Monthly", recurrenceInterval: 1, recurrenceDayOfWeek: new Date().getDay(), recurrenceDayOfMonth: new Date().getDate(), recurrenceMonth: new Date().getMonth() + 1, recurrenceOccurrences: 12, requiresApproval: false });
     setPreflight([]);
     setPreflightWarnings([]);
     setReadyRecipients([]);
@@ -1974,12 +2119,23 @@ function CampaignsSection({
         timezone: campaignTimezone,
       });
       const repeatCount = Math.max(1, Number(form.repeatCount || 1));
-      const repeatIntervalMinutes = Math.max(0, Number(form.repeatIntervalMinutes || 0));
-      for (let repeatIndex = 0; repeatIndex < repeatCount; repeatIndex += 1) {
-        const scheduledFor = addMinutesToIso(firstScheduledFor, repeatIndex * repeatIntervalMinutes);
+      const repeatIntervalValue = getRepeatIntervalValue(form);
+      const repeatIntervalUnit = getRepeatIntervalUnit(form);
+      const occurrenceSchedules = buildRecurringOccurrenceSchedules(firstScheduledFor, campaignTimezone, {
+        recurrenceEnabled: Boolean(form.recurrenceEnabled),
+        recurrenceFrequency: form.recurrenceFrequency,
+        recurrenceInterval: Number(form.recurrenceInterval || 1),
+        recurrenceDayOfWeek: Number(form.recurrenceDayOfWeek ?? new Date().getDay()),
+        recurrenceDayOfMonth: Number(form.recurrenceDayOfMonth || new Date().getDate()),
+        recurrenceMonth: Number(form.recurrenceMonth || new Date().getMonth() + 1),
+        recurrenceOccurrences: Number(form.recurrenceOccurrences || 1),
+      });
+      occurrenceSchedules.forEach((occurrenceScheduledFor, occurrenceIndex) => {
+        for (let repeatIndex = 0; repeatIndex < repeatCount; repeatIndex += 1) {
+        const scheduledFor = addIntervalToIso(occurrenceScheduledFor, repeatIndex * repeatIntervalValue, repeatIntervalUnit, campaignTimezone);
         const job: CommunicationOutboxJob = {
           ...meta(),
-          id: `${idPrefix}-${Date.now()}-${index}-${repeatIndex}-${Math.random().toString(16).slice(2)}`,
+          id: `${idPrefix}-${Date.now()}-${index}-${occurrenceIndex}-${repeatIndex}-${Math.random().toString(16).slice(2)}`,
           campaignId,
           recipientId: recipient.id,
           recipientEmail: recipient.email,
@@ -1997,6 +2153,8 @@ function CampaignsSection({
           maxRetries: rule.maxRetries,
           repeatIndex: repeatIndex + 1,
           repeatTotal: repeatCount,
+          recurrenceIndex: occurrenceIndex + 1,
+          recurrenceTotal: occurrenceSchedules.length,
           scheduledFor,
           createdAt: now,
           updatedAt: now,
@@ -2011,10 +2169,11 @@ function CampaignsSection({
           templateId: template.id,
           type: "queued",
           message: requiresApproval
-            ? `Prepared email ${repeatIndex + 1}/${repeatCount} for ${recipient.email}. Waiting for approval.`
-            : `Queued email ${repeatIndex + 1}/${repeatCount} for ${recipient.email}.`,
+            ? `Prepared email ${formatJobSequence(repeatIndex + 1, repeatCount, occurrenceIndex + 1, occurrenceSchedules.length)} for ${recipient.email}. Waiting for approval.`
+            : `Queued email ${formatJobSequence(repeatIndex + 1, repeatCount, occurrenceIndex + 1, occurrenceSchedules.length)} for ${recipient.email}.`,
         }));
       }
+      });
     });
   };
 
@@ -2024,7 +2183,10 @@ function CampaignsSection({
     const id = `comm-campaign-${Date.now()}`;
     const now = new Date().toISOString();
     const repeatCount = Math.max(1, Number(form.repeatCount || 1));
-    const repeatIntervalMinutes = Math.max(0, Number(form.repeatIntervalMinutes || 0));
+    const repeatIntervalValue = getRepeatIntervalValue(form);
+    const repeatIntervalUnit = getRepeatIntervalUnit(form);
+    const repeatIntervalMinutes = estimateIntervalMinutes(repeatIntervalValue, repeatIntervalUnit);
+    const recurrenceSettings = normalizeRecurrenceSettings(form);
     const requiresApproval = Boolean(form.requiresApproval);
     const launchRecipients = result.recipients;
     if (form.recipientScope === "All PMS Reservation Clients") {
@@ -2050,6 +2212,9 @@ function CampaignsSection({
       scheduleTimezone: campaignTimezone,
       repeatCount,
       repeatIntervalMinutes,
+      repeatIntervalValue,
+      repeatIntervalUnit,
+      ...recurrenceSettings,
       approvalStatus: requiresApproval ? "Pending Approval" : "Approved",
       approvalRequestedBy: requiresApproval ? meta().createdBy : undefined,
       approvalRequestedAt: requiresApproval ? now : undefined,
@@ -2084,6 +2249,9 @@ function CampaignsSection({
     const now = new Date().toISOString();
     const requiresApproval = Boolean(form.requiresApproval);
     const editedRecipients = result.recipients;
+    const repeatIntervalValue = getRepeatIntervalValue(form);
+    const repeatIntervalUnit = getRepeatIntervalUnit(form);
+    const recurrenceSettings = normalizeRecurrenceSettings(form);
     if (form.recipientScope === "All PMS Reservation Clients") {
       editedRecipients.forEach(addCommunicationRecipient);
     }
@@ -2111,7 +2279,10 @@ function CampaignsSection({
       scheduleTimeOfDay: form.scheduleTimeOfDay || "09:00",
       scheduleTimezone: campaignTimezone,
       repeatCount: Math.max(1, Number(form.repeatCount || 1)),
-      repeatIntervalMinutes: Math.max(0, Number(form.repeatIntervalMinutes || 0)),
+      repeatIntervalMinutes: estimateIntervalMinutes(repeatIntervalValue, repeatIntervalUnit),
+      repeatIntervalValue,
+      repeatIntervalUnit,
+      ...recurrenceSettings,
       approvalStatus: requiresApproval ? "Pending Approval" : "Approved",
       approvalRequestedBy: requiresApproval ? currentUserId : campaign.approvalRequestedBy,
       approvalRequestedAt: requiresApproval ? now : campaign.approvalRequestedAt,
@@ -2149,6 +2320,15 @@ function CampaignsSection({
       scheduleTimezone: campaign.scheduleTimezone || campaignTimezone,
       repeatCount: campaign.repeatCount || 1,
       repeatIntervalMinutes: campaign.repeatIntervalMinutes || 30,
+      repeatIntervalValue: campaign.repeatIntervalValue || getLegacyRepeatIntervalValue(campaign),
+      repeatIntervalUnit: campaign.repeatIntervalUnit || "Minutes",
+      recurrenceEnabled: Boolean(campaign.recurrenceEnabled),
+      recurrenceFrequency: campaign.recurrenceFrequency || "Monthly",
+      recurrenceInterval: campaign.recurrenceInterval || 1,
+      recurrenceDayOfWeek: campaign.recurrenceDayOfWeek ?? new Date().getDay(),
+      recurrenceDayOfMonth: campaign.recurrenceDayOfMonth || new Date().getDate(),
+      recurrenceMonth: campaign.recurrenceMonth || new Date().getMonth() + 1,
+      recurrenceOccurrences: campaign.recurrenceOccurrences || 12,
       requiresApproval: Boolean(campaign.approvalStatus === "Pending Approval"),
     });
     setPreflight([]);
@@ -2174,6 +2354,15 @@ function CampaignsSection({
       scheduleTimezone: campaign.scheduleTimezone || campaignTimezone,
       repeatCount: campaign.repeatCount || 1,
       repeatIntervalMinutes: campaign.repeatIntervalMinutes || 30,
+      repeatIntervalValue: campaign.repeatIntervalValue || getLegacyRepeatIntervalValue(campaign),
+      repeatIntervalUnit: campaign.repeatIntervalUnit || "Minutes",
+      recurrenceEnabled: Boolean(campaign.recurrenceEnabled),
+      recurrenceFrequency: campaign.recurrenceFrequency || "Monthly",
+      recurrenceInterval: campaign.recurrenceInterval || 1,
+      recurrenceDayOfWeek: campaign.recurrenceDayOfWeek ?? new Date().getDay(),
+      recurrenceDayOfMonth: campaign.recurrenceDayOfMonth || new Date().getDate(),
+      recurrenceMonth: campaign.recurrenceMonth || new Date().getMonth() + 1,
+      recurrenceOccurrences: campaign.recurrenceOccurrences || 12,
       requiresApproval: campaign.approvalStatus === "Pending Approval",
     });
     setPreflight([]);
@@ -2289,13 +2478,52 @@ function CampaignsSection({
           )}
           <div className="rounded-lg border border-border bg-muted/20 p-3">
             <p className="mb-3 text-sm font-medium">Repeat Delivery</p>
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="grid gap-3 sm:grid-cols-3">
               <Field label="Repeat Count" type="number" value={String(form.repeatCount)} onChange={value => setForm({ ...form, repeatCount: Number(value) })} />
-              <Field label="Repeat Interval Minutes" type="number" value={String(form.repeatIntervalMinutes)} onChange={value => setForm({ ...form, repeatIntervalMinutes: Number(value) })} />
+              <Field label="Repeat Every" type="number" value={String(form.repeatIntervalValue)} onChange={value => setForm({ ...form, repeatIntervalValue: Number(value), repeatIntervalMinutes: estimateIntervalMinutes(Number(value), form.repeatIntervalUnit) })} />
+              <SelectField label="Unit" value={form.repeatIntervalUnit} onChange={value => setForm({ ...form, repeatIntervalUnit: value as CommunicationRepeatIntervalUnit, repeatIntervalMinutes: estimateIntervalMinutes(form.repeatIntervalValue, value as CommunicationRepeatIntervalUnit) })} options={repeatIntervalUnits.map(item => ({ value: item, label: item }))} />
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
-              Use 1 to send once. Use 3 and 30 minutes to send the same campaign at the scheduled time, then again 30 and 60 minutes later. Max retries remain separate and only apply after failed delivery attempts.
+              Use 1 to send once. Use 3 and every 2 Hours to send at the scheduled time, then again 2 and 4 hours later. Max retries remain separate and only apply after failed delivery attempts.
             </p>
+          </div>
+          <div className="rounded-lg border border-border bg-muted/20 p-3">
+            <label className="flex items-start gap-3 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={Boolean(form.recurrenceEnabled)}
+                onChange={event => setForm({ ...form, recurrenceEnabled: event.target.checked })}
+              />
+              <span>
+                <span className="block font-medium">Recurring Schedule</span>
+                <span className="block text-xs text-muted-foreground">Create future calendar occurrences such as every 5th day of each month, every 15th day every 2 months, every selected weekday every X weeks, or yearly reminders.</span>
+              </span>
+            </label>
+            {form.recurrenceEnabled && (
+              <div className="mt-4 space-y-3">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <SelectField label="Frequency" value={form.recurrenceFrequency} onChange={value => setForm({ ...form, recurrenceFrequency: value as CommunicationRecurrenceFrequency })} options={recurrenceFrequencies.map(item => ({ value: item, label: item }))} />
+                  <Field label="Every" type="number" value={String(form.recurrenceInterval)} onChange={value => setForm({ ...form, recurrenceInterval: Number(value) })} />
+                  <Field label="Occurrences" type="number" value={String(form.recurrenceOccurrences)} onChange={value => setForm({ ...form, recurrenceOccurrences: Number(value) })} />
+                </div>
+                {form.recurrenceFrequency === "Weekly" && (
+                  <SelectField label="Day of Week" value={String(form.recurrenceDayOfWeek)} onChange={value => setForm({ ...form, recurrenceDayOfWeek: Number(value) })} options={weekDayOptions} />
+                )}
+                {form.recurrenceFrequency === "Monthly" && (
+                  <Field label="Day of Month" type="number" value={String(form.recurrenceDayOfMonth)} onChange={value => setForm({ ...form, recurrenceDayOfMonth: Number(value) })} />
+                )}
+                {form.recurrenceFrequency === "Yearly" && (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <SelectField label="Month" value={String(form.recurrenceMonth)} onChange={value => setForm({ ...form, recurrenceMonth: Number(value) })} options={monthOptions} />
+                    <Field label="Day of Month" type="number" value={String(form.recurrenceDayOfMonth)} onChange={value => setForm({ ...form, recurrenceDayOfMonth: Number(value) })} />
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  The first occurrence starts from the selected delivery timing. Monthly and yearly days are safely adjusted to the last valid day of shorter months. Jobs are generated up front so the calendar shows every planned email.
+                </p>
+              </div>
+            )}
           </div>
           <div className="grid gap-2 sm:grid-cols-2">
             <Button variant="outline" disabled={!canEdit} onClick={runPreflight}>Preflight Check</Button>
@@ -2306,7 +2534,7 @@ function CampaignsSection({
           </div>
           {preflight.length > 0 && <FormError message={`Preflight blocked launch:\n${preflight.map(item => `- ${item}`).join("\n")}`} />}
           {preflightWarnings.length > 0 && !preflight.length && <InfoMessage message={preflightWarnings.join("\n")} />}
-          {readyRecipients.length > 0 && !preflight.length && <SuccessMessage message={`Preflight passed. ${readyRecipients.length} final recipients will be queued.`} />}
+          {readyRecipients.length > 0 && !preflight.length && <SuccessMessage message={`Preflight passed. ${readyRecipients.length} final recipients will create ${estimateCampaignJobCount(readyRecipients.length, form)} outbox jobs.`} />}
         </div>
       </Panel>
 
@@ -2435,7 +2663,7 @@ function CampaignCalendarSection({ scoped }: SharedProps) {
                       <td className="p-3"><p className="font-medium">{job.recipientName}</p><p className="text-xs text-muted-foreground">{job.recipientEmail}</p></td>
                       <td className="p-3">{scoped.campaigns.find(campaign => campaign.id === job.campaignId)?.name || job.campaignId}</td>
                       <td className="max-w-xs truncate p-3">{job.subject}</td>
-                      <td className="p-3">{job.repeatTotal && job.repeatTotal > 1 ? `${job.repeatIndex || 1}/${job.repeatTotal}` : "Once"}</td>
+                      <td className="p-3">{formatOutboxJobSequence(job)}</td>
                       <td className="p-3"><Badge tone={job.status === "sent" ? "positive" : job.status === "failed" ? "negative" : "warning"}>{job.status}</Badge></td>
                       <td className="max-w-xs truncate p-3 text-xs text-muted-foreground">{job.lastError || "-"}</td>
                     </tr>
@@ -2662,7 +2890,7 @@ function OutboxSection({
                 <td className="p-3"><p className="font-medium">{job.recipientName}</p><p className="text-xs text-muted-foreground">{job.recipientEmail}</p></td>
                 <td className="p-3">{scoped.campaigns.find(item => item.id === job.campaignId)?.name || job.campaignId}</td>
                 <td className="p-3 text-xs text-muted-foreground">{formatDateTime(job.scheduledFor)}</td>
-                <td className="p-3 text-xs text-muted-foreground">{job.repeatTotal && job.repeatTotal > 1 ? `${job.repeatIndex || 1}/${job.repeatTotal}` : "Once"}</td>
+                <td className="p-3 text-xs text-muted-foreground">{formatOutboxJobSequence(job)}</td>
                 <td className="p-3"><Badge tone={job.status === "sent" ? "positive" : job.status === "failed" ? "negative" : "warning"}>{job.status}</Badge></td>
                 <td className="p-3">{job.attempts}/{job.maxRetries}</td>
                 <td className="max-w-xs truncate p-3">{job.lastError}</td>
@@ -2875,6 +3103,170 @@ function SelectField({ label, value, onChange, options, info }: { label: string;
   );
 }
 
+function RichTextComposer({
+  label,
+  value,
+  onChange,
+  imageVariables,
+  info,
+}: {
+  label: string;
+  value: string;
+  onChange: (html: string, plainText: string) => void;
+  imageVariables: string[];
+  info?: { title: string; body: string; example?: string; warning?: string };
+}) {
+  const editorRef = useRef<HTMLDivElement | null>(null);
+  const [selectedImageVariable, setSelectedImageVariable] = useState(imageVariables[0] || "{{attached_image1}}");
+  const availableImageVariables = imageVariables.length ? imageVariables : ["{{attached_image1}}"];
+
+  useEffect(() => {
+    if (!availableImageVariables.includes(selectedImageVariable)) {
+      setSelectedImageVariable(availableImageVariables[0]);
+    }
+  }, [availableImageVariables, selectedImageVariable]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || document.activeElement === editor) return;
+    const safeValue = sanitizeHtml(value || "");
+    if (editor.innerHTML !== safeValue) {
+      editor.innerHTML = safeValue;
+    }
+  }, [value]);
+
+  const sync = () => {
+    const editor = editorRef.current;
+    const html = sanitizeHtml(editor?.innerHTML || "");
+    onChange(html, htmlToText(html));
+  };
+  const run = (command: string, commandValue?: string) => {
+    editorRef.current?.focus();
+    document.execCommand("styleWithCSS", false, "true");
+    document.execCommand(command, false, commandValue);
+    sync();
+  };
+  const insertHtml = (html: string) => {
+    editorRef.current?.focus();
+    document.execCommand("insertHTML", false, html);
+    sync();
+  };
+  const insertLink = () => {
+    const url = prompt("Enter the full URL for the link, including https://");
+    if (!url) return;
+    run("createLink", url);
+  };
+  const insertImageVariable = (withLink = false) => {
+    const variable = selectedImageVariable || availableImageVariables[0];
+    if (!withLink) {
+      insertHtml(variable);
+      return;
+    }
+    const url = prompt("Enter the full URL the image should open, including https://");
+    if (!url) return;
+    insertHtml(`<a href="${escapeAttribute(url)}" target="_blank" rel="noopener noreferrer">${variable}</a>`);
+  };
+  const insertTable = () => {
+    insertHtml('<table style="width:100%;border-collapse:collapse;"><tbody><tr><td style="border:1px solid #ddd;padding:8px;">Cell</td><td style="border:1px solid #ddd;padding:8px;">Cell</td></tr><tr><td style="border:1px solid #ddd;padding:8px;">Cell</td><td style="border:1px solid #ddd;padding:8px;">Cell</td></tr></tbody></table>');
+  };
+
+  return (
+    <div className="rounded-lg border border-border bg-background">
+      <div className="border-b border-border p-3">
+        <div className="mb-2 flex items-center gap-2 text-sm font-medium">{label}<InfoTip info={info} /></div>
+        <div className="flex flex-wrap items-center gap-1 rounded-md border border-border bg-muted/40 p-2">
+          <ToolbarButton title="Bold" onClick={() => run("bold")}><Bold className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Italic" onClick={() => run("italic")}><Italic className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Underline" onClick={() => run("underline")}><Underline className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Strikethrough" onClick={() => run("strikeThrough")}><Strikethrough className="h-4 w-4" /></ToolbarButton>
+          <ToolbarDivider />
+          <select className="h-8 rounded-md border border-input bg-background px-2 text-xs" onChange={event => run("fontName", event.target.value)} defaultValue="Arial">
+            {["Arial", "Verdana", "Georgia", "Times New Roman", "Trebuchet MS", "Courier New"].map(font => <option key={font} value={font}>{font}</option>)}
+          </select>
+          <select className="h-8 rounded-md border border-input bg-background px-2 text-xs" onChange={event => run("fontSize", event.target.value)} defaultValue="3">
+            <option value="2">10</option>
+            <option value="3">12</option>
+            <option value="4">14</option>
+            <option value="5">18</option>
+            <option value="6">24</option>
+            <option value="7">32</option>
+          </select>
+          <label className="inline-flex h-8 items-center gap-1 rounded-md border border-input bg-background px-2 text-xs" title="Text color">
+            <Type className="h-4 w-4" />
+            <input type="color" className="h-5 w-6 border-0 bg-transparent p-0" onChange={event => run("foreColor", event.target.value)} />
+          </label>
+          <label className="inline-flex h-8 items-center gap-1 rounded-md border border-input bg-background px-2 text-xs" title="Highlight color">
+            <Highlighter className="h-4 w-4" />
+            <input type="color" className="h-5 w-6 border-0 bg-transparent p-0" onChange={event => run("hiliteColor", event.target.value)} />
+          </label>
+          <ToolbarDivider />
+          <ToolbarButton title="Align left" onClick={() => run("justifyLeft")}><AlignLeft className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Align center" onClick={() => run("justifyCenter")}><AlignCenter className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Align right" onClick={() => run("justifyRight")}><AlignRight className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Justify" onClick={() => run("justifyFull")}><AlignJustify className="h-4 w-4" /></ToolbarButton>
+          <ToolbarDivider />
+          <ToolbarButton title="Bulleted list" onClick={() => run("insertUnorderedList")}><List className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Numbered list" onClick={() => run("insertOrderedList")}><ListOrdered className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Indent" onClick={() => run("indent")}>→</ToolbarButton>
+          <ToolbarButton title="Outdent" onClick={() => run("outdent")}>←</ToolbarButton>
+          <ToolbarDivider />
+          <ToolbarButton title="Insert link" onClick={insertLink}><Link className="h-4 w-4" /></ToolbarButton>
+          <ToolbarButton title="Remove link" onClick={() => run("unlink")}>Unlink</ToolbarButton>
+          <ToolbarButton title="Horizontal line" onClick={() => run("insertHorizontalRule")}>Line</ToolbarButton>
+          <ToolbarButton title="Quote" onClick={() => run("formatBlock", "blockquote")}>Quote</ToolbarButton>
+          <ToolbarButton title="Table" onClick={insertTable}>Table</ToolbarButton>
+          <ToolbarButton title="Superscript" onClick={() => run("superscript")}>x²</ToolbarButton>
+          <ToolbarButton title="Subscript" onClick={() => run("subscript")}>x₂</ToolbarButton>
+          <ToolbarButton title="Clear formatting" onClick={() => run("removeFormat")}>Clear</ToolbarButton>
+          <ToolbarDivider />
+          <select className="h-8 max-w-[170px] rounded-md border border-input bg-background px-2 text-xs" value={selectedImageVariable} onChange={event => setSelectedImageVariable(event.target.value)}>
+            {availableImageVariables.map(variable => <option key={variable} value={variable}>{variable}</option>)}
+          </select>
+          <ToolbarButton title="Insert attached image variable" onClick={() => insertImageVariable(false)}>Image</ToolbarButton>
+          <ToolbarButton title="Insert linked attached image variable" onClick={() => insertImageVariable(true)}>Linked Image</ToolbarButton>
+        </div>
+      </div>
+      <div
+        ref={editorRef}
+        contentEditable
+        suppressContentEditableWarning
+        className="min-h-48 w-full overflow-auto rounded-b-lg bg-white px-4 py-3 text-sm leading-6 text-[#2d2924] outline-none"
+        onInput={sync}
+        onBlur={sync}
+        dangerouslySetInnerHTML={{ __html: sanitizeHtml(value || "") }}
+      />
+    </div>
+  );
+}
+
+function ToolbarButton({ title, onClick, children }: { title: string; onClick: () => void; children: ReactNode }) {
+  return (
+    <button type="button" title={title} onMouseDown={event => event.preventDefault()} onClick={onClick} className="inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-border bg-background px-2 text-xs font-medium hover:bg-[#c98736]/10">
+      {children}
+    </button>
+  );
+}
+
+function ToolbarDivider() {
+  return <span className="mx-1 h-6 w-px bg-border" />;
+}
+
+function SelectedFilesList({ files, onRemove }: { files: File[]; onRemove: (index: number) => void }) {
+  if (!files.length) return <p className="mt-2 text-xs text-muted-foreground">No files selected.</p>;
+  return (
+    <div className="mt-2 space-y-2">
+      {files.map((file, index) => (
+        <div key={`${file.name}-${file.size}-${file.lastModified}-${index}`} className="flex items-center justify-between gap-2 rounded-md border border-border bg-background px-3 py-2 text-xs">
+          <span className="min-w-0 truncate">{file.name} ({formatBytes(file.size)})</span>
+          <button type="button" className="text-destructive" onClick={() => onRemove(index)} aria-label={`Remove ${file.name}`}>
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function InfoTip({ info }: { info?: { title: string; body: string; example?: string; warning?: string } }) {
   if (!info) return null;
   return (
@@ -3053,9 +3445,22 @@ function richTextToHtml(value: string) {
 }
 
 function renderTemplate(html: string, recipient?: CommunicationRecipient, propertyName = "", assets: CommunicationTemplateAsset[] = []) {
-  if (!recipient) return sanitizeHtml(html);
+  const fallbackRecipient = {
+    id: "preview-recipient",
+    companyId: "",
+    propertyId: "",
+    source: "Manual" as const,
+    name: "Preview Guest",
+    email: "guest@example.com",
+    valid: true,
+    status: "Active" as CommunicationStatus,
+    createdBy: "preview",
+    updatedBy: "preview",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
   return renderString(sanitizeHtml(html), {
-    ...getRecipientVariables(recipient, propertyName, "#unsubscribe", "html"),
+    ...getRecipientVariables(recipient || fallbackRecipient, propertyName, "#unsubscribe", "html"),
     ...getAttachedImageVariables(assets, "html"),
   });
 }
@@ -3068,7 +3473,11 @@ function materializeOutboxJobForDelivery(
 ): CommunicationOutboxJob {
   const template = scoped.templates.find(item => item.id === job.templateId);
   const recipient = scoped.recipients.find(item => item.id === job.recipientId);
+  const sender = scoped.senders.find(item => item.id === job.senderId);
   const inlineAssets = (template?.assetIds || [])
+    .map(assetId => scoped.assets.find(asset => asset.id === assetId))
+    .filter((asset): asset is CommunicationTemplateAsset => Boolean(asset));
+  const signatureAssets = (sender?.signatureAssetIds || [])
     .map(assetId => scoped.assets.find(asset => asset.id === assetId))
     .filter((asset): asset is CommunicationTemplateAsset => Boolean(asset));
   const attachmentAssets = (template?.attachmentIds || job.attachmentIds || [])
@@ -3082,6 +3491,15 @@ function materializeOutboxJobForDelivery(
     downloadUrl: asset.downloadUrl,
     embeddedDataUrl: asset.embeddedDataUrl,
     cid: buildInlineAssetCid(asset, index, job.id),
+    inline: true,
+  }));
+  const signatureAttachments = signatureAssets.map((asset, index) => ({
+    name: asset.name,
+    mimeType: asset.mimeType,
+    size: asset.size,
+    downloadUrl: asset.downloadUrl,
+    embeddedDataUrl: asset.embeddedDataUrl,
+    cid: buildInlineAssetCid(asset, index, `${job.id}-signature`),
     inline: true,
   }));
   const htmlVars = {
@@ -3100,6 +3518,7 @@ function materializeOutboxJobForDelivery(
       updatedAt: job.updatedAt,
     }, propertyName, unsubscribeUrl, "html"),
     ...getAttachedImageVariables(inlineAttachments, "html", "cid"),
+    ...getAttachedImageVariables(signatureAttachments, "html", "cid", "sender_signature_image"),
   };
   const textVars = {
     ...getRecipientVariables(recipient || {
@@ -3117,15 +3536,21 @@ function materializeOutboxJobForDelivery(
       updatedAt: job.updatedAt,
     }, propertyName, unsubscribeUrl, "text"),
     ...getAttachedImageVariables(inlineAttachments, "text", "url"),
+    ...getAttachedImageVariables(signatureAttachments, "text", "url", "sender_signature_image"),
   };
+  const renderedHtml = renderString(template?.html || job.html || "", htmlVars);
+  const renderedPlainText = renderString(template?.plainText || job.plainText || htmlToText(template?.html || job.html || ""), textVars);
+  const renderedSignatureHtml = renderString(sender?.signatureHtml || "", htmlVars);
+  const renderedSignatureText = renderString(sender?.signaturePlainText || htmlToText(sender?.signatureHtml || ""), textVars);
 
   return {
     ...job,
     subject: renderString(template?.subject || job.subject || "", textVars),
-    html: renderString(template?.html || job.html || "", htmlVars),
-    plainText: renderString(template?.plainText || job.plainText || htmlToText(template?.html || job.html || ""), textVars),
+    html: applySenderSignature(renderedHtml, renderedSignatureHtml, sender?.signaturePosition || "After Body", "html"),
+    plainText: applySenderSignature(renderedPlainText, renderedSignatureText, sender?.signaturePosition || "After Body", "text"),
     attachments: [
       ...inlineAttachments,
+      ...signatureAttachments,
       ...attachmentAssets.map(asset => ({
         name: asset.name,
         mimeType: asset.mimeType,
@@ -3165,10 +3590,15 @@ function buildAttachedImageVariableNames(count: number) {
   return Array.from({ length: count }, (_, index) => `{{attached_image${index + 1}}}`);
 }
 
+function buildSenderSignatureImageVariableNames(count: number) {
+  return Array.from({ length: count }, (_, index) => `{{sender_signature_image${index + 1}}}`);
+}
+
 function getAttachedImageVariables(
   assets: Array<CommunicationTemplateAsset | (CommunicationTemplateAsset & { cid?: string; inline?: boolean })>,
   mode: "html" | "text",
   sourceMode: "url" | "cid" = "url",
+  prefix = "attached_image",
 ) {
   return Object.fromEntries(assets.map((asset, index) => {
     const source = sourceMode === "cid" && "cid" in asset && asset.cid
@@ -3182,8 +3612,26 @@ function getAttachedImageVariables(
       : source
         ? `[Image: ${asset.name}] ${source}`
         : `[Image: ${asset.name}]`;
-    return [`attached_image${index + 1}`, value];
+    return [`${prefix}${index + 1}`, value];
   }));
+}
+
+function renderSenderSignature(html: string, assets: CommunicationTemplateAsset[]) {
+  return renderString(sanitizeHtml(html), getAttachedImageVariables(assets, "html", "url", "sender_signature_image"));
+}
+
+function applySenderSignature(body: string, signature: string, position: CommunicationSender["signaturePosition"], mode: "html" | "text") {
+  const cleanSignature = mode === "html" ? sanitizeHtml(signature || "") : String(signature || "").trim();
+  if (!cleanSignature || position === "Disabled") return body;
+  if (mode === "html") {
+    const separator = '<div style="height:16px;line-height:16px;">&nbsp;</div>';
+    return position === "Before Body"
+      ? `${cleanSignature}${separator}${body}`
+      : `${body}${separator}${cleanSignature}`;
+  }
+  return position === "Before Body"
+    ? `${cleanSignature}\n\n${body}`.trim()
+    : `${body}\n\n${cleanSignature}`.trim();
 }
 
 function buildInlineAssetCid(asset: CommunicationTemplateAsset, index: number, jobId: string) {
@@ -3543,6 +3991,221 @@ function addMinutesToIso(value: string, minutes: number) {
   return date.toISOString();
 }
 
+function addIntervalToIso(value: string, amount: number, unit: CommunicationRepeatIntervalUnit, timezone = "UTC") {
+  if (!amount) return value;
+  if (unit === "Minutes") return addMinutesToIso(value, amount);
+  if (unit === "Hours") return addMinutesToIso(value, amount * 60);
+  if (unit === "Days") return addMinutesToIso(value, amount * 24 * 60);
+  if (unit === "Weeks") return addMinutesToIso(value, amount * 7 * 24 * 60);
+  if (unit === "Months") return addMonthsToZonedIso(value, amount, timezone);
+  return addYearsToZonedIso(value, amount, timezone);
+}
+
+function getRepeatIntervalUnit(source: Partial<CommunicationCampaign> & { repeatIntervalUnit?: CommunicationRepeatIntervalUnit }) {
+  return source.repeatIntervalUnit || "Minutes";
+}
+
+function getRepeatIntervalValue(source: Partial<CommunicationCampaign> & { repeatIntervalValue?: number; repeatIntervalMinutes?: number }) {
+  const value = Number(source.repeatIntervalValue ?? source.repeatIntervalMinutes ?? 30);
+  return Math.max(0, Number.isFinite(value) ? value : 30);
+}
+
+function getLegacyRepeatIntervalValue(campaign: CommunicationCampaign) {
+  return Math.max(0, Number(campaign.repeatIntervalMinutes || 30));
+}
+
+function estimateIntervalMinutes(value: number, unit: CommunicationRepeatIntervalUnit) {
+  const amount = Math.max(0, Number(value || 0));
+  if (unit === "Minutes") return amount;
+  if (unit === "Hours") return amount * 60;
+  if (unit === "Days") return amount * 24 * 60;
+  if (unit === "Weeks") return amount * 7 * 24 * 60;
+  if (unit === "Months") return amount * 30 * 24 * 60;
+  return amount * 365 * 24 * 60;
+}
+
+function normalizeRecurrenceSettings(source: Partial<CommunicationCampaign>) {
+  const now = new Date();
+  const recurrenceFrequency = source.recurrenceFrequency || "Monthly";
+  const recurrenceInterval = clampNumber(source.recurrenceInterval, 1, 120, 1);
+  const recurrenceDayOfWeek = clampNumber(source.recurrenceDayOfWeek, 0, 6, now.getDay());
+  const recurrenceDayOfMonth = clampNumber(source.recurrenceDayOfMonth, 1, 31, now.getDate());
+  const recurrenceMonth = clampNumber(source.recurrenceMonth, 1, 12, now.getMonth() + 1);
+  const recurrenceOccurrences = source.recurrenceEnabled ? clampNumber(source.recurrenceOccurrences, 1, 120, 12) : 1;
+  return {
+    recurrenceEnabled: Boolean(source.recurrenceEnabled),
+    recurrenceFrequency,
+    recurrenceInterval,
+    recurrenceDayOfWeek,
+    recurrenceDayOfMonth,
+    recurrenceMonth,
+    recurrenceOccurrences,
+  };
+}
+
+function estimateCampaignJobCount(recipientCount: number, source: Partial<CommunicationCampaign>) {
+  const repeatCount = Math.max(1, Number(source.repeatCount || 1));
+  const recurrenceOccurrences = source.recurrenceEnabled ? clampNumber(source.recurrenceOccurrences, 1, 120, 12) : 1;
+  return recipientCount * repeatCount * recurrenceOccurrences;
+}
+
+function buildRecurringOccurrenceSchedules(
+  anchorIso: string,
+  timezone: string,
+  source: Partial<CommunicationCampaign>,
+) {
+  const settings = normalizeRecurrenceSettings(source);
+  if (!settings.recurrenceEnabled) return [anchorIso];
+  const anchor = new Date(anchorIso);
+  if (Number.isNaN(anchor.getTime())) return [new Date().toISOString()];
+  const anchorParts = getZonedDateTimeParts(anchorIso, timezone);
+  const schedules: string[] = [];
+  let firstOffset = 0;
+
+  if (settings.recurrenceFrequency === "Monthly") {
+    firstOffset = findFirstValidMonthOffset(anchorIso, timezone, anchorParts, settings.recurrenceDayOfMonth, settings.recurrenceInterval);
+  }
+  if (settings.recurrenceFrequency === "Yearly") {
+    firstOffset = findFirstValidYearOffset(anchorIso, timezone, anchorParts, settings.recurrenceMonth, settings.recurrenceDayOfMonth, settings.recurrenceInterval);
+  }
+
+  for (let index = 0; index < settings.recurrenceOccurrences; index += 1) {
+    if (settings.recurrenceFrequency === "Daily") {
+      schedules.push(buildZonedDateTimeIso(addDaysToCalendarParts(anchorParts, index * settings.recurrenceInterval), anchorParts.hour, anchorParts.minute, timezone));
+      continue;
+    }
+    if (settings.recurrenceFrequency === "Weekly") {
+      const firstWeekly = addDaysToCalendarParts(anchorParts, getDaysUntilWeekday(anchorParts, settings.recurrenceDayOfWeek));
+      schedules.push(buildZonedDateTimeIso(addDaysToCalendarParts(firstWeekly, index * settings.recurrenceInterval * 7), anchorParts.hour, anchorParts.minute, timezone));
+      continue;
+    }
+    if (settings.recurrenceFrequency === "Monthly") {
+      const monthParts = addMonthsToCalendarParts(anchorParts, firstOffset + index * settings.recurrenceInterval, settings.recurrenceDayOfMonth);
+      schedules.push(buildZonedDateTimeIso(monthParts, anchorParts.hour, anchorParts.minute, timezone));
+      continue;
+    }
+    const yearParts = addYearsToCalendarParts(anchorParts, firstOffset + index * settings.recurrenceInterval, settings.recurrenceMonth, settings.recurrenceDayOfMonth);
+    schedules.push(buildZonedDateTimeIso(yearParts, anchorParts.hour, anchorParts.minute, timezone));
+  }
+  return schedules;
+}
+
+function findFirstValidMonthOffset(anchorIso: string, timezone: string, anchorParts: CalendarParts, dayOfMonth: number, interval: number) {
+  let offset = 0;
+  for (let guard = 0; guard < 120; guard += 1) {
+    const candidate = addMonthsToCalendarParts(anchorParts, offset, dayOfMonth);
+    const candidateIso = buildZonedDateTimeIso(candidate, anchorParts.hour, anchorParts.minute, timezone);
+    if (new Date(candidateIso) >= new Date(anchorIso)) return offset;
+    offset += interval;
+  }
+  return 0;
+}
+
+function findFirstValidYearOffset(anchorIso: string, timezone: string, anchorParts: CalendarParts, month: number, dayOfMonth: number, interval: number) {
+  let offset = 0;
+  for (let guard = 0; guard < 120; guard += 1) {
+    const candidate = addYearsToCalendarParts(anchorParts, offset, month, dayOfMonth);
+    const candidateIso = buildZonedDateTimeIso(candidate, anchorParts.hour, anchorParts.minute, timezone);
+    if (new Date(candidateIso) >= new Date(anchorIso)) return offset;
+    offset += interval;
+  }
+  return 0;
+}
+
+type CalendarParts = { year: number; month: number; day: number; hour: number; minute: number };
+
+function getZonedDateTimeParts(value: string, timezone: string): CalendarParts {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    const fallback = new Date();
+    return {
+      year: fallback.getFullYear(),
+      month: fallback.getMonth() + 1,
+      day: fallback.getDate(),
+      hour: fallback.getHours(),
+      minute: fallback.getMinutes(),
+    };
+  }
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(date);
+    const lookup = Object.fromEntries(parts.map(part => [part.type, part.value]));
+    return {
+      year: Number(lookup.year),
+      month: Number(lookup.month),
+      day: Number(lookup.day),
+      hour: Number(lookup.hour),
+      minute: Number(lookup.minute),
+    };
+  } catch {
+    return {
+      year: date.getUTCFullYear(),
+      month: date.getUTCMonth() + 1,
+      day: date.getUTCDate(),
+      hour: date.getUTCHours(),
+      minute: date.getUTCMinutes(),
+    };
+  }
+}
+
+function buildZonedDateTimeIso(parts: Pick<CalendarParts, "year" | "month" | "day">, hour: number, minute: number, timezone: string) {
+  const value = `${String(parts.year).padStart(4, "0")}-${String(parts.month).padStart(2, "0")}-${String(parts.day).padStart(2, "0")}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  return zonedDateTimeToIso(value, timezone);
+}
+
+function addDaysToCalendarParts(parts: Pick<CalendarParts, "year" | "month" | "day"> & Partial<Pick<CalendarParts, "hour" | "minute">>, days: number): CalendarParts {
+  const date = new Date(Date.UTC(parts.year, parts.month - 1, parts.day));
+  date.setUTCDate(date.getUTCDate() + days);
+  return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate(), hour: Number(parts.hour || 0), minute: Number(parts.minute || 0) };
+}
+
+function addMonthsToCalendarParts(parts: Pick<CalendarParts, "year" | "month" | "day"> & Partial<Pick<CalendarParts, "hour" | "minute">>, months: number, preferredDay = parts.day): CalendarParts {
+  const absoluteMonth = parts.year * 12 + (parts.month - 1) + months;
+  const year = Math.floor(absoluteMonth / 12);
+  const month = (absoluteMonth % 12) + 1;
+  const day = Math.min(clampNumber(preferredDay, 1, 31, 1), getDaysInCalendarMonth(year, month));
+  return { year, month, day, hour: Number(parts.hour || 0), minute: Number(parts.minute || 0) };
+}
+
+function addYearsToCalendarParts(parts: Pick<CalendarParts, "year" | "month" | "day"> & Partial<Pick<CalendarParts, "hour" | "minute">>, years: number, preferredMonth = parts.month, preferredDay = parts.day): CalendarParts {
+  const year = parts.year + years;
+  const month = clampNumber(preferredMonth, 1, 12, parts.month);
+  const day = Math.min(clampNumber(preferredDay, 1, 31, parts.day), getDaysInCalendarMonth(year, month));
+  return { year, month, day, hour: Number(parts.hour || 0), minute: Number(parts.minute || 0) };
+}
+
+function addMonthsToZonedIso(value: string, months: number, timezone: string) {
+  const parts = getZonedDateTimeParts(value, timezone);
+  return buildZonedDateTimeIso(addMonthsToCalendarParts(parts, months), parts.hour, parts.minute, timezone);
+}
+
+function addYearsToZonedIso(value: string, years: number, timezone: string) {
+  const parts = getZonedDateTimeParts(value, timezone);
+  return buildZonedDateTimeIso(addYearsToCalendarParts(parts, years), parts.hour, parts.minute, timezone);
+}
+
+function getDaysUntilWeekday(parts: Pick<CalendarParts, "year" | "month" | "day">, targetWeekday: number) {
+  const currentWeekday = new Date(Date.UTC(parts.year, parts.month - 1, parts.day)).getUTCDay();
+  return (targetWeekday - currentWeekday + 7) % 7;
+}
+
+function getDaysInCalendarMonth(year: number, month: number) {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function clampNumber(value: unknown, min: number, max: number, fallback: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(parsed)));
+}
+
 function scheduleByRule(index: number, rule: CommunicationSendingRule) {
   const batchIndex = Math.floor(index / Math.max(1, rule.batchSize));
   const date = new Date();
@@ -3655,9 +4318,37 @@ function formatCampaignTiming(campaign: CommunicationCampaign) {
 
 function formatCampaignRepeat(campaign: CommunicationCampaign) {
   const repeatCount = Math.max(1, Number(campaign.repeatCount || 1));
-  const repeatInterval = Math.max(0, Number(campaign.repeatIntervalMinutes || 0));
-  if (repeatCount === 1) return "Once";
-  return `${repeatCount} sends / ${repeatInterval} min`;
+  const repeatIntervalValue = getRepeatIntervalValue(campaign);
+  const repeatIntervalUnit = getRepeatIntervalUnit(campaign);
+  const repeatLabel = repeatCount === 1
+    ? "Once"
+    : `${repeatCount} sends / every ${repeatIntervalValue} ${repeatIntervalUnit.toLowerCase()}`;
+  if (!campaign.recurrenceEnabled) return repeatLabel;
+  return `${repeatLabel} | ${formatCampaignRecurrence(campaign)}`;
+}
+
+function formatCampaignRecurrence(campaign: CommunicationCampaign) {
+  const settings = normalizeRecurrenceSettings(campaign);
+  if (!settings.recurrenceEnabled) return "No recurrence";
+  const occurrences = `${settings.recurrenceOccurrences} occurrences`;
+  if (settings.recurrenceFrequency === "Daily") return `Every ${settings.recurrenceInterval} day(s), ${occurrences}`;
+  if (settings.recurrenceFrequency === "Weekly") {
+    const day = weekDayOptions.find(item => item.value === String(settings.recurrenceDayOfWeek))?.label || "selected weekday";
+    return `Every ${settings.recurrenceInterval} week(s) on ${day}, ${occurrences}`;
+  }
+  if (settings.recurrenceFrequency === "Monthly") return `Every ${settings.recurrenceInterval} month(s) on day ${settings.recurrenceDayOfMonth}, ${occurrences}`;
+  const month = monthOptions.find(item => item.value === String(settings.recurrenceMonth))?.label || "selected month";
+  return `Every ${settings.recurrenceInterval} year(s) on ${month} ${settings.recurrenceDayOfMonth}, ${occurrences}`;
+}
+
+function formatJobSequence(repeatIndex: number, repeatTotal: number, recurrenceIndex: number, recurrenceTotal: number) {
+  const repeat = repeatTotal > 1 ? `repeat ${repeatIndex}/${repeatTotal}` : "once";
+  const recurrence = recurrenceTotal > 1 ? `occurrence ${recurrenceIndex}/${recurrenceTotal}` : "";
+  return [repeat, recurrence].filter(Boolean).join(" - ");
+}
+
+function formatOutboxJobSequence(job: CommunicationOutboxJob) {
+  return formatJobSequence(job.repeatIndex || 1, job.repeatTotal || 1, job.recurrenceIndex || 1, job.recurrenceTotal || 1);
 }
 
 function formatDateTime(value?: string) {
@@ -3744,6 +4435,24 @@ function fileToDataUrl(file: File) {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+}
+
+function mergeFiles(current: File[], incoming: File[]) {
+  const existing = new Set(current.map(file => `${file.name}-${file.size}-${file.lastModified}`));
+  const additions = incoming.filter(file => {
+    const key = `${file.name}-${file.size}-${file.lastModified}`;
+    if (existing.has(key)) return false;
+    existing.add(key);
+    return true;
+  });
+  return [...current, ...additions];
+}
+
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  return `${(value / 1024 ** index).toFixed(index ? 1 : 0)} ${units[index]}`;
 }
 
 function escapeHtml(value: string) {

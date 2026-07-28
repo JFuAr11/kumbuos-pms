@@ -154,6 +154,8 @@ export type CommunicationOutboxStatus =
 export type CommunicationProviderKind = 'Mock/Test' | 'SMTP';
 export type CommunicationCampaignType = 'Operational' | 'Marketing';
 export type CommunicationScheduleMode = 'Manual' | 'Before Check-in' | 'After Check-out' | 'Birthday';
+export type CommunicationRepeatIntervalUnit = 'Minutes' | 'Hours' | 'Days' | 'Weeks' | 'Months' | 'Years';
+export type CommunicationRecurrenceFrequency = 'Daily' | 'Weekly' | 'Monthly' | 'Yearly';
 export type CommunicationRecipientScope = 'Selected Audience' | 'All PMS Reservation Clients';
 
 export type CommunicationSender = {
@@ -167,6 +169,11 @@ export type CommunicationSender = {
   replyToEmail: string;
   verified: boolean;
   defaultSender: boolean;
+  signatureName?: string;
+  signatureHtml?: string;
+  signaturePlainText?: string;
+  signatureAssetIds?: string[];
+  signaturePosition?: 'After Body' | 'Before Body' | 'Disabled';
   status: CommunicationStatus;
   createdBy: string;
   updatedBy: string;
@@ -201,7 +208,7 @@ export type CommunicationTemplateAsset = {
   companyId: string;
   propertyId: string;
   templateId?: string;
-  assetRole?: 'Inline Image' | 'Email Attachment';
+  assetRole?: 'Inline Image' | 'Email Attachment' | 'Sender Signature Image';
   name: string;
   mimeType: string;
   size: number;
@@ -362,6 +369,15 @@ export type CommunicationCampaign = {
   scheduleTimezone?: string;
   repeatCount?: number;
   repeatIntervalMinutes?: number;
+  repeatIntervalValue?: number;
+  repeatIntervalUnit?: CommunicationRepeatIntervalUnit;
+  recurrenceEnabled?: boolean;
+  recurrenceFrequency?: CommunicationRecurrenceFrequency;
+  recurrenceInterval?: number;
+  recurrenceDayOfWeek?: number;
+  recurrenceDayOfMonth?: number;
+  recurrenceMonth?: number;
+  recurrenceOccurrences?: number;
   approvalStatus?: 'Draft' | 'Pending Approval' | 'Approved' | 'Rejected';
   approvalRequestedBy?: string;
   approvalRequestedAt?: string;
@@ -424,6 +440,8 @@ export type CommunicationOutboxJob = {
   maxRetries: number;
   repeatIndex?: number;
   repeatTotal?: number;
+  recurrenceIndex?: number;
+  recurrenceTotal?: number;
   providerMessageId?: string;
   lastError?: string;
   scheduledFor: string;

@@ -281,9 +281,13 @@ function getRequestBaseUrl(req: VercelRequest) {
 function materializeCronJob(job: OutboxJob, payload: PmsPayload, campaign: Campaign | undefined, appOrigin: string): OutboxJob {
   const template = (payload.communicationTemplates || []).find((item: any) => item.id === job.templateId);
   const recipient = (payload.communicationRecipients || []).find((item: any) => item.id === job.recipientId);
+  const sender = (payload.communicationSenders || []).find((item: any) => item.id === job.senderId);
   const property = (payload.properties || []).find((item: any) => item.id === job.propertyId);
   const assets = payload.communicationTemplateAssets || [];
   const inlineAssets = (template?.assetIds || [])
+    .map((assetId: string) => assets.find((asset: any) => asset.id === assetId))
+    .filter(Boolean);
+  const signatureAssets = (sender?.signatureAssetIds || [])
     .map((assetId: string) => assets.find((asset: any) => asset.id === assetId))
     .filter(Boolean);
   const attachmentAssets = (template?.attachmentIds || job.attachmentIds || [])
@@ -299,6 +303,15 @@ function materializeCronJob(job: OutboxJob, payload: PmsPayload, campaign: Campa
     cid: buildInlineAssetCid(asset, index, job),
     inline: true,
   }));
+  const signatureAttachments = signatureAssets.map((asset: any, index: number) => ({
+    name: String(asset.name || `signature-image-${index + 1}`),
+    mimeType: String(asset.mimeType || "image/png"),
+    size: Number(asset.size || 0),
+    downloadUrl: asset.downloadUrl,
+    embeddedDataUrl: asset.embeddedDataUrl,
+    cid: buildInlineAssetCid(asset, index, { ...job, id: `${job.id || "job"}-signature` }),
+    inline: true,
+  }));
   const fallbackRecipient = {
     name: job.recipientName,
     email: job.recipientEmail,
@@ -311,20 +324,27 @@ function materializeCronJob(job: OutboxJob, payload: PmsPayload, campaign: Campa
   const htmlVars = {
     ...getRecipientVariables(recipient || fallbackRecipient, property?.name || "", unsubscribeUrl, "html"),
     ...getAttachedImageVariables(inlineAttachments, "html", "cid"),
+    ...getAttachedImageVariables(signatureAttachments, "html", "cid", "sender_signature_image"),
   };
   const textVars = {
     ...getRecipientVariables(recipient || fallbackRecipient, property?.name || "", unsubscribeUrl, "text"),
     ...getAttachedImageVariables(inlineAttachments, "text", "url"),
+    ...getAttachedImageVariables(signatureAttachments, "text", "url", "sender_signature_image"),
   };
   const sourceHtml = String(template?.html || job.html || "");
   const sourceText = String(template?.plainText || job.plainText || htmlToText(sourceHtml));
+  const renderedHtml = renderString(sourceHtml, htmlVars);
+  const renderedText = renderString(sourceText, textVars);
+  const renderedSignatureHtml = renderString(String(sender?.signatureHtml || ""), htmlVars);
+  const renderedSignatureText = renderString(String(sender?.signaturePlainText || htmlToText(String(sender?.signatureHtml || ""))), textVars);
   return {
     ...job,
     subject: renderString(String(template?.subject || job.subject || ""), textVars),
-    html: renderString(sourceHtml, htmlVars),
-    plainText: renderString(sourceText, textVars),
+    html: applySenderSignature(renderedHtml, renderedSignatureHtml, String(sender?.signaturePosition || "After Body"), "html"),
+    plainText: applySenderSignature(renderedText, renderedSignatureText, String(sender?.signaturePosition || "After Body"), "text"),
     attachments: [
       ...inlineAttachments,
+      ...signatureAttachments,
       ...attachmentAssets.map((asset: any) => ({
         name: String(asset.name || "attachment"),
         mimeType: String(asset.mimeType || "application/octet-stream"),
@@ -359,7 +379,7 @@ function getRecipientVariables(recipient: Record<string, any>, propertyName: str
   };
 }
 
-function getAttachedImageVariables(assets: any[], mode: "html" | "text", sourceMode: "url" | "cid" = "url") {
+function getAttachedImageVariables(assets: any[], mode: "html" | "text", sourceMode: "url" | "cid" = "url", prefix = "attached_image") {
   return Object.fromEntries((assets || []).map((asset, index) => {
     const source = sourceMode === "cid" && asset.cid
       ? `cid:${asset.cid}`
@@ -372,8 +392,22 @@ function getAttachedImageVariables(assets: any[], mode: "html" | "text", sourceM
       : source
         ? `[Image: ${asset.name}] ${source}`
         : `[Image: ${asset.name}]`;
-    return [`attached_image${index + 1}`, value];
+    return [`${prefix}${index + 1}`, value];
   }));
+}
+
+function applySenderSignature(body: string, signature: string, position: string, mode: "html" | "text") {
+  const cleanSignature = mode === "html" ? sanitizeHtml(signature || "") : String(signature || "").trim();
+  if (!cleanSignature || position === "Disabled") return body;
+  if (mode === "html") {
+    const separator = '<div style="height:16px;line-height:16px;">&nbsp;</div>';
+    return position === "Before Body"
+      ? `${cleanSignature}${separator}${body}`
+      : `${body}${separator}${cleanSignature}`;
+  }
+  return position === "Before Body"
+    ? `${cleanSignature}\n\n${body}`.trim()
+    : `${body}\n\n${cleanSignature}`.trim();
 }
 
 function buildInlineAssetCid(asset: Record<string, any>, index: number, job: Record<string, any>) {
@@ -696,6 +730,15 @@ function escapeHtml(value: string) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function sanitizeHtml(value: string) {
+  return String(value || "")
+    .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
+    .replace(/<iframe[\s\S]*?>[\s\S]*?<\/iframe>/gi, "")
+    .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "")
+    .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "")
+    .replace(/javascript:/gi, "");
 }
 
 function htmlToText(value: string) {
