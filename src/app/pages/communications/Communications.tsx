@@ -586,7 +586,7 @@ function SendersSection({
       addCommunicationTemplateAsset(asset);
       uploadedSignatureAssets.push(asset.id);
     }
-    const signatureHtml = sanitizeHtml(form.signatureHtml || "");
+    const signatureHtml = normalizeEmailHtml(form.signatureHtml || "");
     const payload: CommunicationSender = {
       ...meta(),
       id,
@@ -1670,7 +1670,7 @@ function TemplatesSection({
       addCommunicationTemplateAsset(asset);
       uploadedAttachments.push(asset.id);
     }
-    const sanitizedHtml = sanitizeHtml(form.html || richTextToHtml(form.plainText || ""));
+    const sanitizedHtml = normalizeEmailHtml(form.html || richTextToHtml(form.plainText || ""));
     const assetIds = [...(form.assetIds || []), ...uploadedAssets];
     const attachmentIds = [...(form.attachmentIds || []), ...uploadedAttachments];
     const templateVariables = Array.from(new Set([
@@ -3117,8 +3117,25 @@ function RichTextComposer({
   info?: { title: string; body: string; example?: string; warning?: string };
 }) {
   const editorRef = useRef<HTMLDivElement | null>(null);
+  const selectionRef = useRef<Range | null>(null);
   const [selectedImageVariable, setSelectedImageVariable] = useState(imageVariables[0] || "{{attached_image1}}");
+  const [imageWidth, setImageWidth] = useState("220");
   const availableImageVariables = imageVariables.length ? imageVariables : ["{{attached_image1}}"];
+
+  const saveSelection = () => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+    if (editorRef.current?.contains(range.commonAncestorContainer)) {
+      selectionRef.current = range.cloneRange();
+    }
+  };
+  const restoreSelection = () => {
+    const selection = window.getSelection();
+    if (!selection || !selectionRef.current) return;
+    selection.removeAllRanges();
+    selection.addRange(selectionRef.current);
+  };
 
   useEffect(() => {
     if (!availableImageVariables.includes(selectedImageVariable)) {
@@ -3129,7 +3146,7 @@ function RichTextComposer({
   useEffect(() => {
     const editor = editorRef.current;
     if (!editor || document.activeElement === editor) return;
-    const safeValue = sanitizeHtml(value || "");
+    const safeValue = normalizeEmailHtml(value || "");
     if (editor.innerHTML !== safeValue) {
       editor.innerHTML = safeValue;
     }
@@ -3137,34 +3154,53 @@ function RichTextComposer({
 
   const sync = () => {
     const editor = editorRef.current;
-    const html = sanitizeHtml(editor?.innerHTML || "");
+    if (editor) decorateEditorLinks(editor);
+    saveSelection();
+    const html = normalizeEmailHtml(editor?.innerHTML || "");
     onChange(html, htmlToText(html));
   };
   const run = (command: string, commandValue?: string) => {
     editorRef.current?.focus();
+    restoreSelection();
     document.execCommand("styleWithCSS", false, "true");
     document.execCommand(command, false, commandValue);
     sync();
   };
+  const applyColor = (command: "foreColor" | "hiliteColor", color: string) => {
+    editorRef.current?.focus();
+    restoreSelection();
+    document.execCommand("styleWithCSS", false, "true");
+    document.execCommand(command, false, color);
+    if (command === "hiliteColor") document.execCommand("backColor", false, color);
+    sync();
+  };
   const insertHtml = (html: string) => {
     editorRef.current?.focus();
+    restoreSelection();
     document.execCommand("insertHTML", false, html);
     sync();
   };
   const insertLink = () => {
     const url = prompt("Enter the full URL for the link, including https://");
     if (!url) return;
-    run("createLink", url);
+    editorRef.current?.focus();
+    restoreSelection();
+    document.execCommand("styleWithCSS", false, "true");
+    document.execCommand("createLink", false, url);
+    if (editorRef.current) decorateEditorLinks(editorRef.current);
+    sync();
   };
   const insertImageVariable = (withLink = false) => {
     const variable = selectedImageVariable || availableImageVariables[0];
+    const width = clampNumber(imageWidth, 24, 1200, 220);
+    const imageMarkup = `<span data-kumbuos-image-width="${width}" style="display:inline-block;width:${width}px;max-width:100%;vertical-align:top;">${variable}</span>`;
     if (!withLink) {
-      insertHtml(variable);
+      insertHtml(imageMarkup);
       return;
     }
     const url = prompt("Enter the full URL the image should open, including https://");
     if (!url) return;
-    insertHtml(`<a href="${escapeAttribute(url)}" target="_blank" rel="noopener noreferrer">${variable}</a>`);
+    insertHtml(`<a href="${escapeAttribute(url)}" target="_blank" rel="noopener noreferrer" style="color:#1155cc;text-decoration:underline;">${imageMarkup}</a>`);
   };
   const insertTable = () => {
     insertHtml('<table style="width:100%;border-collapse:collapse;"><tbody><tr><td style="border:1px solid #ddd;padding:8px;">Cell</td><td style="border:1px solid #ddd;padding:8px;">Cell</td></tr><tr><td style="border:1px solid #ddd;padding:8px;">Cell</td><td style="border:1px solid #ddd;padding:8px;">Cell</td></tr></tbody></table>');
@@ -3193,11 +3229,11 @@ function RichTextComposer({
           </select>
           <label className="inline-flex h-8 items-center gap-1 rounded-md border border-input bg-background px-2 text-xs" title="Text color">
             <Type className="h-4 w-4" />
-            <input type="color" className="h-5 w-6 border-0 bg-transparent p-0" onChange={event => run("foreColor", event.target.value)} />
+            <input type="color" className="h-5 w-6 border-0 bg-transparent p-0" onMouseDown={saveSelection} onFocus={saveSelection} onChange={event => applyColor("foreColor", event.target.value)} />
           </label>
           <label className="inline-flex h-8 items-center gap-1 rounded-md border border-input bg-background px-2 text-xs" title="Highlight color">
             <Highlighter className="h-4 w-4" />
-            <input type="color" className="h-5 w-6 border-0 bg-transparent p-0" onChange={event => run("hiliteColor", event.target.value)} />
+            <input type="color" className="h-5 w-6 border-0 bg-transparent p-0" onMouseDown={saveSelection} onFocus={saveSelection} onChange={event => applyColor("hiliteColor", event.target.value)} />
           </label>
           <ToolbarDivider />
           <ToolbarButton title="Align left" onClick={() => run("justifyLeft")}><AlignLeft className="h-4 w-4" /></ToolbarButton>
@@ -3222,6 +3258,17 @@ function RichTextComposer({
           <select className="h-8 max-w-[170px] rounded-md border border-input bg-background px-2 text-xs" value={selectedImageVariable} onChange={event => setSelectedImageVariable(event.target.value)}>
             {availableImageVariables.map(variable => <option key={variable} value={variable}>{variable}</option>)}
           </select>
+          <input
+            type="number"
+            min="24"
+            max="1200"
+            className="h-8 w-20 rounded-md border border-input bg-background px-2 text-xs"
+            value={imageWidth}
+            onChange={event => setImageWidth(event.target.value)}
+            aria-label="Image width in pixels"
+            title="Image width in pixels"
+          />
+          <span className="text-xs text-muted-foreground">px</span>
           <ToolbarButton title="Insert attached image variable" onClick={() => insertImageVariable(false)}>Image</ToolbarButton>
           <ToolbarButton title="Insert linked attached image variable" onClick={() => insertImageVariable(true)}>Linked Image</ToolbarButton>
         </div>
@@ -3232,8 +3279,10 @@ function RichTextComposer({
         suppressContentEditableWarning
         className="min-h-48 w-full overflow-auto rounded-b-lg bg-white px-4 py-3 text-sm leading-6 text-[#2d2924] outline-none"
         onInput={sync}
+        onMouseUp={saveSelection}
+        onKeyUp={saveSelection}
         onBlur={sync}
-        dangerouslySetInnerHTML={{ __html: sanitizeHtml(value || "") }}
+        dangerouslySetInnerHTML={{ __html: normalizeEmailHtml(value || "") }}
       />
     </div>
   );
@@ -3436,6 +3485,38 @@ function sanitizeHtml(value: string) {
     .replace(/javascript:/gi, "");
 }
 
+function normalizeEmailHtml(value: string) {
+  return normalizeLinkStyles(sanitizeHtml(value || ""));
+}
+
+function normalizeLinkStyles(value: string) {
+  return value.replace(/<a\b([^>]*)>/gi, (_match, attrs = "") => {
+    let nextAttrs = String(attrs || "");
+    const linkStyle = "color:#1155cc;text-decoration:underline;";
+    const styleMatch = nextAttrs.match(/\sstyle\s*=\s*("([^"]*)"|'([^']*)')/i);
+    if (styleMatch) {
+      const existingStyle = styleMatch[2] ?? styleMatch[3] ?? "";
+      const mergedStyle = `${existingStyle.trim().replace(/;?$/, ";")}${linkStyle}`;
+      nextAttrs = nextAttrs.replace(styleMatch[0], ` style="${escapeAttribute(mergedStyle)}"`);
+    } else {
+      nextAttrs += ` style="${linkStyle}"`;
+    }
+    if (!/\starget\s*=/i.test(nextAttrs)) nextAttrs += ' target="_blank"';
+    if (!/\srel\s*=/i.test(nextAttrs)) nextAttrs += ' rel="noopener noreferrer"';
+    return `<a${nextAttrs}>`;
+  });
+}
+
+function decorateEditorLinks(editor: HTMLElement) {
+  editor.querySelectorAll("a[href]").forEach(link => {
+    const anchor = link as HTMLAnchorElement;
+    anchor.style.color = "#1155cc";
+    anchor.style.textDecoration = "underline";
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+  });
+}
+
 function htmlToText(value: string) {
   return value.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -3459,7 +3540,7 @@ function renderTemplate(html: string, recipient?: CommunicationRecipient, proper
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
-  return renderString(sanitizeHtml(html), {
+  return renderString(normalizeEmailHtml(html), {
     ...getRecipientVariables(recipient || fallbackRecipient, propertyName, "#unsubscribe", "html"),
     ...getAttachedImageVariables(assets, "html"),
   });
@@ -3538,9 +3619,9 @@ function materializeOutboxJobForDelivery(
     ...getAttachedImageVariables(inlineAttachments, "text", "url"),
     ...getAttachedImageVariables(signatureAttachments, "text", "url", "sender_signature_image"),
   };
-  const renderedHtml = renderString(template?.html || job.html || "", htmlVars);
+  const renderedHtml = normalizeEmailHtml(renderString(template?.html || job.html || "", htmlVars));
   const renderedPlainText = renderString(template?.plainText || job.plainText || htmlToText(template?.html || job.html || ""), textVars);
-  const renderedSignatureHtml = renderString(sender?.signatureHtml || "", htmlVars);
+  const renderedSignatureHtml = normalizeEmailHtml(renderString(sender?.signatureHtml || "", htmlVars));
   const renderedSignatureText = renderString(sender?.signaturePlainText || htmlToText(sender?.signatureHtml || ""), textVars);
 
   return {
@@ -3605,9 +3686,11 @@ function getAttachedImageVariables(
       ? `cid:${asset.cid}`
       : asset.downloadUrl || asset.embeddedDataUrl || "";
     const alt = escapeAttribute(asset.name || `Attached image ${index + 1}`);
+    const imageHtml = `<img src="${escapeAttribute(source)}" alt="${alt}" style="max-width:100%;height:auto;display:block;border:0;" />`;
+    const signatureImageHtml = `<span data-kumbuos-rendered-signature-image="true" style="display:inline-block;width:220px;max-width:100%;vertical-align:top;">${imageHtml}</span>`;
     const value = mode === "html"
       ? source
-        ? `<img src="${escapeAttribute(source)}" alt="${alt}" style="max-width:100%;height:auto;display:block;border:0;" />`
+        ? prefix === "sender_signature_image" ? signatureImageHtml : imageHtml
         : ""
       : source
         ? `[Image: ${asset.name}] ${source}`
@@ -3617,21 +3700,22 @@ function getAttachedImageVariables(
 }
 
 function renderSenderSignature(html: string, assets: CommunicationTemplateAsset[]) {
-  return renderString(sanitizeHtml(html), getAttachedImageVariables(assets, "html", "url", "sender_signature_image"));
+  return renderString(normalizeEmailHtml(html), getAttachedImageVariables(assets, "html", "url", "sender_signature_image"));
 }
 
 function applySenderSignature(body: string, signature: string, position: CommunicationSender["signaturePosition"], mode: "html" | "text") {
-  const cleanSignature = mode === "html" ? sanitizeHtml(signature || "") : String(signature || "").trim();
-  if (!cleanSignature || position === "Disabled") return body;
+  const cleanBody = mode === "html" ? normalizeEmailHtml(body || "") : String(body || "").trim();
+  const cleanSignature = mode === "html" ? normalizeEmailHtml(signature || "") : String(signature || "").trim();
+  if (!cleanSignature || position === "Disabled") return cleanBody;
   if (mode === "html") {
     const separator = '<div style="height:16px;line-height:16px;">&nbsp;</div>';
     return position === "Before Body"
-      ? `${cleanSignature}${separator}${body}`
-      : `${body}${separator}${cleanSignature}`;
+      ? `${cleanSignature}${separator}${cleanBody}`
+      : `${cleanBody}${separator}${cleanSignature}`;
   }
   return position === "Before Body"
-    ? `${cleanSignature}\n\n${body}`.trim()
-    : `${body}\n\n${cleanSignature}`.trim();
+    ? `${cleanSignature}\n\n${cleanBody}`.trim()
+    : `${cleanBody}\n\n${cleanSignature}`.trim();
 }
 
 function buildInlineAssetCid(asset: CommunicationTemplateAsset, index: number, jobId: string) {

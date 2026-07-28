@@ -333,9 +333,9 @@ function materializeCronJob(job: OutboxJob, payload: PmsPayload, campaign: Campa
   };
   const sourceHtml = String(template?.html || job.html || "");
   const sourceText = String(template?.plainText || job.plainText || htmlToText(sourceHtml));
-  const renderedHtml = renderString(sourceHtml, htmlVars);
+  const renderedHtml = normalizeEmailHtml(renderString(sourceHtml, htmlVars));
   const renderedText = renderString(sourceText, textVars);
-  const renderedSignatureHtml = renderString(String(sender?.signatureHtml || ""), htmlVars);
+  const renderedSignatureHtml = normalizeEmailHtml(renderString(String(sender?.signatureHtml || ""), htmlVars));
   const renderedSignatureText = renderString(String(sender?.signaturePlainText || htmlToText(String(sender?.signatureHtml || ""))), textVars);
   return {
     ...job,
@@ -385,9 +385,11 @@ function getAttachedImageVariables(assets: any[], mode: "html" | "text", sourceM
       ? `cid:${asset.cid}`
       : String(asset.downloadUrl || asset.embeddedDataUrl || "");
     const alt = escapeAttribute(String(asset.name || `Attached image ${index + 1}`));
+    const imageHtml = `<img src="${escapeAttribute(source)}" alt="${alt}" style="max-width:100%;height:auto;display:block;border:0;" />`;
+    const signatureImageHtml = `<span data-kumbuos-rendered-signature-image="true" style="display:inline-block;width:220px;max-width:100%;vertical-align:top;">${imageHtml}</span>`;
     const value = mode === "html"
       ? source
-        ? `<img src="${escapeAttribute(source)}" alt="${alt}" style="max-width:100%;height:auto;display:block;border:0;" />`
+        ? prefix === "sender_signature_image" ? signatureImageHtml : imageHtml
         : ""
       : source
         ? `[Image: ${asset.name}] ${source}`
@@ -397,17 +399,18 @@ function getAttachedImageVariables(assets: any[], mode: "html" | "text", sourceM
 }
 
 function applySenderSignature(body: string, signature: string, position: string, mode: "html" | "text") {
-  const cleanSignature = mode === "html" ? sanitizeHtml(signature || "") : String(signature || "").trim();
-  if (!cleanSignature || position === "Disabled") return body;
+  const cleanBody = mode === "html" ? normalizeEmailHtml(body || "") : String(body || "").trim();
+  const cleanSignature = mode === "html" ? normalizeEmailHtml(signature || "") : String(signature || "").trim();
+  if (!cleanSignature || position === "Disabled") return cleanBody;
   if (mode === "html") {
     const separator = '<div style="height:16px;line-height:16px;">&nbsp;</div>';
     return position === "Before Body"
-      ? `${cleanSignature}${separator}${body}`
-      : `${body}${separator}${cleanSignature}`;
+      ? `${cleanSignature}${separator}${cleanBody}`
+      : `${cleanBody}${separator}${cleanSignature}`;
   }
   return position === "Before Body"
-    ? `${cleanSignature}\n\n${body}`.trim()
-    : `${body}\n\n${cleanSignature}`.trim();
+    ? `${cleanSignature}\n\n${cleanBody}`.trim()
+    : `${cleanBody}\n\n${cleanSignature}`.trim();
 }
 
 function buildInlineAssetCid(asset: Record<string, any>, index: number, job: Record<string, any>) {
@@ -739,6 +742,28 @@ function sanitizeHtml(value: string) {
     .replace(/\son[a-z]+\s*=\s*"[^"]*"/gi, "")
     .replace(/\son[a-z]+\s*=\s*'[^']*'/gi, "")
     .replace(/javascript:/gi, "");
+}
+
+function normalizeEmailHtml(value: string) {
+  return normalizeLinkStyles(sanitizeHtml(value || ""));
+}
+
+function normalizeLinkStyles(value: string) {
+  return String(value || "").replace(/<a\b([^>]*)>/gi, (_match, attrs = "") => {
+    let nextAttrs = String(attrs || "");
+    const linkStyle = "color:#1155cc;text-decoration:underline;";
+    const styleMatch = nextAttrs.match(/\sstyle\s*=\s*("([^"]*)"|'([^']*)')/i);
+    if (styleMatch) {
+      const existingStyle = styleMatch[2] ?? styleMatch[3] ?? "";
+      const mergedStyle = `${existingStyle.trim().replace(/;?$/, ";")}${linkStyle}`;
+      nextAttrs = nextAttrs.replace(styleMatch[0], ` style="${escapeAttribute(mergedStyle)}"`);
+    } else {
+      nextAttrs += ` style="${linkStyle}"`;
+    }
+    if (!/\starget\s*=/i.test(nextAttrs)) nextAttrs += ' target="_blank"';
+    if (!/\srel\s*=/i.test(nextAttrs)) nextAttrs += ' rel="noopener noreferrer"';
+    return `<a${nextAttrs}>`;
+  });
 }
 
 function htmlToText(value: string) {
