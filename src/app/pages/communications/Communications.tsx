@@ -1630,6 +1630,7 @@ function TemplatesSection({
   const [attachmentFiles, setAttachmentFiles] = useState<File[]>([]);
   const [previewRecipientId, setPreviewRecipientId] = useState("");
   const [previewExpanded, setPreviewExpanded] = useState(false);
+  const [assetTemplateFilter, setAssetTemplateFilter] = useState("all");
   const [status, setStatus] = useState("");
   const previewRecipient = scoped.recipients.find(item => item.id === previewRecipientId) || scoped.recipients[0];
   const selectedTemplateAssets = (form.assetIds || [])
@@ -1643,6 +1644,8 @@ function TemplatesSection({
     ...buildAttachedImageVariableNames(selectedTemplateAssets.length + files.length),
   ]));
   const renderedHtml = renderTemplate(form.html || richTextToHtml(form.plainText || ""), previewRecipient, activeProperty?.name || "", selectedTemplateAssets);
+  const filteredLibraryAssets = getFilteredTemplateAssets(scoped.assets, scoped.templates, assetTemplateFilter);
+  const duplicateAssetGroups = getDuplicateTemplateAssetGroups(scoped.assets);
   const updateTemplateType = (value: string) => {
     const nextType = value as CommunicationTemplate["type"];
     setForm(current => ({
@@ -1661,18 +1664,28 @@ function TemplatesSection({
     const uploadedAssets: string[] = [];
     const uploadedAttachments: string[] = [];
     for (const file of files) {
-      const asset = await uploadTemplateAsset(file, id, meta(), "Inline Image");
-      addCommunicationTemplateAsset(asset);
-      uploadedAssets.push(asset.id);
+      const reusableAsset = findReusableTemplateAsset(scoped.assets, file, "Inline Image");
+      if (reusableAsset) {
+        uploadedAssets.push(reusableAsset.id);
+      } else {
+        const asset = await uploadTemplateAsset(file, id, meta(), "Inline Image");
+        addCommunicationTemplateAsset(asset);
+        uploadedAssets.push(asset.id);
+      }
     }
     for (const file of attachmentFiles) {
-      const asset = await uploadTemplateAsset(file, id, meta(), "Email Attachment");
-      addCommunicationTemplateAsset(asset);
-      uploadedAttachments.push(asset.id);
+      const reusableAsset = findReusableTemplateAsset(scoped.assets, file, "Email Attachment");
+      if (reusableAsset) {
+        uploadedAttachments.push(reusableAsset.id);
+      } else {
+        const asset = await uploadTemplateAsset(file, id, meta(), "Email Attachment");
+        addCommunicationTemplateAsset(asset);
+        uploadedAttachments.push(asset.id);
+      }
     }
     const sanitizedHtml = normalizeEmailHtml(form.html || richTextToHtml(form.plainText || ""));
-    const assetIds = [...(form.assetIds || []), ...uploadedAssets];
-    const attachmentIds = [...(form.attachmentIds || []), ...uploadedAttachments];
+    const assetIds = uniqueIds([...(form.assetIds || []), ...uploadedAssets]);
+    const attachmentIds = uniqueIds([...(form.attachmentIds || []), ...uploadedAttachments]);
     const templateVariables = Array.from(new Set([
       ...extractVariables(`${form.subject || ""} ${form.preheader || ""} ${sanitizedHtml} ${form.plainText || ""}`),
       ...buildAttachedImageVariableNames(assetIds.length),
@@ -1726,6 +1739,54 @@ function TemplatesSection({
     setEditingId(template.id);
     setForm({ ...template, attachmentIds: template.attachmentIds || [] });
     setStatus("");
+  };
+  const toggleTemplateAsset = (asset: CommunicationTemplateAsset, role: "Inline Image" | "Email Attachment") => {
+    if (role === "Inline Image") {
+      const exists = (form.assetIds || []).includes(asset.id);
+      setForm(current => ({ ...current, assetIds: exists ? (current.assetIds || []).filter(id => id !== asset.id) : uniqueIds([...(current.assetIds || []), asset.id]) }));
+      return;
+    }
+    const exists = (form.attachmentIds || []).includes(asset.id);
+    setForm(current => ({ ...current, attachmentIds: exists ? (current.attachmentIds || []).filter(id => id !== asset.id) : uniqueIds([...(current.attachmentIds || []), asset.id]) }));
+  };
+  const deleteAssetEverywhere = (asset: CommunicationTemplateAsset) => {
+    if (!confirm(`Delete "${asset.name}" from the shared asset library? It will be removed from every template that uses it.`)) return;
+    scoped.templates.forEach(template => {
+      if ((template.assetIds || []).includes(asset.id) || (template.attachmentIds || []).includes(asset.id)) {
+        updateCommunicationTemplate(template.id, {
+          assetIds: (template.assetIds || []).filter(id => id !== asset.id),
+          attachmentIds: (template.attachmentIds || []).filter(id => id !== asset.id),
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    });
+    setForm(current => ({
+      ...current,
+      assetIds: (current.assetIds || []).filter(id => id !== asset.id),
+      attachmentIds: (current.attachmentIds || []).filter(id => id !== asset.id),
+    }));
+    deleteCommunicationTemplateAsset(asset.id);
+  };
+  const mergeDuplicateAssets = () => {
+    if (!duplicateAssetGroups.length) return;
+    duplicateAssetGroups.forEach(group => {
+      const [canonical, ...duplicates] = group;
+      const duplicateIds = new Set(duplicates.map(asset => asset.id));
+      scoped.templates.forEach(template => {
+        const nextAssetIds = uniqueIds((template.assetIds || []).map(id => duplicateIds.has(id) ? canonical.id : id));
+        const nextAttachmentIds = uniqueIds((template.attachmentIds || []).map(id => duplicateIds.has(id) ? canonical.id : id));
+        if (nextAssetIds.join("|") !== (template.assetIds || []).join("|") || nextAttachmentIds.join("|") !== (template.attachmentIds || []).join("|")) {
+          updateCommunicationTemplate(template.id, { assetIds: nextAssetIds, attachmentIds: nextAttachmentIds, updatedAt: new Date().toISOString() });
+        }
+      });
+      setForm(current => ({
+        ...current,
+        assetIds: uniqueIds((current.assetIds || []).map(id => duplicateIds.has(id) ? canonical.id : id)),
+        attachmentIds: uniqueIds((current.attachmentIds || []).map(id => duplicateIds.has(id) ? canonical.id : id)),
+      }));
+      duplicates.forEach(asset => deleteCommunicationTemplateAsset(asset.id));
+    });
+    setStatus(`Merged ${duplicateAssetGroups.reduce((count, group) => count + group.length - 1, 0)} duplicate asset copies into reusable library records.`);
   };
 
   return (
@@ -1819,19 +1880,57 @@ function TemplatesSection({
           </div>
         </Panel>
         <Panel title="Template Assets and Attachments" icon={Upload}>
-          {scoped.assets.map(asset => {
+          <div className="mb-3 space-y-3">
+            <SelectField
+              label="Filter assets by template"
+              value={assetTemplateFilter}
+              onChange={setAssetTemplateFilter}
+              options={[
+                { value: "all", label: "All Templates" },
+                ...scoped.templates.map(template => ({ value: template.id, label: template.name })),
+              ]}
+            />
+            <p className="text-xs text-muted-foreground">
+              Reuse existing images and documents instead of uploading duplicate files. Linked images become {"{{attached_image1}}"}, {"{{attached_image2}}"}, etc. Linked documents are sent as email attachments.
+            </p>
+            {!!duplicateAssetGroups.length && (
+              <Button type="button" variant="outline" size="sm" disabled={!canEdit} onClick={mergeDuplicateAssets}>
+                Merge duplicate asset copies
+              </Button>
+            )}
+          </div>
+          {filteredLibraryAssets.map(asset => {
             const variableIndex = selectedTemplateAssets.findIndex(item => item.id === asset.id);
+            const linkedAsImage = (form.assetIds || []).includes(asset.id);
+            const linkedAsAttachment = (form.attachmentIds || []).includes(asset.id);
+            const sourceTemplate = scoped.templates.find(template => template.id === asset.templateId);
+            const linkedTemplateNames = getAssetLinkedTemplateNames(asset, scoped.templates);
+            const isImage = asset.mimeType.startsWith("image/");
             return (
-            <div key={asset.id} className="mb-2 flex items-center justify-between gap-3 rounded-md border border-border p-2 text-sm">
-              <span className="min-w-0">
-                <span className="block truncate">{asset.name}</span>
-                <span className="text-xs text-muted-foreground">{asset.assetRole || (asset.mimeType.startsWith("image/") ? "Inline Image" : "Email Attachment")}</span>
-                {variableIndex >= 0 && <span className="text-xs text-muted-foreground">{`{{attached_image${variableIndex + 1}}}`}</span>}
-              </span>
-              <Button variant="ghost" size="icon" disabled={!canEdit} className="text-destructive" onClick={() => deleteCommunicationTemplateAsset(asset.id)}><Trash2 size={14} /></Button>
+            <div key={asset.id} className="mb-2 rounded-md border border-border p-2 text-sm">
+              <div className="flex items-start justify-between gap-3">
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">{asset.name}</span>
+                  <span className="block text-xs text-muted-foreground">{asset.assetRole || (asset.mimeType.startsWith("image/") ? "Inline Image" : "Email Attachment")} - {formatBytes(asset.size)}</span>
+                  <span className="block text-xs text-muted-foreground">Source: {sourceTemplate?.name || "Shared library"}</span>
+                  {!!linkedTemplateNames.length && <span className="block text-xs text-muted-foreground">Used in: {linkedTemplateNames.join(", ")}</span>}
+                  {variableIndex >= 0 && <span className="block text-xs text-primary">{`{{attached_image${variableIndex + 1}}}`}</span>}
+                </span>
+                <Button variant="ghost" size="icon" disabled={!canEdit} className="text-destructive" onClick={() => deleteAssetEverywhere(asset)}><Trash2 size={14} /></Button>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {isImage && (
+                  <Button type="button" variant={linkedAsImage ? "default" : "outline"} size="sm" disabled={!canEdit} onClick={() => toggleTemplateAsset(asset, "Inline Image")}>
+                    {linkedAsImage ? "Linked as Image" : "Use as Image"}
+                  </Button>
+                )}
+                <Button type="button" variant={linkedAsAttachment ? "default" : "outline"} size="sm" disabled={!canEdit} onClick={() => toggleTemplateAsset(asset, "Email Attachment")}>
+                  {linkedAsAttachment ? "Attached" : "Use as Attachment"}
+                </Button>
+              </div>
             </div>
           )})}
-          {!scoped.assets.length && <EmptyState>No template assets uploaded yet.</EmptyState>}
+          {!filteredLibraryAssets.length && <EmptyState>No assets match this filter yet.</EmptyState>}
         </Panel>
         <Panel title="Template Version History" icon={Database}>
           {editingId && (form.versionHistory || []).length ? (
@@ -3174,6 +3273,56 @@ function RichTextComposer({
     if (command === "hiliteColor") document.execCommand("backColor", false, color);
     sync();
   };
+  const updateImageVariableWidth = (nextWidth: string) => {
+    setImageWidth(nextWidth);
+    applyImageWidthToVariable(selectedImageVariable || availableImageVariables[0], nextWidth);
+  };
+  const applyImageWidthToVariable = (variable: string, nextWidth = imageWidth) => {
+    const editor = editorRef.current;
+    if (!editor || !variable) return;
+    const width = clampNumber(nextWidth, 24, 1200, 220);
+    let changed = false;
+    editor.querySelectorAll<HTMLElement>("[data-kumbuos-image-width]").forEach(wrapper => {
+      if (!wrapper.textContent?.includes(variable)) return;
+      wrapper.dataset.kumbuosImageWidth = String(width);
+      wrapper.dataset.kumbuosImageVariable = variable;
+      wrapper.style.display = "inline-block";
+      wrapper.style.width = `${width}px`;
+      wrapper.style.maxWidth = "100%";
+      wrapper.style.verticalAlign = "middle";
+      changed = true;
+    });
+    const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
+    const textNodes: Text[] = [];
+    while (walker.nextNode()) {
+      const node = walker.currentNode as Text;
+      if (!node.nodeValue?.includes(variable)) continue;
+      const parent = node.parentElement;
+      if (parent?.closest("[data-kumbuos-image-width]")) continue;
+      textNodes.push(node);
+    }
+    textNodes.forEach(node => {
+      const parts = String(node.nodeValue || "").split(variable);
+      const fragment = document.createDocumentFragment();
+      parts.forEach((part, index) => {
+        if (part) fragment.appendChild(document.createTextNode(part));
+        if (index < parts.length - 1) {
+          const wrapper = document.createElement("span");
+          wrapper.dataset.kumbuosImageWidth = String(width);
+          wrapper.dataset.kumbuosImageVariable = variable;
+          wrapper.style.display = "inline-block";
+          wrapper.style.width = `${width}px`;
+          wrapper.style.maxWidth = "100%";
+          wrapper.style.verticalAlign = "middle";
+          wrapper.textContent = variable;
+          fragment.appendChild(wrapper);
+        }
+      });
+      node.parentNode?.replaceChild(fragment, node);
+      changed = true;
+    });
+    if (changed) sync();
+  };
   const insertHtml = (html: string) => {
     editorRef.current?.focus();
     restoreSelection();
@@ -3193,7 +3342,7 @@ function RichTextComposer({
   const insertImageVariable = (withLink = false) => {
     const variable = selectedImageVariable || availableImageVariables[0];
     const width = clampNumber(imageWidth, 24, 1200, 220);
-    const imageMarkup = `<span data-kumbuos-image-width="${width}" style="display:inline-block;width:${width}px;max-width:100%;vertical-align:top;">${variable}</span>`;
+    const imageMarkup = `<span data-kumbuos-image-width="${width}" data-kumbuos-image-variable="${escapeAttribute(variable)}" style="display:inline-block;width:${width}px;max-width:100%;vertical-align:middle;">${variable}</span>`;
     if (!withLink) {
       insertHtml(imageMarkup);
       return;
@@ -3264,11 +3413,13 @@ function RichTextComposer({
             max="1200"
             className="h-8 w-20 rounded-md border border-input bg-background px-2 text-xs"
             value={imageWidth}
-            onChange={event => setImageWidth(event.target.value)}
+            onChange={event => updateImageVariableWidth(event.target.value)}
+            onBlur={() => applyImageWidthToVariable(selectedImageVariable || availableImageVariables[0])}
             aria-label="Image width in pixels"
             title="Image width in pixels"
           />
           <span className="text-xs text-muted-foreground">px</span>
+          <ToolbarButton title="Apply selected image width to the selected variable wherever it appears" onClick={() => applyImageWidthToVariable(selectedImageVariable || availableImageVariables[0])}>Apply Size</ToolbarButton>
           <ToolbarButton title="Insert attached image variable" onClick={() => insertImageVariable(false)}>Image</ToolbarButton>
           <ToolbarButton title="Insert linked attached image variable" onClick={() => insertImageVariable(true)}>Linked Image</ToolbarButton>
         </div>
@@ -3464,6 +3615,59 @@ function getAudienceRecipients(audience: CommunicationAudience | undefined, reci
 
 function getAudienceRecipientCount(audience: CommunicationAudience, recipients: CommunicationRecipient[]) {
   return getAudienceRecipients(audience, recipients).length;
+}
+
+function uniqueIds(ids: string[]) {
+  return Array.from(new Set(ids.filter(Boolean)));
+}
+
+function getTemplateLinkedAssetIds(template?: CommunicationTemplate) {
+  return new Set([...(template?.assetIds || []), ...(template?.attachmentIds || [])]);
+}
+
+function getFilteredTemplateAssets(assets: CommunicationTemplateAsset[], templates: CommunicationTemplate[], templateFilter: string) {
+  const visibleAssets = templateFilter === "all"
+    ? assets
+    : assets.filter(asset => {
+      const template = templates.find(item => item.id === templateFilter);
+      return asset.templateId === templateFilter || getTemplateLinkedAssetIds(template).has(asset.id);
+    });
+  return [...visibleAssets].sort((left, right) => {
+    const roleCompare = String(left.assetRole || "").localeCompare(String(right.assetRole || ""));
+    if (roleCompare) return roleCompare;
+    return left.name.localeCompare(right.name);
+  });
+}
+
+function getAssetLinkedTemplateNames(asset: CommunicationTemplateAsset, templates: CommunicationTemplate[]) {
+  return templates
+    .filter(template => (template.assetIds || []).includes(asset.id) || (template.attachmentIds || []).includes(asset.id))
+    .map(template => template.name);
+}
+
+function getTemplateAssetDedupKey(asset: Pick<CommunicationTemplateAsset, "name" | "mimeType" | "size" | "assetRole">) {
+  return `${String(asset.assetRole || "")}|${String(asset.name || "").trim().toLowerCase()}|${String(asset.mimeType || "").trim().toLowerCase()}|${Number(asset.size || 0)}`;
+}
+
+function findReusableTemplateAsset(assets: CommunicationTemplateAsset[], file: File, assetRole: CommunicationTemplateAsset["assetRole"]) {
+  const key = getTemplateAssetDedupKey({
+    name: file.name,
+    mimeType: file.type || "application/octet-stream",
+    size: file.size,
+    assetRole,
+  });
+  return assets.find(asset => asset.status !== "Archived" && getTemplateAssetDedupKey(asset) === key);
+}
+
+function getDuplicateTemplateAssetGroups(assets: CommunicationTemplateAsset[]) {
+  const groups = new Map<string, CommunicationTemplateAsset[]>();
+  assets
+    .filter(asset => asset.assetRole !== "Sender Signature Image")
+    .forEach(asset => {
+      const key = getTemplateAssetDedupKey(asset);
+      groups.set(key, [...(groups.get(key) || []), asset]);
+    });
+  return Array.from(groups.values()).filter(group => group.length > 1);
 }
 
 function extractMarketingConsent(row: ImportedRow) {
@@ -3686,8 +3890,8 @@ function getAttachedImageVariables(
       ? `cid:${asset.cid}`
       : asset.downloadUrl || asset.embeddedDataUrl || "";
     const alt = escapeAttribute(asset.name || `Attached image ${index + 1}`);
-    const imageHtml = `<img src="${escapeAttribute(source)}" alt="${alt}" style="max-width:100%;height:auto;display:block;border:0;" />`;
-    const signatureImageHtml = `<span data-kumbuos-rendered-signature-image="true" style="display:inline-block;width:220px;max-width:100%;vertical-align:top;">${imageHtml}</span>`;
+    const imageHtml = `<img src="${escapeAttribute(source)}" alt="${alt}" style="width:100%;max-width:100%;height:auto;display:inline-block;vertical-align:middle;border:0;" />`;
+    const signatureImageHtml = `<span data-kumbuos-rendered-signature-image="true" style="display:inline-block;width:220px;max-width:100%;vertical-align:middle;">${imageHtml}</span>`;
     const value = mode === "html"
       ? source
         ? prefix === "sender_signature_image" ? signatureImageHtml : imageHtml

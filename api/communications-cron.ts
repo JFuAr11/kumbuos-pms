@@ -385,8 +385,8 @@ function getAttachedImageVariables(assets: any[], mode: "html" | "text", sourceM
       ? `cid:${asset.cid}`
       : String(asset.downloadUrl || asset.embeddedDataUrl || "");
     const alt = escapeAttribute(String(asset.name || `Attached image ${index + 1}`));
-    const imageHtml = `<img src="${escapeAttribute(source)}" alt="${alt}" style="max-width:100%;height:auto;display:block;border:0;" />`;
-    const signatureImageHtml = `<span data-kumbuos-rendered-signature-image="true" style="display:inline-block;width:220px;max-width:100%;vertical-align:top;">${imageHtml}</span>`;
+    const imageHtml = `<img src="${escapeAttribute(source)}" alt="${alt}" style="width:100%;max-width:100%;height:auto;display:inline-block;vertical-align:middle;border:0;" />`;
+    const signatureImageHtml = `<span data-kumbuos-rendered-signature-image="true" style="display:inline-block;width:220px;max-width:100%;vertical-align:middle;">${imageHtml}</span>`;
     const value = mode === "html"
       ? source
         ? prefix === "sender_signature_image" ? signatureImageHtml : imageHtml
