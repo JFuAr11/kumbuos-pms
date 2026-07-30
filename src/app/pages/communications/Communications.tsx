@@ -3235,6 +3235,14 @@ function RichTextComposer({
     selection.removeAllRanges();
     selection.addRange(selectionRef.current);
   };
+  const getRestoredRange = () => {
+    editorRef.current?.focus();
+    restoreSelection();
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return null;
+    const range = selection.getRangeAt(0);
+    return editorRef.current?.contains(range.commonAncestorContainer) ? range : null;
+  };
 
   useEffect(() => {
     if (!availableImageVariables.includes(selectedImageVariable)) {
@@ -3266,11 +3274,19 @@ function RichTextComposer({
     sync();
   };
   const applyColor = (command: "foreColor" | "hiliteColor", color: string) => {
-    editorRef.current?.focus();
-    restoreSelection();
-    document.execCommand("styleWithCSS", false, "true");
-    document.execCommand(command, false, color);
-    if (command === "hiliteColor") document.execCommand("backColor", false, color);
+    const range = getRestoredRange();
+    if (!range || range.collapsed) return;
+    const style = command === "foreColor" ? { color } : { backgroundColor: color };
+    const span = document.createElement("span");
+    Object.assign(span.style, style);
+    span.appendChild(range.extractContents());
+    range.insertNode(span);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    const afterRange = document.createRange();
+    afterRange.selectNodeContents(span);
+    selection?.addRange(afterRange);
+    saveSelection();
     sync();
   };
   const updateImageVariableWidth = (nextWidth: string) => {
@@ -3285,7 +3301,8 @@ function RichTextComposer({
     editor.querySelectorAll<HTMLElement>("[data-kumbuos-image-width]").forEach(wrapper => {
       if (!wrapper.textContent?.includes(variable)) return;
       wrapper.dataset.kumbuosImageWidth = String(width);
-      wrapper.dataset.kumbuosImageVariable = variable;
+      wrapper.dataset.kumbuosImageKey = getVariableKey(variable);
+      delete wrapper.dataset.kumbuosImageVariable;
       wrapper.style.display = "inline-block";
       wrapper.style.width = `${width}px`;
       wrapper.style.maxWidth = "100%";
@@ -3309,7 +3326,7 @@ function RichTextComposer({
         if (index < parts.length - 1) {
           const wrapper = document.createElement("span");
           wrapper.dataset.kumbuosImageWidth = String(width);
-          wrapper.dataset.kumbuosImageVariable = variable;
+          wrapper.dataset.kumbuosImageKey = getVariableKey(variable);
           wrapper.style.display = "inline-block";
           wrapper.style.width = `${width}px`;
           wrapper.style.maxWidth = "100%";
@@ -3342,7 +3359,7 @@ function RichTextComposer({
   const insertImageVariable = (withLink = false) => {
     const variable = selectedImageVariable || availableImageVariables[0];
     const width = clampNumber(imageWidth, 24, 1200, 220);
-    const imageMarkup = `<span data-kumbuos-image-width="${width}" data-kumbuos-image-variable="${escapeAttribute(variable)}" style="display:inline-block;width:${width}px;max-width:100%;vertical-align:middle;">${variable}</span>`;
+    const imageMarkup = `<span data-kumbuos-image-width="${width}" data-kumbuos-image-key="${escapeAttribute(getVariableKey(variable))}" style="display:inline-block;width:${width}px;max-width:100%;vertical-align:middle;">${variable}</span>`;
     if (!withLink) {
       insertHtml(imageMarkup);
       return;
@@ -3359,7 +3376,7 @@ function RichTextComposer({
     <div className="rounded-lg border border-border bg-background">
       <div className="border-b border-border p-3">
         <div className="mb-2 flex items-center gap-2 text-sm font-medium">{label}<InfoTip info={info} /></div>
-        <div className="flex flex-wrap items-center gap-1 rounded-md border border-border bg-muted/40 p-2">
+        <div className="flex flex-wrap items-center gap-1 rounded-md border border-border bg-muted/40 p-2" onMouseDownCapture={saveSelection} onPointerDownCapture={saveSelection}>
           <ToolbarButton title="Bold" onClick={() => run("bold")}><Bold className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton title="Italic" onClick={() => run("italic")}><Italic className="h-4 w-4" /></ToolbarButton>
           <ToolbarButton title="Underline" onClick={() => run("underline")}><Underline className="h-4 w-4" /></ToolbarButton>
@@ -3690,7 +3707,7 @@ function sanitizeHtml(value: string) {
 }
 
 function normalizeEmailHtml(value: string) {
-  return normalizeLinkStyles(sanitizeHtml(value || ""));
+  return normalizeSizedImageWrappers(normalizeLinkStyles(sanitizeHtml(value || "")));
 }
 
 function normalizeLinkStyles(value: string) {
@@ -3709,6 +3726,37 @@ function normalizeLinkStyles(value: string) {
     if (!/\srel\s*=/i.test(nextAttrs)) nextAttrs += ' rel="noopener noreferrer"';
     return `<a${nextAttrs}>`;
   });
+}
+
+function normalizeSizedImageWrappers(value: string) {
+  return String(value || "").replace(/<span\b([^>]*\bdata-kumbuos-image-width\s*=\s*["']?(\d+)["']?[^>]*)>([\s\S]*?)<\/span>/gi, (_match, attrs = "", widthValue = "220", inner = "") => {
+    const width = clampNumber(widthValue, 24, 1200, 220);
+    const wrapperAttrs = mergeHtmlStyleAttribute(String(attrs || ""), `display:inline-block;width:${width}px;max-width:100%;vertical-align:middle;`);
+    const normalizedInner = String(inner || "").replace(/<img\b([^>]*)>/gi, (_imageMatch, imageAttrs = "") => {
+      const cleanImageAttrs = String(imageAttrs || "").replace(/\s(width|height)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
+      return `<img${mergeHtmlStyleAttribute(cleanImageAttrs, "width:100%;max-width:100%;height:auto;display:inline-block;vertical-align:middle;border:0;")} />`;
+    });
+    return `<span${wrapperAttrs}>${normalizedInner}</span>`;
+  });
+}
+
+function mergeHtmlStyleAttribute(attrs: string, additions: string) {
+  const styleMatch = attrs.match(/\sstyle\s*=\s*("([^"]*)"|'([^']*)')/i);
+  if (!styleMatch) return `${attrs} style="${escapeAttribute(normalizeInlineStyle(additions))}"`;
+  const existingStyle = styleMatch[2] ?? styleMatch[3] ?? "";
+  const merged = normalizeInlineStyle(`${existingStyle};${additions}`);
+  return attrs.replace(styleMatch[0], ` style="${escapeAttribute(merged)}"`);
+}
+
+function normalizeInlineStyle(style: string) {
+  const declarations = new Map<string, string>();
+  String(style || "").split(";").forEach(part => {
+    const [property, ...valueParts] = part.split(":");
+    const key = property?.trim().toLowerCase();
+    const value = valueParts.join(":").trim();
+    if (key && value) declarations.set(key, value);
+  });
+  return Array.from(declarations.entries()).map(([property, value]) => `${property}:${value}`).join(";");
 }
 
 function decorateEditorLinks(editor: HTMLElement) {
@@ -3744,10 +3792,10 @@ function renderTemplate(html: string, recipient?: CommunicationRecipient, proper
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
-  return renderString(normalizeEmailHtml(html), {
+  return normalizeEmailHtml(renderString(normalizeEmailHtml(html), {
     ...getRecipientVariables(recipient || fallbackRecipient, propertyName, "#unsubscribe", "html"),
     ...getAttachedImageVariables(assets, "html"),
-  });
+  }));
 }
 
 function materializeOutboxJobForDelivery(
@@ -3849,7 +3897,11 @@ function materializeOutboxJobForDelivery(
 }
 
 function renderString(value: string, variablesMap: Record<string, string>) {
-  return value.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (_, key) => variablesMap[key] ?? "");
+  const replaceVariables = (part: string) => part.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (_, key) => variablesMap[key] ?? "");
+  return String(value || "")
+    .split(/(<[^>]+>)/g)
+    .map(part => part.startsWith("<") && part.endsWith(">") ? part : replaceVariables(part))
+    .join("");
 }
 
 function getRecipientVariables(recipient: CommunicationRecipient, propertyName: string, unsubscribeUrl: string, mode: "html" | "text" = "html") {
@@ -3879,6 +3931,10 @@ function buildSenderSignatureImageVariableNames(count: number) {
   return Array.from({ length: count }, (_, index) => `{{sender_signature_image${index + 1}}}`);
 }
 
+function getVariableKey(variable: string) {
+  return String(variable || "").replace(/^\{\{/, "").replace(/\}\}$/, "").trim();
+}
+
 function getAttachedImageVariables(
   assets: Array<CommunicationTemplateAsset | (CommunicationTemplateAsset & { cid?: string; inline?: boolean })>,
   mode: "html" | "text",
@@ -3890,11 +3946,11 @@ function getAttachedImageVariables(
       ? `cid:${asset.cid}`
       : asset.downloadUrl || asset.embeddedDataUrl || "";
     const alt = escapeAttribute(asset.name || `Attached image ${index + 1}`);
-    const imageHtml = `<img src="${escapeAttribute(source)}" alt="${alt}" style="width:100%;max-width:100%;height:auto;display:inline-block;vertical-align:middle;border:0;" />`;
-    const signatureImageHtml = `<span data-kumbuos-rendered-signature-image="true" style="display:inline-block;width:220px;max-width:100%;vertical-align:middle;">${imageHtml}</span>`;
+    const defaultWidth = prefix === "sender_signature_image" ? "220px" : "100%";
+    const imageHtml = `<img src="${escapeAttribute(source)}" alt="${alt}" style="width:${defaultWidth};max-width:100%;height:auto;display:inline-block;vertical-align:middle;border:0;" />`;
     const value = mode === "html"
       ? source
-        ? prefix === "sender_signature_image" ? signatureImageHtml : imageHtml
+        ? imageHtml
         : ""
       : source
         ? `[Image: ${asset.name}] ${source}`
@@ -3904,7 +3960,7 @@ function getAttachedImageVariables(
 }
 
 function renderSenderSignature(html: string, assets: CommunicationTemplateAsset[]) {
-  return renderString(normalizeEmailHtml(html), getAttachedImageVariables(assets, "html", "url", "sender_signature_image"));
+  return normalizeEmailHtml(renderString(normalizeEmailHtml(html), getAttachedImageVariables(assets, "html", "url", "sender_signature_image")));
 }
 
 function applySenderSignature(body: string, signature: string, position: CommunicationSender["signaturePosition"], mode: "html" | "text") {

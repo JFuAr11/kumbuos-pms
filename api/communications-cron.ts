@@ -358,7 +358,11 @@ function materializeCronJob(job: OutboxJob, payload: PmsPayload, campaign: Campa
 }
 
 function renderString(value: string, variablesMap: Record<string, string>) {
-  return String(value || "").replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (_, key) => variablesMap[key] ?? "");
+  const replaceVariables = (part: string) => part.replace(/\{\{([a-zA-Z0-9_]+)\}\}/g, (_, key) => variablesMap[key] ?? "");
+  return String(value || "")
+    .split(/(<[^>]+>)/g)
+    .map((part) => part.startsWith("<") && part.endsWith(">") ? part : replaceVariables(part))
+    .join("");
 }
 
 function getRecipientVariables(recipient: Record<string, any>, propertyName: string, unsubscribeUrl: string, mode: "html" | "text") {
@@ -385,11 +389,11 @@ function getAttachedImageVariables(assets: any[], mode: "html" | "text", sourceM
       ? `cid:${asset.cid}`
       : String(asset.downloadUrl || asset.embeddedDataUrl || "");
     const alt = escapeAttribute(String(asset.name || `Attached image ${index + 1}`));
-    const imageHtml = `<img src="${escapeAttribute(source)}" alt="${alt}" style="width:100%;max-width:100%;height:auto;display:inline-block;vertical-align:middle;border:0;" />`;
-    const signatureImageHtml = `<span data-kumbuos-rendered-signature-image="true" style="display:inline-block;width:220px;max-width:100%;vertical-align:middle;">${imageHtml}</span>`;
+    const defaultWidth = prefix === "sender_signature_image" ? "220px" : "100%";
+    const imageHtml = `<img src="${escapeAttribute(source)}" alt="${alt}" style="width:${defaultWidth};max-width:100%;height:auto;display:inline-block;vertical-align:middle;border:0;" />`;
     const value = mode === "html"
       ? source
-        ? prefix === "sender_signature_image" ? signatureImageHtml : imageHtml
+        ? imageHtml
         : ""
       : source
         ? `[Image: ${asset.name}] ${source}`
@@ -745,7 +749,7 @@ function sanitizeHtml(value: string) {
 }
 
 function normalizeEmailHtml(value: string) {
-  return normalizeLinkStyles(sanitizeHtml(value || ""));
+  return normalizeSizedImageWrappers(normalizeLinkStyles(sanitizeHtml(value || "")));
 }
 
 function normalizeLinkStyles(value: string) {
@@ -764,6 +768,43 @@ function normalizeLinkStyles(value: string) {
     if (!/\srel\s*=/i.test(nextAttrs)) nextAttrs += ' rel="noopener noreferrer"';
     return `<a${nextAttrs}>`;
   });
+}
+
+function normalizeSizedImageWrappers(value: string) {
+  return String(value || "").replace(/<span\b([^>]*\bdata-kumbuos-image-width\s*=\s*["']?(\d+)["']?[^>]*)>([\s\S]*?)<\/span>/gi, (_match, attrs = "", widthValue = "220", inner = "") => {
+    const width = clampNumber(widthValue, 24, 1200, 220);
+    const wrapperAttrs = mergeHtmlStyleAttribute(String(attrs || ""), `display:inline-block;width:${width}px;max-width:100%;vertical-align:middle;`);
+    const normalizedInner = String(inner || "").replace(/<img\b([^>]*)>/gi, (_imageMatch, imageAttrs = "") => {
+      const cleanImageAttrs = String(imageAttrs || "").replace(/\s(width|height)\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
+      return `<img${mergeHtmlStyleAttribute(cleanImageAttrs, "width:100%;max-width:100%;height:auto;display:inline-block;vertical-align:middle;border:0;")} />`;
+    });
+    return `<span${wrapperAttrs}>${normalizedInner}</span>`;
+  });
+}
+
+function mergeHtmlStyleAttribute(attrs: string, additions: string) {
+  const styleMatch = attrs.match(/\sstyle\s*=\s*("([^"]*)"|'([^']*)')/i);
+  if (!styleMatch) return `${attrs} style="${escapeAttribute(normalizeInlineStyle(additions))}"`;
+  const existingStyle = styleMatch[2] ?? styleMatch[3] ?? "";
+  const merged = normalizeInlineStyle(`${existingStyle};${additions}`);
+  return attrs.replace(styleMatch[0], ` style="${escapeAttribute(merged)}"`);
+}
+
+function normalizeInlineStyle(style: string) {
+  const declarations = new Map<string, string>();
+  String(style || "").split(";").forEach((part) => {
+    const [property, ...valueParts] = part.split(":");
+    const key = property?.trim().toLowerCase();
+    const value = valueParts.join(":").trim();
+    if (key && value) declarations.set(key, value);
+  });
+  return Array.from(declarations.entries()).map(([property, value]) => `${property}:${value}`).join(";");
+}
+
+function clampNumber(value: string | number, min: number, max: number, fallback: number) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(max, Math.max(min, numeric));
 }
 
 function htmlToText(value: string) {
