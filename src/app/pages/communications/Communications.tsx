@@ -3202,6 +3202,13 @@ function SelectField({ label, value, onChange, options, info }: { label: string;
   );
 }
 
+type SelectionSnapshot = {
+  startPath: number[];
+  startOffset: number;
+  endPath: number[];
+  endOffset: number;
+};
+
 function RichTextComposer({
   label,
   value,
@@ -3217,23 +3224,38 @@ function RichTextComposer({
 }) {
   const editorRef = useRef<HTMLDivElement | null>(null);
   const selectionRef = useRef<Range | null>(null);
+  const selectionSnapshotRef = useRef<SelectionSnapshot | null>(null);
   const [selectedImageVariable, setSelectedImageVariable] = useState(imageVariables[0] || "{{attached_image1}}");
   const [imageWidth, setImageWidth] = useState("220");
+  const [textColor, setTextColor] = useState("#000000");
+  const [highlightColor, setHighlightColor] = useState("#fff2cc");
   const availableImageVariables = imageVariables.length ? imageVariables : ["{{attached_image1}}"];
 
   const saveSelection = () => {
+    const editor = editorRef.current;
     const selection = window.getSelection();
-    if (!selection || selection.rangeCount === 0) return;
+    if (!editor || !selection || selection.rangeCount === 0) return;
     const range = selection.getRangeAt(0);
-    if (editorRef.current?.contains(range.commonAncestorContainer)) {
+    if (editor.contains(range.commonAncestorContainer)) {
       selectionRef.current = range.cloneRange();
+      selectionSnapshotRef.current = getSelectionSnapshot(editor, range);
     }
   };
   const restoreSelection = () => {
+    const editor = editorRef.current;
     const selection = window.getSelection();
-    if (!selection || !selectionRef.current) return;
+    if (!editor || !selection) return;
+    const liveRange = selectionRef.current;
+    if (liveRange && editor.contains(liveRange.commonAncestorContainer)) {
+      selection.removeAllRanges();
+      selection.addRange(liveRange);
+      return;
+    }
+    const snapshotRange = restoreSelectionSnapshot(editor, selectionSnapshotRef.current);
+    if (!snapshotRange) return;
     selection.removeAllRanges();
-    selection.addRange(selectionRef.current);
+    selection.addRange(snapshotRange);
+    selectionRef.current = snapshotRange.cloneRange();
   };
   const getRestoredRange = () => {
     editorRef.current?.focus();
@@ -3288,6 +3310,11 @@ function RichTextComposer({
     selection?.addRange(afterRange);
     saveSelection();
     sync();
+  };
+  const handleColorInput = (command: "foreColor" | "hiliteColor", color: string) => {
+    if (command === "foreColor") setTextColor(color);
+    else setHighlightColor(color);
+    applyColor(command, color);
   };
   const updateImageVariableWidth = (nextWidth: string) => {
     setImageWidth(nextWidth);
@@ -3395,11 +3422,31 @@ function RichTextComposer({
           </select>
           <label className="inline-flex h-8 items-center gap-1 rounded-md border border-input bg-background px-2 text-xs" title="Text color">
             <Type className="h-4 w-4" />
-            <input type="color" className="h-5 w-6 border-0 bg-transparent p-0" onMouseDown={saveSelection} onFocus={saveSelection} onChange={event => applyColor("foreColor", event.target.value)} />
+            <input
+              type="color"
+              className="h-5 w-6 border-0 bg-transparent p-0"
+              value={textColor}
+              onPointerDown={saveSelection}
+              onMouseDown={saveSelection}
+              onFocus={saveSelection}
+              onInput={event => handleColorInput("foreColor", event.currentTarget.value)}
+              onChange={event => handleColorInput("foreColor", event.target.value)}
+              onBlur={event => handleColorInput("foreColor", event.currentTarget.value)}
+            />
           </label>
           <label className="inline-flex h-8 items-center gap-1 rounded-md border border-input bg-background px-2 text-xs" title="Highlight color">
             <Highlighter className="h-4 w-4" />
-            <input type="color" className="h-5 w-6 border-0 bg-transparent p-0" onMouseDown={saveSelection} onFocus={saveSelection} onChange={event => applyColor("hiliteColor", event.target.value)} />
+            <input
+              type="color"
+              className="h-5 w-6 border-0 bg-transparent p-0"
+              value={highlightColor}
+              onPointerDown={saveSelection}
+              onMouseDown={saveSelection}
+              onFocus={saveSelection}
+              onInput={event => handleColorInput("hiliteColor", event.currentTarget.value)}
+              onChange={event => handleColorInput("hiliteColor", event.target.value)}
+              onBlur={event => handleColorInput("hiliteColor", event.currentTarget.value)}
+            />
           </label>
           <ToolbarDivider />
           <ToolbarButton title="Align left" onClick={() => run("justifyLeft")}><AlignLeft className="h-4 w-4" /></ToolbarButton>
@@ -3462,6 +3509,61 @@ function ToolbarButton({ title, onClick, children }: { title: string; onClick: (
       {children}
     </button>
   );
+}
+
+function getSelectionSnapshot(root: Node, range: Range): SelectionSnapshot | null {
+  const startPath = getNodePath(root, range.startContainer);
+  const endPath = getNodePath(root, range.endContainer);
+  if (!startPath || !endPath) return null;
+  return {
+    startPath,
+    startOffset: range.startOffset,
+    endPath,
+    endOffset: range.endOffset,
+  };
+}
+
+function restoreSelectionSnapshot(root: Node, snapshot: SelectionSnapshot | null) {
+  if (!snapshot) return null;
+  const startNode = getNodeByPath(root, snapshot.startPath);
+  const endNode = getNodeByPath(root, snapshot.endPath);
+  if (!startNode || !endNode) return null;
+  const range = document.createRange();
+  try {
+    range.setStart(startNode, clampOffset(startNode, snapshot.startOffset));
+    range.setEnd(endNode, clampOffset(endNode, snapshot.endOffset));
+    return range;
+  } catch {
+    return null;
+  }
+}
+
+function getNodePath(root: Node, node: Node) {
+  const path: number[] = [];
+  let current: Node | null = node;
+  while (current && current !== root) {
+    const parent = current.parentNode;
+    if (!parent) return null;
+    path.unshift(Array.prototype.indexOf.call(parent.childNodes, current));
+    current = parent;
+  }
+  return current === root ? path : null;
+}
+
+function getNodeByPath(root: Node, path: number[]) {
+  let current: Node | null = root;
+  for (const index of path) {
+    if (!current?.childNodes.length) return current;
+    current = current.childNodes[Math.min(index, current.childNodes.length - 1)] || null;
+  }
+  return current;
+}
+
+function clampOffset(node: Node, offset: number) {
+  const maxOffset = node.nodeType === Node.TEXT_NODE
+    ? String(node.textContent || "").length
+    : node.childNodes.length;
+  return Math.min(Math.max(offset, 0), maxOffset);
 }
 
 function ToolbarDivider() {
