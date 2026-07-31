@@ -3231,6 +3231,19 @@ function RichTextComposer({
   const [highlightColor, setHighlightColor] = useState("#fff2cc");
   const availableImageVariables = imageVariables.length ? imageVariables : ["{{attached_image1}}"];
 
+  const setEditorRange = (range: Range | null) => {
+    if (!range || !editorRef.current?.contains(range.commonAncestorContainer)) {
+      selectionRef.current = null;
+      selectionSnapshotRef.current = null;
+      return;
+    }
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    selectionRef.current = range.cloneRange();
+    selectionSnapshotRef.current = getSelectionSnapshot(editorRef.current, range);
+  };
+
   const saveSelection = () => {
     const editor = editorRef.current;
     const selection = window.getSelection();
@@ -3284,7 +3297,6 @@ function RichTextComposer({
   const sync = () => {
     const editor = editorRef.current;
     if (editor) decorateEditorLinks(editor);
-    saveSelection();
     const html = normalizeEmailHtml(editor?.innerHTML || "");
     onChange(html, htmlToText(html));
   };
@@ -3293,6 +3305,7 @@ function RichTextComposer({
     restoreSelection();
     document.execCommand("styleWithCSS", false, "true");
     document.execCommand(command, false, commandValue);
+    saveSelection();
     sync();
   };
   const applyColor = (command: "foreColor" | "hiliteColor", color: string) => {
@@ -3303,12 +3316,10 @@ function RichTextComposer({
     Object.assign(span.style, style);
     span.appendChild(range.extractContents());
     range.insertNode(span);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
     const afterRange = document.createRange();
-    afterRange.selectNodeContents(span);
-    selection?.addRange(afterRange);
-    saveSelection();
+    afterRange.setStartAfter(span);
+    afterRange.collapse(true);
+    setEditorRange(afterRange);
     sync();
   };
   const handleColorInput = (command: "foreColor" | "hiliteColor", color: string) => {
@@ -3371,6 +3382,7 @@ function RichTextComposer({
     editorRef.current?.focus();
     restoreSelection();
     document.execCommand("insertHTML", false, html);
+    saveSelection();
     sync();
   };
   const insertLink = () => {
@@ -3381,6 +3393,7 @@ function RichTextComposer({
     document.execCommand("styleWithCSS", false, "true");
     document.execCommand("createLink", false, url);
     if (editorRef.current) decorateEditorLinks(editorRef.current);
+    saveSelection();
     sync();
   };
   const insertImageVariable = (withLink = false) => {
@@ -3497,7 +3510,6 @@ function RichTextComposer({
         onMouseUp={saveSelection}
         onKeyUp={saveSelection}
         onBlur={sync}
-        dangerouslySetInnerHTML={{ __html: normalizeEmailHtml(value || "") }}
       />
     </div>
   );
